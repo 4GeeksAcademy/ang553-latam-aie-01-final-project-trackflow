@@ -19,6 +19,7 @@ window.addEventListener('DOMContentLoaded', () => {
   const comments = document.getElementById('comments');
   const charCount = document.getElementById('charCount');
   const privacyPolicy = document.getElementById('privacyPolicy');
+  const resetButton = document.getElementById('resetButton');
 
   // Advertencia especial para volumen 0-100.
   const warningNode = document.createElement('p');
@@ -38,7 +39,10 @@ window.addEventListener('DOMContentLoaded', () => {
   phone.addEventListener('input', () => validatePhone());
   website.addEventListener('input', () => validateWebsite());
   operationCountry.addEventListener('change', () => validateOperationCountry());
-  productType.addEventListener('change', () => validateProductType());
+  productType.addEventListener('change', () => {
+    validateProductType();
+    updateVolumeWarning();
+  });
   monthlyVolume.addEventListener('change', () => {
     validateMonthlyVolume();
     updateVolumeWarning();
@@ -69,6 +73,14 @@ window.addEventListener('DOMContentLoaded', () => {
       hideSuccessMessage();
       focusFirstError();
     }
+  });
+
+  // Limpiar formulario.
+  form.addEventListener('reset', () => {
+    clearAllErrors();
+    hideSuccessMessage();
+    warningNode.classList.add('hidden');
+    charCount.textContent = '0';
   });
 
   // Función para validar todo el formulario.
@@ -234,7 +246,11 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // Muestra o oculta la advertencia de volumen 0-100.
   function updateVolumeWarning() {
-    if (monthlyVolume.value === '0-100') {
+    const relevantProducts = ['Moda', 'Electrónica', 'Cosmética'];
+    const isLowVolume = monthlyVolume.value === '0-100';
+    const isRelevantProduct = relevantProducts.includes(productType.value);
+
+    if (isLowVolume && isRelevantProduct) {
       warningNode.classList.remove('hidden');
     } else {
       warningNode.classList.add('hidden');
