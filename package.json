@@ -1,0 +1,29 @@
+{
+  "name": "ang553-latam-aie-01-final-project-trackflow",
+  "version": "1.0.0",
+  "description": "[![4Geeks Academy](https://img.shields.io/badge/4Geeks-Academy-blue)](https://4geeksacademy.com) [![AI Engineering](https://img.shields.io/badge/track-AI%20Engineering-green)](https://4geeksacademy.com/es/programas-de-carrera/ingenieria-ia)",
+  "main": "validation.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/4GeeksAcademy/ang553-latam-aie-01-final-project-trackflow.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/4GeeksAcademy/ang553-latam-aie-01-final-project-trackflow/issues"
+  },
+  "homepage": "https://github.com/4GeeksAcademy/ang553-latam-aie-01-final-project-trackflow#readme",
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}
