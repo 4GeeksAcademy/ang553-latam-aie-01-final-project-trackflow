@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { ErrorState } from "@/components/ErrorState";
 import { LoadingState } from "@/components/LoadingState";
+import { NotesPanel } from "@/components/NotesPanel";
 import {
   STAGE_LABELS,
   STAGE_OPTIONS,
@@ -256,6 +257,8 @@ export function CandidateDetail({ id }: CandidateDetailProps) {
           <p className={`mt-3 text-sm font-medium ${saveMessageClass}`}>{saveMessage}</p>
         ) : null}
       </article>
+
+      <NotesPanel candidateId={candidate.id} />
     </div>
   );
 }
