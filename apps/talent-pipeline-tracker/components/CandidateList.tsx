@@ -4,13 +4,17 @@ import { CandidateCard } from "./CandidateCard";
 
 interface CandidateListProps {
   candidates: Candidate[];
+  emptyMessage?: string;
 }
 
-export function CandidateList({ candidates }: CandidateListProps) {
+export function CandidateList({
+  candidates,
+  emptyMessage = "No hay candidaturas para mostrar.",
+}: CandidateListProps) {
   if (candidates.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-600">
-        No hay candidaturas para mostrar.
+        {emptyMessage}
       </div>
     );
   }
