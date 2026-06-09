@@ -171,6 +171,13 @@ export function CandidateDetail({ id }: CandidateDetailProps) {
         Volver al listado
       </Link>
 
+      <Link
+        href={`/candidates/${candidate.id}/edit`}
+        className="inline-flex text-sm font-medium text-slate-700 hover:text-slate-900"
+      >
+        Editar datos
+      </Link>
+
       <article className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <header className="border-b border-slate-200 pb-4">
           <p className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">
