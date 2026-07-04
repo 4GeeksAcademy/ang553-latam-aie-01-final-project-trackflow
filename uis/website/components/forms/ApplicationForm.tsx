@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ChangeEvent } from "react";
+import { useRef, type FormEvent } from "react";
 
 import {
   isSimpleFieldName,
@@ -9,6 +10,7 @@ import {
   validatePrivacyPolicy,
   validateServicesInterest,
   validateSimpleField,
+  shouldShowLowVolumeWarning,
 } from "@/lib/applicationValidation";
 import { initialApplicationFormValues } from "@/types/applicationForm";
 
@@ -33,6 +35,7 @@ const current3plOptions = [
 ] as const;
 
 export function ApplicationForm() {
+  const formRef = useRef<HTMLFormElement>(null);
   const [formValues, setFormValues] = useState(initialApplicationFormValues);
   const [simpleErrors, setSimpleErrors] = useState<Record<SimpleFieldName, string>>({
     companyName: "",
@@ -123,8 +126,60 @@ export function ApplicationForm() {
     }));
   }
 
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const nextSimpleErrors = {
+      companyName: validateSimpleField("companyName", formValues.companyName),
+      contactPerson: validateSimpleField("contactPerson", formValues.contactPerson),
+      corporateEmail: validateSimpleField("corporateEmail", formValues.corporateEmail),
+      phone: validateSimpleField("phone", formValues.phone),
+      website: validateSimpleField("website", formValues.website),
+      operationCountry: validateSimpleField("operationCountry", formValues.operationCountry),
+      productType: validateSimpleField("productType", formValues.productType),
+      monthlyVolume: validateSimpleField("monthlyVolume", formValues.monthlyVolume),
+    };
+
+    const nextGroupErrors = {
+      servicesInterest: validateServicesInterest(formValues.servicesInterest),
+      current3PL: validateCurrent3PL(formValues.current3PL),
+      privacyPolicy: validatePrivacyPolicy(formValues.privacyPolicy),
+    };
+
+    setSimpleErrors(nextSimpleErrors);
+    setGroupErrors(nextGroupErrors);
+
+    const errorOrder = [
+      ["companyName", nextSimpleErrors.companyName],
+      ["contactPerson", nextSimpleErrors.contactPerson],
+      ["corporateEmail", nextSimpleErrors.corporateEmail],
+      ["phone", nextSimpleErrors.phone],
+      ["website", nextSimpleErrors.website],
+      ["operationCountry", nextSimpleErrors.operationCountry],
+      ["productType", nextSimpleErrors.productType],
+      ["monthlyVolume", nextSimpleErrors.monthlyVolume],
+      ["servicesInterest[]", nextGroupErrors.servicesInterest],
+      ["current3PL", nextGroupErrors.current3PL],
+      ["privacyPolicy", nextGroupErrors.privacyPolicy],
+    ] as const;
+
+    // En submit parcial, el foco guía al usuario al primer error sin activar aún flujo de éxito.
+    const firstInvalidName = errorOrder.find(([, message]) => message)?.[0];
+    if (!firstInvalidName || !formRef.current) {
+      return;
+    }
+
+    const firstInvalidField = formRef.current.querySelector<HTMLElement>(`[name="${firstInvalidName}"]`);
+    firstInvalidField?.focus();
+  }
+
   return (
-    <form id="applicationForm" className="rounded-lg border border-gray-200 bg-white p-8 shadow-sm">
+    <form
+      id="applicationForm"
+      ref={formRef}
+      onSubmit={handleSubmit}
+      className="rounded-lg border border-gray-200 bg-white p-8 shadow-sm"
+    >
       <fieldset className="mb-8 border-b border-gray-200 pb-8">
         <legend className="mb-6 text-xl font-semibold text-gray-900">Información de la Empresa</legend>
 
@@ -296,6 +351,11 @@ export function ApplicationForm() {
           <div id="error-monthlyVolume" role="alert" className={getErrorClass("monthlyVolume", "mt-3")}>
             {simpleErrors.monthlyVolume}
           </div>
+          {shouldShowLowVolumeWarning(formValues.monthlyVolume, formValues.productType) && (
+            <p className="mt-3 rounded-md border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-800">
+              Para volúmenes menores a 100 envíos mensuales, nuestros servicios podrían no ser la solución más eficiente. ¿Seguro que quieres continuar?
+            </p>
+          )}
         </div>
       </fieldset>
 
@@ -394,7 +454,7 @@ export function ApplicationForm() {
           <div className="mt-2 flex items-center justify-between">
             <div id="error-comments" role="alert" className="hidden text-sm text-red-600" />
             <span className="text-sm text-gray-500">
-              <span id="charCount">0</span>/500 caracteres
+              <span id="charCount">{formValues.comments.length}</span>/500 caracteres
             </span>
           </div>
         </div>

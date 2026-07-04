@@ -70,3 +70,10 @@ export function validateCurrent3PL(value: string): string {
 export function validatePrivacyPolicy(value: boolean): string {
   return value ? "" : "Debes aceptar la política de privacidad para continuar";
 }
+
+const LOW_VOLUME_RELEVANT_PRODUCTS = ["Moda", "Electrónica", "Cosmética"] as const;
+
+export function shouldShowLowVolumeWarning(monthlyVolume: string, productType: string): boolean {
+  // Regla de negocio heredada del formulario original de Hito 1.
+  return monthlyVolume === "0-100" && LOW_VOLUME_RELEVANT_PRODUCTS.includes(productType as (typeof LOW_VOLUME_RELEVANT_PRODUCTS)[number]);
+}
