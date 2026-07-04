@@ -41,6 +41,9 @@
   - rutas implementadas actualmente:
     - `/` (landing migrada desde `index.html`)
     - `/application` (formulario de Hito 1 migrado y validado)
+  - estado actual:
+    - build y lint validados
+    - cambios integrados en `main` y reflejados en Git
   - organizacion por componentes:
     - `components/layout/`
     - `components/sections/`

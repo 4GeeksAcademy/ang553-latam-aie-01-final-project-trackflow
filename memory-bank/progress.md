@@ -37,13 +37,14 @@
   - implementacion basada en Next.js
   - frontend interno alineado con el Hito 3
 - App web publica inicial en `uis/website/`:
-  - estructura minima Next.js + TypeScript creada y validada
+  - estructura Next.js + TypeScript completada, probada e integrada en Git
   - landing de Hito 1 migrada a `/` con componentes React reutilizables
   - SEO base y JSON-LD de organizacion migrados a App Router
 - Ruta `/application` en `uis/website/`:
   - formulario de Hito 1 migrado y completado en React + TypeScript
   - validaciones de campos simples y de grupos implementadas
   - UX de formulario implementada: warning de bajo volumen, contador dinamico, foco al primer error, submit con mensaje de exito y reset integral
+  - build y lint validados; cambios ya consolidados en Git
   - navegacion de ida y vuelta con `/` disponible
 
 ## Pendiente
