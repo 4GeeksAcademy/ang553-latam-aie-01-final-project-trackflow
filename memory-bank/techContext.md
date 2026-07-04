@@ -48,6 +48,13 @@
     - `components/layout/`
     - `components/sections/`
     - `components/forms/`
+- `uis/backoffice/`
+  - aplicacion Next.js + TypeScript creada para interfaz interna.
+  - ruta implementada actualmente:
+    - `/` (dashboard operativo inicial)
+  - layout interno diferenciado de la web publica.
+  - integra logica de `src/` mediante imports directos (sin duplicacion).
+  - build y lint validados.
 
 ## Decisiones de arquitectura ya tomadas
 
@@ -70,6 +77,7 @@
   - submit local con mensaje de exito
   - reset integral de estado y UI
 - Se mantuvieron ids/names y mensajes del formulario original para conservar paridad funcional con Hito 1.
+- El backoffice consume resultados reales del Hito 2 en UI (inventario, stock bajo, validaciones, carrier recomendado y categorias) importando desde `src/utils/*` y `src/types/models.ts`.
 
 ## Restricciones tecnicas para futuras implementaciones
 

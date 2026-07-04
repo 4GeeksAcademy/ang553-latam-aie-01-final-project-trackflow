@@ -49,7 +49,6 @@
 
 ## Pendiente
 
-- Implementar una interfaz operativa o administrativa en `uis/backoffice`.
 - Integrar la logica TypeScript del Hito 2 desde `src/` sin duplicarla en nuevas carpetas.
 - Completar la infraestructura de agentes en la raiz del monorepo.
 - Crear `AGENTS.md` en la raiz.
@@ -70,15 +69,14 @@
   - aplicacion existente del Hito 3
 - `uis/`
   - `website` ya creado con rutas `/` y `/application`
-  - `backoffice` aun pendiente
+  - `backoffice` creado y funcional con dashboard operativo en `/`
 - `services/`
   - carpeta reservada para APIs o workers, sin un servicio concreto identificado para TrackFlow en esta revision
 
 ## Proximos pasos
 
-- Paso activo: iniciar `uis/backoffice` como siguiente interfaz del proyecto.
-- Mantener estabilidad de `uis/website` (`/` y `/application`) mientras avanza el backoffice.
-- Crear `uis/backoffice` para futuras interfaces operativas del Hito 4.
+- Paso activo: revision final del Hito 4.
+- Mantener estabilidad de `uis/website` (`/` y `/application`) y `uis/backoffice`.
 - Reutilizar la logica de `src/` mediante imports directos en las nuevas interfaces o servicios.
 
 ## Inconsistencias detectadas
