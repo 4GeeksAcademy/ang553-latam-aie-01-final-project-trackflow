@@ -1,0 +1,4 @@
+# Next.js generated files
+.next/
+node_modules/
+.env*
