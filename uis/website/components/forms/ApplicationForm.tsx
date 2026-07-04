@@ -4,6 +4,7 @@ import { useState, type ChangeEvent } from "react";
 import { useRef, type FormEvent } from "react";
 
 import {
+  SIMPLE_FIELD_NAMES,
   isSimpleFieldName,
   type SimpleFieldName,
   validateCurrent3PL,
@@ -34,24 +35,29 @@ const current3plOptions = [
   },
 ] as const;
 
+const INITIAL_SIMPLE_ERRORS: Record<SimpleFieldName, string> = {
+  companyName: "",
+  contactPerson: "",
+  corporateEmail: "",
+  phone: "",
+  website: "",
+  operationCountry: "",
+  productType: "",
+  monthlyVolume: "",
+};
+
+const INITIAL_GROUP_ERRORS = {
+  servicesInterest: "",
+  current3PL: "",
+  privacyPolicy: "",
+};
+
 export function ApplicationForm() {
   const formRef = useRef<HTMLFormElement>(null);
   const [formValues, setFormValues] = useState(initialApplicationFormValues);
-  const [simpleErrors, setSimpleErrors] = useState<Record<SimpleFieldName, string>>({
-    companyName: "",
-    contactPerson: "",
-    corporateEmail: "",
-    phone: "",
-    website: "",
-    operationCountry: "",
-    productType: "",
-    monthlyVolume: "",
-  });
-  const [groupErrors, setGroupErrors] = useState({
-    servicesInterest: "",
-    current3PL: "",
-    privacyPolicy: "",
-  });
+  const [simpleErrors, setSimpleErrors] = useState<Record<SimpleFieldName, string>>(INITIAL_SIMPLE_ERRORS);
+  const [groupErrors, setGroupErrors] = useState(INITIAL_GROUP_ERRORS);
+  const [showSuccessMessage, setShowSuccessMessage] = useState(false);
 
   const fieldBaseClass =
     "w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500";
@@ -129,16 +135,10 @@ export function ApplicationForm() {
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    const nextSimpleErrors = {
-      companyName: validateSimpleField("companyName", formValues.companyName),
-      contactPerson: validateSimpleField("contactPerson", formValues.contactPerson),
-      corporateEmail: validateSimpleField("corporateEmail", formValues.corporateEmail),
-      phone: validateSimpleField("phone", formValues.phone),
-      website: validateSimpleField("website", formValues.website),
-      operationCountry: validateSimpleField("operationCountry", formValues.operationCountry),
-      productType: validateSimpleField("productType", formValues.productType),
-      monthlyVolume: validateSimpleField("monthlyVolume", formValues.monthlyVolume),
-    };
+    const nextSimpleErrors = SIMPLE_FIELD_NAMES.reduce<Record<SimpleFieldName, string>>((acc, fieldName) => {
+      acc[fieldName] = validateSimpleField(fieldName, formValues[fieldName]);
+      return acc;
+    }, { ...INITIAL_SIMPLE_ERRORS });
 
     const nextGroupErrors = {
       servicesInterest: validateServicesInterest(formValues.servicesInterest),
@@ -149,37 +149,90 @@ export function ApplicationForm() {
     setSimpleErrors(nextSimpleErrors);
     setGroupErrors(nextGroupErrors);
 
-    const errorOrder = [
-      ["companyName", nextSimpleErrors.companyName],
-      ["contactPerson", nextSimpleErrors.contactPerson],
-      ["corporateEmail", nextSimpleErrors.corporateEmail],
-      ["phone", nextSimpleErrors.phone],
-      ["website", nextSimpleErrors.website],
-      ["operationCountry", nextSimpleErrors.operationCountry],
-      ["productType", nextSimpleErrors.productType],
-      ["monthlyVolume", nextSimpleErrors.monthlyVolume],
-      ["servicesInterest[]", nextGroupErrors.servicesInterest],
-      ["current3PL", nextGroupErrors.current3PL],
-      ["privacyPolicy", nextGroupErrors.privacyPolicy],
-    ] as const;
+    const hasErrors =
+      Object.values(nextSimpleErrors).some(Boolean) || Object.values(nextGroupErrors).some(Boolean);
 
-    // En submit parcial, el foco guía al usuario al primer error sin activar aún flujo de éxito.
-    const firstInvalidName = errorOrder.find(([, message]) => message)?.[0];
-    if (!firstInvalidName || !formRef.current) {
+    if (hasErrors) {
+      setShowSuccessMessage(false);
+
+      const errorOrder = [
+        ["companyName", nextSimpleErrors.companyName],
+        ["contactPerson", nextSimpleErrors.contactPerson],
+        ["corporateEmail", nextSimpleErrors.corporateEmail],
+        ["phone", nextSimpleErrors.phone],
+        ["website", nextSimpleErrors.website],
+        ["operationCountry", nextSimpleErrors.operationCountry],
+        ["productType", nextSimpleErrors.productType],
+        ["monthlyVolume", nextSimpleErrors.monthlyVolume],
+        ["servicesInterest[]", nextGroupErrors.servicesInterest],
+        ["current3PL", nextGroupErrors.current3PL],
+        ["privacyPolicy", nextGroupErrors.privacyPolicy],
+      ] as const;
+
+      // Orden de foco alineado al orden visual del formulario para guiar correcciones de forma predecible.
+      const firstInvalidName = errorOrder.find(([, message]) => message)?.[0];
+      if (!firstInvalidName || !formRef.current) {
+        return;
+      }
+
+      const firstInvalidField = formRef.current.querySelector<HTMLElement>(`[name="${firstInvalidName}"]`);
+      firstInvalidField?.focus();
       return;
     }
 
-    const firstInvalidField = formRef.current.querySelector<HTMLElement>(`[name="${firstInvalidName}"]`);
-    firstInvalidField?.focus();
+    setSimpleErrors(INITIAL_SIMPLE_ERRORS);
+    setGroupErrors(INITIAL_GROUP_ERRORS);
+    setShowSuccessMessage(true);
+  }
+
+  function handleReset(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    // Reset integral de UX: estado del formulario, errores y feedback visual.
+    setFormValues(initialApplicationFormValues);
+    setSimpleErrors(INITIAL_SIMPLE_ERRORS);
+    setGroupErrors(INITIAL_GROUP_ERRORS);
+    setShowSuccessMessage(false);
   }
 
   return (
-    <form
-      id="applicationForm"
-      ref={formRef}
-      onSubmit={handleSubmit}
-      className="rounded-lg border border-gray-200 bg-white p-8 shadow-sm"
-    >
+    <>
+      <div
+        id="successMessage"
+        className={`mb-6 rounded-lg border border-green-200 bg-green-50 p-4 ${showSuccessMessage ? "" : "hidden"}`}
+        aria-live="polite"
+      >
+        <div className="flex items-start">
+          <svg
+            className="mt-0.5 mr-3 h-6 w-6 text-green-600"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <div className="text-green-900">
+            <p>¡Gracias por tu interés en TrackFlow!</p>
+            <p className="mt-3">
+              Hemos recibido tu solicitud. Nuestro equipo comercial revisará tu información y te contactará en las próximas 24-48 horas para agendar una llamada y conocer tus necesidades logísticas en detalle.
+            </p>
+            <p className="mt-3">
+              Si tienes alguna consulta urgente, escríbenos directamente a{" "}
+              <a href="mailto:comercial@trackflow.com" className="underline hover:text-green-800">
+                comercial@trackflow.com
+              </a>
+            </p>
+          </div>
+        </div>
+      </div>
+      <form
+        id="applicationForm"
+        ref={formRef}
+        onSubmit={handleSubmit}
+        onReset={handleReset}
+        className="rounded-lg border border-gray-200 bg-white p-8 shadow-sm"
+      >
       <fieldset className="mb-8 border-b border-gray-200 pb-8">
         <legend className="mb-6 text-xl font-semibold text-gray-900">Información de la Empresa</legend>
 
@@ -507,6 +560,7 @@ export function ApplicationForm() {
           </button>
         </div>
       </div>
-    </form>
+      </form>
+    </>
   );
 }

@@ -40,7 +40,7 @@
   - aplicacion Next.js + TypeScript creada para la web publica.
   - rutas implementadas actualmente:
     - `/` (landing migrada desde `index.html`)
-    - `/application` (estructura del formulario migrada desde `application.html`)
+    - `/application` (formulario de Hito 1 migrado y validado)
   - organizacion por componentes:
     - `components/layout/`
     - `components/sections/`
@@ -59,8 +59,14 @@
 - El Hito 3 ya parte de un frontend montado sobre Next.js para una herramienta operativa interna.
 - `uis/website/` sigue la misma convencion tecnica de app Next.js aislada (scripts, tsconfig estricto, eslint y tailwind v4).
 - La landing publica se migro a componentes React reutilizables manteniendo contenido y orden del Hito 1.
-- El formulario en `/application` se migro solo en estructura (sin logica de validacion) para separar claramente Paso 3 y Paso 4.
-- Se preservaron ids/names de campos y contenedores de error/mensaje para facilitar el acople posterior de validaciones.
+- El formulario en `/application` quedo implementado con flujo UX completo sin backend:
+  - validaciones de campos simples y grupos
+  - warning dinamico para bajo volumen
+  - contador dinamico de comentarios
+  - foco al primer campo invalido
+  - submit local con mensaje de exito
+  - reset integral de estado y UI
+- Se mantuvieron ids/names y mensajes del formulario original para conservar paridad funcional con Hito 1.
 
 ## Restricciones tecnicas para futuras implementaciones
 
@@ -82,8 +88,7 @@
   - pide usar Tailwind.
   - estado actual:
     - landing migrada y funcional en `/`.
-    - formulario migrado estructuralmente en `/application`.
-    - validaciones dinamicas y UX de envio aun pendientes.
+    - formulario migrado y validado funcionalmente en `/application`.
 - Hito 2:
   - requiere utilidades TypeScript puras para inventario, envios, scoring, calculos y validaciones.
   - no debe resolverse duplicando logica en nuevas carpetas.

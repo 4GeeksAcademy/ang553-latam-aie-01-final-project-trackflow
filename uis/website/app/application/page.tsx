@@ -40,25 +40,6 @@ export default function ApplicationPage() {
           </p>
         </div>
 
-        {/* Este contenedor se conserva para acoplar la lógica de éxito en el Paso 4 sin cambiar IDs. */}
-        <div id="successMessage" className="mb-6 hidden rounded-lg border border-green-200 bg-green-50 p-4" aria-live="polite">
-          <div className="flex items-start">
-            <svg
-              className="mt-0.5 mr-3 h-6 w-6 text-green-600"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <div>
-              <h2 className="mb-1 font-semibold text-green-900">Solicitud enviada correctamente</h2>
-              <p className="text-sm text-green-800">Gracias por tu interés. Te contactaremos pronto.</p>
-            </div>
-          </div>
-        </div>
-
         <ApplicationForm />
 
         <div className="mt-4 text-center">

@@ -41,18 +41,13 @@
   - landing de Hito 1 migrada a `/` con componentes React reutilizables
   - SEO base y JSON-LD de organizacion migrados a App Router
 - Ruta `/application` en `uis/website/`:
-  - formulario de Hito 1 migrado en estructura a React + TypeScript
-  - campos, labels, opciones, placeholders e ids preservados para acoplar validaciones
+  - formulario de Hito 1 migrado y completado en React + TypeScript
+  - validaciones de campos simples y de grupos implementadas
+  - UX de formulario implementada: warning de bajo volumen, contador dinamico, foco al primer error, submit con mensaje de exito y reset integral
   - navegacion de ida y vuelta con `/` disponible
 
 ## Pendiente
 
-- Implementar validaciones del formulario en `uis/website/app/application` (Paso 4):
-  - mensajes de error dinamicos
-  - warning de bajo volumen
-  - contador dinamico de comentarios
-  - mensaje de exito
-  - logica de envio/reset
 - Implementar una interfaz operativa o administrativa en `uis/backoffice`.
 - Integrar la logica TypeScript del Hito 2 desde `src/` sin duplicarla en nuevas carpetas.
 - Completar la infraestructura de agentes en la raiz del monorepo.
@@ -80,8 +75,8 @@
 
 ## Proximos pasos
 
-- Paso activo: implementar la capa de validacion del formulario en `/application` sin backend (Paso 4).
-- Mantener la estabilidad de la landing en `/` mientras se integra validacion.
+- Paso activo: iniciar `uis/backoffice` como siguiente interfaz del proyecto.
+- Mantener estabilidad de `uis/website` (`/` y `/application`) mientras avanza el backoffice.
 - Crear `uis/backoffice` para futuras interfaces operativas del Hito 4.
 - Reutilizar la logica de `src/` mediante imports directos en las nuevas interfaces o servicios.
 
