@@ -2,6 +2,14 @@
 
 import { useState, type ChangeEvent } from "react";
 
+import {
+  isSimpleFieldName,
+  type SimpleFieldName,
+  validateCurrent3PL,
+  validatePrivacyPolicy,
+  validateServicesInterest,
+  validateSimpleField,
+} from "@/lib/applicationValidation";
 import { initialApplicationFormValues } from "@/types/applicationForm";
 
 const operationCountries = ["Estados Unidos", "España", "Ambos", "Otro"] as const;
@@ -26,31 +34,92 @@ const current3plOptions = [
 
 export function ApplicationForm() {
   const [formValues, setFormValues] = useState(initialApplicationFormValues);
+  const [simpleErrors, setSimpleErrors] = useState<Record<SimpleFieldName, string>>({
+    companyName: "",
+    contactPerson: "",
+    corporateEmail: "",
+    phone: "",
+    website: "",
+    operationCountry: "",
+    productType: "",
+    monthlyVolume: "",
+  });
+  const [groupErrors, setGroupErrors] = useState({
+    servicesInterest: "",
+    current3PL: "",
+    privacyPolicy: "",
+  });
+
+  const fieldBaseClass =
+    "w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500";
+
+  function getFieldClass(field: SimpleFieldName): string {
+    return simpleErrors[field]
+      ? `${fieldBaseClass} border-red-500 ring-2 ring-red-500`
+      : fieldBaseClass;
+  }
+
+  function getErrorClass(field: SimpleFieldName, spacingClass: string): string {
+    return `${spacingClass} text-sm text-red-600 ${simpleErrors[field] ? "" : "hidden"}`;
+  }
 
   function handleFieldChange(event: ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) {
     const { name, value } = event.target;
+
     setFormValues((prev) => ({
       ...prev,
       [name]: value,
     }));
+
+    if (isSimpleFieldName(name)) {
+      const errorMessage = validateSimpleField(name, value);
+      setSimpleErrors((prev) => ({
+        ...prev,
+        [name]: errorMessage,
+      }));
+    }
+
+    if (name === "current3PL") {
+      setGroupErrors((prev) => ({
+        ...prev,
+        current3PL: validateCurrent3PL(value),
+      }));
+    }
   }
 
   // El grupo de servicios se modela como array para reflejar checkboxes multi-seleccion.
   function handleServicesInterestChange(event: ChangeEvent<HTMLInputElement>) {
     const { value, checked } = event.target;
 
-    setFormValues((prev) => ({
-      ...prev,
-      servicesInterest: checked
+    setFormValues((prev) => {
+      const nextServices = checked
         ? [...prev.servicesInterest, value]
-        : prev.servicesInterest.filter((item) => item !== value),
-    }));
+        : prev.servicesInterest.filter((item) => item !== value);
+
+      // Se recalcula el error con la seleccion completa del grupo, no con el checkbox individual.
+      setGroupErrors((prevErrors) => ({
+        ...prevErrors,
+        servicesInterest: validateServicesInterest(nextServices),
+      }));
+
+      return {
+        ...prev,
+        servicesInterest: nextServices,
+      };
+    });
   }
 
   function handlePrivacyPolicyChange(event: ChangeEvent<HTMLInputElement>) {
+    const { checked } = event.target;
+
     setFormValues((prev) => ({
       ...prev,
-      privacyPolicy: event.target.checked,
+      privacyPolicy: checked,
+    }));
+
+    setGroupErrors((prev) => ({
+      ...prev,
+      privacyPolicy: validatePrivacyPolicy(checked),
     }));
   }
 
@@ -71,9 +140,11 @@ export function ApplicationForm() {
             value={formValues.companyName}
             onChange={handleFieldChange}
             placeholder="Ej: Mi Tienda Online"
-            className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+            className={getFieldClass("companyName")}
           />
-          <div id="error-companyName" role="alert" className="mt-2 hidden text-sm text-red-600" />
+          <div id="error-companyName" role="alert" className={getErrorClass("companyName", "mt-2")}>
+            {simpleErrors.companyName}
+          </div>
         </div>
 
         <div className="mb-6">
@@ -88,9 +159,11 @@ export function ApplicationForm() {
             value={formValues.contactPerson}
             onChange={handleFieldChange}
             placeholder="Nombre completo"
-            className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+            className={getFieldClass("contactPerson")}
           />
-          <div id="error-contactPerson" role="alert" className="mt-2 hidden text-sm text-red-600" />
+          <div id="error-contactPerson" role="alert" className={getErrorClass("contactPerson", "mt-2")}>
+            {simpleErrors.contactPerson}
+          </div>
         </div>
 
         <div className="mb-6">
@@ -105,9 +178,11 @@ export function ApplicationForm() {
             value={formValues.corporateEmail}
             onChange={handleFieldChange}
             placeholder="contacto@empresa.com"
-            className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+            className={getFieldClass("corporateEmail")}
           />
-          <div id="error-corporateEmail" role="alert" className="mt-2 hidden text-sm text-red-600" />
+          <div id="error-corporateEmail" role="alert" className={getErrorClass("corporateEmail", "mt-2")}>
+            {simpleErrors.corporateEmail}
+          </div>
         </div>
 
         <div className="mb-6">
@@ -122,9 +197,11 @@ export function ApplicationForm() {
             value={formValues.phone}
             onChange={handleFieldChange}
             placeholder="+1 (555) 123-4567"
-            className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+            className={getFieldClass("phone")}
           />
-          <div id="error-phone" role="alert" className="mt-2 hidden text-sm text-red-600" />
+          <div id="error-phone" role="alert" className={getErrorClass("phone", "mt-2")}>
+            {simpleErrors.phone}
+          </div>
         </div>
 
         <div className="mb-6">
@@ -138,9 +215,11 @@ export function ApplicationForm() {
             value={formValues.website}
             onChange={handleFieldChange}
             placeholder="https://www.mitiendaonline.com"
-            className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+            className={getFieldClass("website")}
           />
-          <div id="error-website" role="alert" className="mt-2 hidden text-sm text-red-600" />
+          <div id="error-website" role="alert" className={getErrorClass("website", "mt-2")}>
+            {simpleErrors.website}
+          </div>
         </div>
       </fieldset>
 
@@ -157,7 +236,7 @@ export function ApplicationForm() {
             required
             value={formValues.operationCountry}
             onChange={handleFieldChange}
-            className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+            className={`${getFieldClass("operationCountry")} bg-white`}
           >
             <option value="">Selecciona una opción</option>
             {operationCountries.map((country) => (
@@ -166,7 +245,9 @@ export function ApplicationForm() {
               </option>
             ))}
           </select>
-          <div id="error-operationCountry" role="alert" className="mt-3 hidden text-sm text-red-600" />
+          <div id="error-operationCountry" role="alert" className={getErrorClass("operationCountry", "mt-3")}>
+            {simpleErrors.operationCountry}
+          </div>
         </div>
 
         <div className="mb-6">
@@ -179,7 +260,7 @@ export function ApplicationForm() {
             required
             value={formValues.productType}
             onChange={handleFieldChange}
-            className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+            className={`${getFieldClass("productType")} bg-white`}
           >
             <option value="">Selecciona una opción</option>
             {productTypes.map((type) => (
@@ -188,7 +269,9 @@ export function ApplicationForm() {
               </option>
             ))}
           </select>
-          <div id="error-productType" role="alert" className="mt-3 hidden text-sm text-red-600" />
+          <div id="error-productType" role="alert" className={getErrorClass("productType", "mt-3")}>
+            {simpleErrors.productType}
+          </div>
         </div>
 
         <div className="mb-6">
@@ -201,7 +284,7 @@ export function ApplicationForm() {
             required
             value={formValues.monthlyVolume}
             onChange={handleFieldChange}
-            className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+            className={`${getFieldClass("monthlyVolume")} bg-white`}
           >
             <option value="">Selecciona una opción</option>
             {monthlyVolumes.map((volume) => (
@@ -210,7 +293,9 @@ export function ApplicationForm() {
               </option>
             ))}
           </select>
-          <div id="error-monthlyVolume" role="alert" className="mt-3 hidden text-sm text-red-600" />
+          <div id="error-monthlyVolume" role="alert" className={getErrorClass("monthlyVolume", "mt-3")}>
+            {simpleErrors.monthlyVolume}
+          </div>
         </div>
       </fieldset>
 
@@ -232,7 +317,9 @@ export function ApplicationForm() {
                     value={service.value}
                     checked={formValues.servicesInterest.includes(service.value)}
                     onChange={handleServicesInterestChange}
-                    className="h-4 w-4 rounded text-blue-600 focus:ring-2 focus:ring-blue-500"
+                    className={`h-4 w-4 rounded text-blue-600 focus:ring-2 focus:ring-blue-500 ${
+                      groupErrors.servicesInterest ? "ring-2 ring-red-500" : ""
+                    }`}
                   />
                   <label htmlFor={service.id} className="ml-3 text-gray-700">
                     {service.label}
@@ -241,7 +328,13 @@ export function ApplicationForm() {
               ))}
             </div>
           </fieldset>
-          <div id="error-servicesInterest" role="alert" className="mt-3 hidden text-sm text-red-600" />
+          <div
+            id="error-servicesInterest"
+            role="alert"
+            className={`mt-3 text-sm text-red-600 ${groupErrors.servicesInterest ? "" : "hidden"}`}
+          >
+            {groupErrors.servicesInterest}
+          </div>
         </div>
 
         <div className="mb-6">
@@ -260,7 +353,9 @@ export function ApplicationForm() {
                     required
                     checked={formValues.current3PL === option.value}
                     onChange={handleFieldChange}
-                    className="h-4 w-4 text-blue-600 focus:ring-2 focus:ring-blue-500"
+                    className={`h-4 w-4 text-blue-600 focus:ring-2 focus:ring-blue-500 ${
+                      groupErrors.current3PL ? "ring-2 ring-red-500" : ""
+                    }`}
                   />
                   <label htmlFor={option.id} className="ml-3 text-gray-700">
                     {option.label}
@@ -269,7 +364,13 @@ export function ApplicationForm() {
               ))}
             </div>
           </fieldset>
-          <div id="error-current3PL" role="alert" className="mt-3 hidden text-sm text-red-600" />
+          <div
+            id="error-current3PL"
+            role="alert"
+            className={`mt-3 text-sm text-red-600 ${groupErrors.current3PL ? "" : "hidden"}`}
+          >
+            {groupErrors.current3PL}
+          </div>
         </div>
       </fieldset>
 
@@ -311,13 +412,21 @@ export function ApplicationForm() {
               required
               checked={formValues.privacyPolicy}
               onChange={handlePrivacyPolicyChange}
-              className="mt-1 h-4 w-4 rounded text-blue-600 focus:ring-2 focus:ring-blue-500"
+              className={`mt-1 h-4 w-4 rounded text-blue-600 focus:ring-2 focus:ring-blue-500 ${
+                groupErrors.privacyPolicy ? "ring-2 ring-red-500" : ""
+              }`}
             />
             <label htmlFor="privacyPolicy" className="ml-3 text-gray-700">
               Acepto la política de privacidad <span className="text-red-600">*</span>
             </label>
           </div>
-          <div id="error-privacyPolicy" role="alert" className="mt-2 hidden text-sm text-red-600" />
+          <div
+            id="error-privacyPolicy"
+            role="alert"
+            className={`mt-2 text-sm text-red-600 ${groupErrors.privacyPolicy ? "" : "hidden"}`}
+          >
+            {groupErrors.privacyPolicy}
+          </div>
         </div>
       </fieldset>
 
