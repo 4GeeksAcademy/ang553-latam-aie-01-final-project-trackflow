@@ -2,11 +2,20 @@
 
 ## Estado actual
 
-- El repositorio mantiene una estructura de monorepo base para los hitos del proyecto.
-- Ya existe contexto funcional suficiente para TrackFlow en `CONTEXT.md` y en `memory-bank/`.
-- El banco de memoria para Hito 4 ya fue iniciado con:
+## Estado actual
+
+- El Hito 4 se encuentra completado y validado funcionalmente.
+- El repositorio mantiene una estructura de monorepo para las distintas aplicaciones y capas del proyecto.
+- El contexto funcional y técnico de TrackFlow está documentado en `CONTEXT.md` y `memory-bank/`.
+- La infraestructura AI-ready del proyecto está activa con:
   - `memory-bank/projectbrief.md`
   - `memory-bank/techContext.md`
+  - `memory-bank/progress.md`
+  - `AGENTS.md`
+  - `.agents/rules/`
+  - `.agents/skills/`
+- Las aplicaciones `uis/website` y `uis/backoffice` están creadas, probadas y consolidadas en Git.
+- Build y lint pasan correctamente en ambas aplicaciones.
 
 ## Implementado
 
@@ -46,21 +55,40 @@
   - UX de formulario implementada: warning de bajo volumen, contador dinamico, foco al primer error, submit con mensaje de exito y reset integral
   - build y lint validados; cambios ya consolidados en Git
   - navegacion de ida y vuelta con `/` disponible
+  - - Infraestructura de agentes completada:
+  - `AGENTS.md` en la raiz con flujo general de trabajo para agentes
+  - `.agents/rules/trackflow-context-first.md` con reglas de contexto y arquitectura
+  - `.agents/skills/integrate-business-logic/SKILL.md` con procedimiento reutilizable y verificable
+  - banco de memoria activo para conservar contexto, decisiones tecnicas y progreso
+- App interna en `uis/backoffice/`:
+  - estructura independiente de Next.js + TypeScript
+  - layout interno propio y separado visualmente de la web publica
+  - dashboard operativo disponible en `/`
+  - vista de inventario, alertas de stock, validacion de datos, recomendacion de transportista y distribucion por categoria
+- Integracion de la logica del Hito 2 completada:
+  - imports directos desde `src/types/` y `src/utils/`
+  - sin duplicacion de funciones de negocio
+  - resultados calculados visibles en la interfaz
+  - compatibilidad ESM para `src/` definida mediante `src/package.json`
+- Validacion final del Hito 4 completada:
+  - build de `uis/website` correcto
+  - lint de `uis/website` correcto
+  - build de `uis/backoffice` correcto
+  - lint de `uis/backoffice` correcto
+  - `.next/`, `node_modules/` y archivos de entorno excluidos de Git
+  - sin secretos ni archivos temporales versionados
 
 ## Pendiente
 
-- Integrar la logica TypeScript del Hito 2 desde `src/` sin duplicarla en nuevas carpetas.
-- Completar la infraestructura de agentes en la raiz del monorepo.
-- Crear `AGENTS.md` en la raiz.
-- Crear `.agents/rules/`.
-- Crear `.agents/skills/`.
-- Definir y construir servicios o APIs en `services/` cuando los siguientes hitos lo requieran.
+- Definir y construir servicios o APIs en `services/` solo cuando un hito posterior lo requiera.
+- Continuar con el siguiente hito del proyecto después del cierre formal del Hito 4.
 
 ## Partes que ya existen en el repo
 
 - `memory-bank/`
   - `projectbrief.md`
   - `techContext.md`
+  - `progress.md`
 - `src/`
   - tipos y utilidades TypeScript compartidas de la raiz
 - `packages/shared/`
@@ -72,16 +100,25 @@
   - `backoffice` creado y funcional con dashboard operativo en `/`
 - `services/`
   - carpeta reservada para APIs o workers, sin un servicio concreto identificado para TrackFlow en esta revision
+- `.agents/`
+  - regla de contexto y arquitectura
+  - skill de integracion de logica de negocio
+- `AGENTS.md`
+  - instrucciones generales para agentes de desarrollo
+## Proximos pasos
 
 ## Proximos pasos
 
-- Paso activo: revision final del Hito 4.
-- Mantener estabilidad de `uis/website` (`/` y `/application`) y `uis/backoffice`.
-- Reutilizar la logica de `src/` mediante imports directos en las nuevas interfaces o servicios.
+- Hito 4 completado y validado.
+- Mantener estables `uis/website` y `uis/backoffice`.
+- Continuar reutilizando la logica de `src/` mediante imports directos, sin duplicacion.
+- Iniciar el siguiente hito del proyecto cuando se defina su alcance.
 
 ## Inconsistencias detectadas
 
-- El `README.md` raiz describe el repo como template base sin apps ejecutables globales, pero actualmente si existe una app real en `apps/talent-pipeline-tracker/`.
-- El contexto de Hito 3 indica que el backend ya esta listo, pero en esta revision no se identifica un servicio concreto en `services/` asociado a esa aplicacion.
-- El contexto general mezcla el escenario oficial Estados Unidos-Espana con una propuesta personal de adaptacion hacia Mexico en `company-choice.md`.
+## Inconsistencias detectadas
+
+- El `README.md` raiz todavia conserva partes del texto original del template y no refleja por completo el estado actual del monorepo.
+- El contexto del Hito 3 menciona un backend existente, pero no se identifica actualmente un servicio concreto asociado dentro de `services/`.
+- Parte de la documentacion mezcla el escenario oficial Estados Unidos-Espana con una propuesta alternativa hacia Mexico en `company-choice.md`.
 

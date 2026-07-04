@@ -2,7 +2,7 @@
 
 ## Stack tecnologico confirmado
 
-- TypeScript esta presente en la raiz del monorepo y en `apps/talent-pipeline-tracker/`.
+- TypeScript esta presente en la raiz del monorepo y en las aplicaciones principales.
 - En la raiz, `package.json` define `typescript` y scripts `typecheck` y `build` con `tsc`.
 - El `tsconfig.json` raiz usa:
   - `target: ES2020`
@@ -10,23 +10,43 @@
   - `moduleResolution: NodeNext`
   - `strict: true`
   - `noEmit: true`
-- Next.js esta presente en `apps/talent-pipeline-tracker/`.
-- React y React DOM estan presentes en `apps/talent-pipeline-tracker/`.
-- Tailwind esta presente en `apps/talent-pipeline-tracker/`:
-  - dependencia `tailwindcss`
-  - plugin `@tailwindcss/postcss`
-  - instruccion explicita de uso en Hito 1
+- `src/package.json` define `type: module` para permitir que las aplicaciones Next.js consuman la logica compartida de `src/` como ESM.
+- Next.js, React y TypeScript estan presentes en:
+  - `apps/talent-pipeline-tracker/`
+  - `uis/website/`
+  - `uis/backoffice/`
+- `uis/website/` y `uis/backoffice/` usan:
+  - Next.js 16
+  - React 19
+  - TypeScript
+  - App Router
+  - ESLint
+  - Tailwind CSS v4
+  - `@tailwindcss/postcss`
+- Cada aplicacion mantiene su propio:
+  - `package.json`
+  - `package-lock.json`
+  - `tsconfig.json`
+  - configuracion de Next.js
+  - configuracion de ESLint
+  - configuracion de PostCSS
+  - `.gitignore`
 
 ## Estructura tecnica actual del monorepo
 
-- `uis/`
-  - carpeta destinada a interfaces de usuario.
-  - su README indica que aqui deben vivir apps como `website` o `backoffice`.
-- `services/`
-  - carpeta destinada a APIs y background workers.
-- `packages/`
-  - carpeta destinada a paquetes compartidos versionables.
-  - existe `packages/shared/package.json` con el paquete `@repo/shared-types`.
+- `uis/backoffice/`
+  - aplicacion independiente Next.js + TypeScript para la interfaz interna.
+  - ruta implementada actualmente:
+    - `/` (dashboard operativo)
+  - layout y estilos propios, diferenciados de la web publica.
+  - componentes principales:
+    - `components/layout/`
+    - `components/dashboard/`
+  - capa de integracion en `lib/operationalSnapshot.ts`.
+  - integra tipos y logica de negocio mediante imports directos desde `src/`.
+  - no duplica funciones del Hito 2.
+  - muestra resultados calculados directamente en la interfaz.
+  - build y lint validados.
 - `src/`
   - contiene codigo TypeScript incluido por el `tsconfig.json` raiz.
   - estructura actual observada:
@@ -78,13 +98,21 @@
   - reset integral de estado y UI
 - Se mantuvieron ids/names y mensajes del formulario original para conservar paridad funcional con Hito 1.
 - El backoffice consume resultados reales del Hito 2 en UI (inventario, stock bajo, validaciones, carrier recomendado y categorias) importando desde `src/utils/*` y `src/types/models.ts`.
-
+- `uis/backoffice/lib/operationalSnapshot.ts` funciona como capa de integracion entre la logica compartida de `src/` y los componentes visuales del dashboard.
+- `src/package.json` define el alcance ESM de `src/` para resolver la compatibilidad de imports con las aplicaciones Next.js sin modificar ni duplicar la logica de negocio.
 ## Restricciones tecnicas para futuras implementaciones
 
 - No duplicar la logica del Hito 2.
   - Debe importarse desde su ubicacion original en `src/`.
 - Antes de modificar una carpeta, leer primero su `README.md` si existe.
-- `uis/` debe usarse para interfaces futuras como `website` y `backoffice`.
+- `uis/` contiene las interfaces independientes del proyecto:
+  - `website` para la experiencia publica.
+  - `backoffice` para la operacion interna.
+  - futuras interfaces deben seguir esta misma separacion por responsabilidad.
+  - No mostrar en la interfaz nombres internos de funciones, hitos o detalles de implementacion que pertenezcan al codigo.
+- Los resultados de la logica compartida deben transformarse para presentarse con lenguaje de negocio en la UI.
+- No versionar carpetas generadas como `.next/` o `node_modules/`.
+- Los `.gitignore` de cada aplicacion deben conservar las exclusiones de archivos generados y archivos de entorno.
 - `services/` debe usarse para APIs o servicios backend.
 - `packages/` debe usarse para codigo compartido reutilizable entre apps y servicios.
 - `src/` debe considerarse la ubicacion actual de utilidades y tipos TypeScript de la raiz.
@@ -101,14 +129,23 @@
     - landing migrada y funcional en `/`.
     - formulario migrado y validado funcionalmente en `/application`.
 - Hito 2:
-  - requiere utilidades TypeScript puras para inventario, envios, scoring, calculos y validaciones.
-  - no debe resolverse duplicando logica en nuevas carpetas.
+  - contiene utilidades TypeScript puras para inventario, envios, scoring, calculos y validaciones.
+  - la logica permanece en su ubicacion original dentro de `src/`.
+  - parte de esta logica ya esta integrada en `uis/backoffice` mediante imports directos.
+  - no debe duplicarse en nuevas aplicaciones o servicios.
 - Hito 3:
   - ya existe una implementacion en `apps/talent-pipeline-tracker/`.
   - confirma el uso de Next.js para interfaces operativas internas.
 
+- Hito 4:
+  - infraestructura AI-ready completada con `memory-bank/`, `AGENTS.md`, reglas y skills.
+  - web publica implementada en `uis/website`.
+  - formulario completo disponible en `/application`.
+  - backoffice interno implementado en `uis/backoffice`.
+  - logica del Hito 2 integrada visualmente sin duplicacion.
+  - build y lint validados en ambas aplicaciones.
 ## Dudas e inconsistencias tecnicas detectadas
 
 - El `README.md` raiz dice que el template no incluye apps ejecutables ni configuracion global de workspace, pero en el repo actual si existe una app funcional en `apps/talent-pipeline-tracker/`.
 - El contexto de Hito 3 menciona que el backend ya esta listo, pero en la estructura actual no se identifica claramente un servicio concreto en `services/` asociado a esa app.
-- `src/` contiene codigo utilitario, pero no tiene `README.md`, aunque la consigna general del repo recomienda apoyarse en README por carpeta.
+- `src/` contiene codigo utilitario compartido y ahora tambien `src/package.json` para compatibilidad ESM, pero no tiene `README.md`.
