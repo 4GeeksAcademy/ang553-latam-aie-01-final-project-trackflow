@@ -78,6 +78,4 @@
 - El `README.md` raiz describe el repo como template base sin apps ejecutables globales, pero actualmente si existe una app real en `apps/talent-pipeline-tracker/`.
 - El contexto de Hito 3 indica que el backend ya esta listo, pero en esta revision no se identifica un servicio concreto en `services/` asociado a esa aplicacion.
 - El contexto general mezcla el escenario oficial Estados Unidos-Espana con una propuesta personal de adaptacion hacia Mexico en `company-choice.md`.
-- En el contexto organizacional aparecen referencias distintas para liderazgo ejecutivo:
-  - Thomas Harry como CEO en parte del contexto
-  - Daniel Espinoza como CEO en otra parte del mismo material
+
