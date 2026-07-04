@@ -1,3 +1,9 @@
+"use client";
+
+import { useState, type ChangeEvent } from "react";
+
+import { initialApplicationFormValues } from "@/types/applicationForm";
+
 const operationCountries = ["Estados Unidos", "España", "Ambos", "Otro"] as const;
 const productTypes = ["Moda", "Electrónica", "Cosmética", "Alimentación", "Otro"] as const;
 const monthlyVolumes = ["0-100", "101-500", "501-2000", "2000+", "No estoy seguro"] as const;
@@ -19,6 +25,35 @@ const current3plOptions = [
 ] as const;
 
 export function ApplicationForm() {
+  const [formValues, setFormValues] = useState(initialApplicationFormValues);
+
+  function handleFieldChange(event: ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) {
+    const { name, value } = event.target;
+    setFormValues((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
+  }
+
+  // El grupo de servicios se modela como array para reflejar checkboxes multi-seleccion.
+  function handleServicesInterestChange(event: ChangeEvent<HTMLInputElement>) {
+    const { value, checked } = event.target;
+
+    setFormValues((prev) => ({
+      ...prev,
+      servicesInterest: checked
+        ? [...prev.servicesInterest, value]
+        : prev.servicesInterest.filter((item) => item !== value),
+    }));
+  }
+
+  function handlePrivacyPolicyChange(event: ChangeEvent<HTMLInputElement>) {
+    setFormValues((prev) => ({
+      ...prev,
+      privacyPolicy: event.target.checked,
+    }));
+  }
+
   return (
     <form id="applicationForm" className="rounded-lg border border-gray-200 bg-white p-8 shadow-sm">
       <fieldset className="mb-8 border-b border-gray-200 pb-8">
@@ -33,6 +68,8 @@ export function ApplicationForm() {
             id="companyName"
             name="companyName"
             required
+            value={formValues.companyName}
+            onChange={handleFieldChange}
             placeholder="Ej: Mi Tienda Online"
             className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
           />
@@ -48,6 +85,8 @@ export function ApplicationForm() {
             id="contactPerson"
             name="contactPerson"
             required
+            value={formValues.contactPerson}
+            onChange={handleFieldChange}
             placeholder="Nombre completo"
             className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
           />
@@ -63,6 +102,8 @@ export function ApplicationForm() {
             id="corporateEmail"
             name="corporateEmail"
             required
+            value={formValues.corporateEmail}
+            onChange={handleFieldChange}
             placeholder="contacto@empresa.com"
             className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
           />
@@ -78,6 +119,8 @@ export function ApplicationForm() {
             id="phone"
             name="phone"
             required
+            value={formValues.phone}
+            onChange={handleFieldChange}
             placeholder="+1 (555) 123-4567"
             className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
           />
@@ -92,6 +135,8 @@ export function ApplicationForm() {
             type="url"
             id="website"
             name="website"
+            value={formValues.website}
+            onChange={handleFieldChange}
             placeholder="https://www.mitiendaonline.com"
             className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
           />
@@ -110,7 +155,8 @@ export function ApplicationForm() {
             id="operationCountry"
             name="operationCountry"
             required
-            defaultValue=""
+            value={formValues.operationCountry}
+            onChange={handleFieldChange}
             className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
           >
             <option value="">Selecciona una opción</option>
@@ -131,7 +177,8 @@ export function ApplicationForm() {
             id="productType"
             name="productType"
             required
-            defaultValue=""
+            value={formValues.productType}
+            onChange={handleFieldChange}
             className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
           >
             <option value="">Selecciona una opción</option>
@@ -152,7 +199,8 @@ export function ApplicationForm() {
             id="monthlyVolume"
             name="monthlyVolume"
             required
-            defaultValue=""
+            value={formValues.monthlyVolume}
+            onChange={handleFieldChange}
             className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
           >
             <option value="">Selecciona una opción</option>
@@ -182,6 +230,8 @@ export function ApplicationForm() {
                     id={service.id}
                     name="servicesInterest[]"
                     value={service.value}
+                    checked={formValues.servicesInterest.includes(service.value)}
+                    onChange={handleServicesInterestChange}
                     className="h-4 w-4 rounded text-blue-600 focus:ring-2 focus:ring-blue-500"
                   />
                   <label htmlFor={service.id} className="ml-3 text-gray-700">
@@ -208,6 +258,8 @@ export function ApplicationForm() {
                     name="current3PL"
                     value={option.value}
                     required
+                    checked={formValues.current3PL === option.value}
+                    onChange={handleFieldChange}
                     className="h-4 w-4 text-blue-600 focus:ring-2 focus:ring-blue-500"
                   />
                   <label htmlFor={option.id} className="ml-3 text-gray-700">
@@ -233,6 +285,8 @@ export function ApplicationForm() {
             name="comments"
             maxLength={500}
             rows={5}
+            value={formValues.comments}
+            onChange={handleFieldChange}
             placeholder="Cuéntanos sobre tus necesidades logísticas específicas..."
             className="w-full resize-none rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
           />
@@ -255,6 +309,8 @@ export function ApplicationForm() {
               id="privacyPolicy"
               name="privacyPolicy"
               required
+              checked={formValues.privacyPolicy}
+              onChange={handlePrivacyPolicyChange}
               className="mt-1 h-4 w-4 rounded text-blue-600 focus:ring-2 focus:ring-blue-500"
             />
             <label htmlFor="privacyPolicy" className="ml-3 text-gray-700">

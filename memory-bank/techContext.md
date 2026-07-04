@@ -36,6 +36,15 @@
   - aplicacion existente basada en Next.js.
   - usa estructura tipo App Router con carpeta `app/`.
   - incluye `components/`, `lib/`, `services/`, `types/` y `public/`.
+- `uis/website/`
+  - aplicacion Next.js + TypeScript creada para la web publica.
+  - rutas implementadas actualmente:
+    - `/` (landing migrada desde `index.html`)
+    - `/application` (estructura del formulario migrada desde `application.html`)
+  - organizacion por componentes:
+    - `components/layout/`
+    - `components/sections/`
+    - `components/forms/`
 
 ## Decisiones de arquitectura ya tomadas
 
@@ -48,6 +57,10 @@
 - El `tsconfig.json` raiz incluye solo `src/**/*.ts`, lo que refuerza que la logica TypeScript compartida de la raiz se concentra en `src/`.
 - `apps/talent-pipeline-tracker/` ya adopta una arquitectura separada por aplicacion, con su propio `package.json`, `tsconfig.json` y dependencias.
 - El Hito 3 ya parte de un frontend montado sobre Next.js para una herramienta operativa interna.
+- `uis/website/` sigue la misma convencion tecnica de app Next.js aislada (scripts, tsconfig estricto, eslint y tailwind v4).
+- La landing publica se migro a componentes React reutilizables manteniendo contenido y orden del Hito 1.
+- El formulario en `/application` se migro solo en estructura (sin logica de validacion) para separar claramente Paso 3 y Paso 4.
+- Se preservaron ids/names de campos y contenedores de error/mensaje para facilitar el acople posterior de validaciones.
 
 ## Restricciones tecnicas para futuras implementaciones
 
@@ -67,6 +80,10 @@
 - Hito 1:
   - requiere sitio web responsive, accesible y con SEO.
   - pide usar Tailwind.
+  - estado actual:
+    - landing migrada y funcional en `/`.
+    - formulario migrado estructuralmente en `/application`.
+    - validaciones dinamicas y UX de envio aun pendientes.
 - Hito 2:
   - requiere utilidades TypeScript puras para inventario, envios, scoring, calculos y validaciones.
   - no debe resolverse duplicando logica en nuevas carpetas.

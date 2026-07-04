@@ -3,7 +3,7 @@
 ## Estado actual
 
 - El repositorio mantiene una estructura de monorepo base para los hitos del proyecto.
-- Ya existe contexto funcional suficiente para TrackFlow en `CONTEXT.md` y en los archivos de `milestones/`.
+- Ya existe contexto funcional suficiente para TrackFlow en `CONTEXT.md` y en `memory-bank/`.
 - El banco de memoria para Hito 4 ya fue iniciado con:
   - `memory-bank/projectbrief.md`
   - `memory-bank/techContext.md`
@@ -36,10 +36,23 @@
   - estructura propia de app
   - implementacion basada en Next.js
   - frontend interno alineado con el Hito 3
+- App web publica inicial en `uis/website/`:
+  - estructura minima Next.js + TypeScript creada y validada
+  - landing de Hito 1 migrada a `/` con componentes React reutilizables
+  - SEO base y JSON-LD de organizacion migrados a App Router
+- Ruta `/application` en `uis/website/`:
+  - formulario de Hito 1 migrado en estructura a React + TypeScript
+  - campos, labels, opciones, placeholders e ids preservados para acoplar validaciones
+  - navegacion de ida y vuelta con `/` disponible
 
 ## Pendiente
 
-- Implementar la web publica de TrackFlow como interfaz ubicada en `uis/website`.
+- Implementar validaciones del formulario en `uis/website/app/application` (Paso 4):
+  - mensajes de error dinamicos
+  - warning de bajo volumen
+  - contador dinamico de comentarios
+  - mensaje de exito
+  - logica de envio/reset
 - Implementar una interfaz operativa o administrativa en `uis/backoffice`.
 - Integrar la logica TypeScript del Hito 2 desde `src/` sin duplicarla en nuevas carpetas.
 - Completar la infraestructura de agentes en la raiz del monorepo.
@@ -60,18 +73,17 @@
 - `apps/talent-pipeline-tracker/`
   - aplicacion existente del Hito 3
 - `uis/`
-  - carpeta reservada para interfaces futuras, aun sin `website` ni `backoffice`
+  - `website` ya creado con rutas `/` y `/application`
+  - `backoffice` aun pendiente
 - `services/`
   - carpeta reservada para APIs o workers, sin un servicio concreto identificado para TrackFlow en esta revision
 
 ## Proximos pasos
 
-- Consolidar el inicio del Hito 4 usando el banco de memoria ya creado.
-- Crear la estructura de agentes pendiente en la raiz antes de ampliar automatizaciones.
-- Crear `uis/website` para materializar la web publica definida en Hito 1.
+- Paso activo: implementar la capa de validacion del formulario en `/application` sin backend (Paso 4).
+- Mantener la estabilidad de la landing en `/` mientras se integra validacion.
 - Crear `uis/backoffice` para futuras interfaces operativas del Hito 4.
 - Reutilizar la logica de `src/` mediante imports directos en las nuevas interfaces o servicios.
-- Revisar el `README.md` de cada carpeta antes de introducir cambios estructurales.
 
 ## Inconsistencias detectadas
 
