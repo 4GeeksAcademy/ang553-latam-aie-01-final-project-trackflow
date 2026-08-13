@@ -12,9 +12,21 @@ import tempfile
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Response, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 
 from scripts.incidents.analyzer import analyze_records, export_results_csv, load_csv
 from scripts.incidents import CsvLoadError
+
+# ── CORS (development) ──────────────────────────────────────────────────────
+#
+# Allow the Next.js dev server (localhost:3000) to call this API directly.
+# These origins are explicit — no wildcard — and only cover local development.
+# In production, replace with the actual frontend domain(s).
+
+_DEV_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
 
 app = FastAPI(
     title="TrackFlow Incident Analysis API",
@@ -38,6 +50,13 @@ _ALLOWED_EXTENSIONS = frozenset({".csv"})
 #   - Not shared across multiple workers/processes.
 #   - Suitable only for development and single‑worker deployments.
 # Future iterations may replace this with persistent storage (DB, Redis, etc.).
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_DEV_ORIGINS,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
+
 _last_result: dict | None = None
 
 
