@@ -459,6 +459,6 @@ def export_results_csv(result: dict[str, Any], output_path: str) -> None:
     )
 
     with open(output_path, "w", encoding="utf-8", newline="") as f:
-        f.write("section,metric,value\n")
-        for section, metric, value in rows:
-            f.write(f"{section},{metric},{value}\n")
+        writer = csv.writer(f)
+        writer.writerow(["section", "metric", "value"])
+        writer.writerows(rows)

@@ -1,14 +1,13 @@
 /**
  * Minimal API client for TrackFlow Incident Analysis.
  *
- * Uses ``NEXT_PUBLIC_API_URL`` (fallback ``http://127.0.0.1:8000``).
+ * Uses ``NEXT_PUBLIC_API_URL`` when provided; otherwise same-origin routes.
  * No external dependencies — plain ``fetch`` + ``FormData``.
  */
 
 import type { IncidentAnalysisResult } from "@/types/incidents";
 
-const BASE_URL: string =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+const BASE_URL: string = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 /**
  * Errors thrown by ``analyzeIncidents`` carry a human-readable message
