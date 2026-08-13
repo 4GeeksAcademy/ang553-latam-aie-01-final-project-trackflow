@@ -60,7 +60,11 @@ VALID_CATEGORIES: frozenset[str] = frozenset({
     "DAMAGE",
 })
 
-VALID_STATUSES: frozenset[str] = frozenset({"OPEN", "CLOSED", "DISCARDED"})
+STATUS_OPEN = "OPEN"
+STATUS_CLOSED = "CLOSED"
+STATUS_DISCARDED = "DISCARDED"
+
+VALID_STATUSES: frozenset[str] = frozenset({STATUS_OPEN, STATUS_CLOSED, STATUS_DISCARDED})
 
 # ── Carrier mappings by country ──────────────────────────────────────────────
 

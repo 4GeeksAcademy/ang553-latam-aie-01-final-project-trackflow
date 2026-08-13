@@ -51,6 +51,7 @@ from . import (
     MISSING_TRACKING_NUMBER,
     SHORT_DESCRIPTION,
     SHORT_TRACKING_NUMBER,
+    STATUS_CLOSED,
     VALID_CATEGORIES,
     VALID_COUNTRIES,
     VALID_CUSTOMER_TYPES,
@@ -58,7 +59,7 @@ from . import (
     is_missing,
 )
 
-__all__ = ["validate_record"]
+__all__ = ["validate_record", "analyze_records"]
 
 
 def _validate_incident_id(record: dict[str, Any], errors: list[str]) -> None:
@@ -227,3 +228,117 @@ def validate_record(record: dict[str, Any]) -> tuple[bool, list[str]]:
     _validate_satisfaction_score(record, errors)
 
     return (len(errors) == 0, errors)
+
+
+# ── Aggregate analysis ───────────────────────────────────────────────────────
+
+
+def _build_breakdown(
+    records: list[dict[str, Any]],
+    field: str,
+    valid_values: frozenset[str],
+) -> dict[str, int]:
+    """Count occurrences of each valid value for *field* across *records*."""
+    breakdown: dict[str, int] = {v: 0 for v in valid_values}
+    for rec in records:
+        val = rec.get(field)
+        if val in breakdown:
+            breakdown[val] += 1
+    return breakdown
+
+
+def _build_score_distribution(records: list[dict[str, Any]]) -> dict[int, int]:
+    """Count how many records have each satisfaction score (1-5)."""
+    dist: dict[int, int] = {s: 0 for s in range(1, 6)}
+    for rec in records:
+        raw = rec.get(FIELD_SATISFACTION_SCORE)
+        if raw is not None and str(raw).strip() != "":
+            try:
+                score = int(raw)
+                if score >= 1 and score <= 5:
+                    dist[score] += 1
+            except (ValueError, TypeError):
+                pass
+    return dist
+
+
+def analyze_records(
+    records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """
+    Aggregate-analysis over a collection of TrackFlow incident records.
+
+    Parameters
+    ----------
+    records : list[dict[str, Any]]
+        A list of incident record dictionaries.
+
+    Returns
+    -------
+    dict[str, Any]
+        A serializable structure with the following keys:
+
+        - ``total_records`` — total number of records received.
+        - ``valid_records`` — number of records that passed validation.
+        - ``invalid_records`` — number of records with at least one error.
+        - ``invalid_breakdown`` — ``{error_code: count}`` across all errors
+          found in invalid records.
+        - ``category_breakdown`` — ``{category: count}`` for valid records.
+        - ``status_breakdown`` — ``{status: count}`` for valid records.
+        - ``country_breakdown`` — ``{country: count}`` for valid records.
+        - ``closed_scored`` — number of valid CLOSED records with a score.
+        - ``score_distribution`` — ``{score: count}`` for valid CLOSED records.
+        - ``average_satisfaction`` — mean score of valid CLOSED records (2
+          decimal places), or ``0.0`` when there are no scored CLOSED records.
+    """
+    total_records = len(records)
+    valid: list[dict[str, Any]] = []
+    invalid_count = 0
+    invalid_breakdown: dict[str, int] = {}
+
+    for rec in records:
+        is_valid, errors = validate_record(rec)
+        if is_valid:
+            valid.append(rec)
+        else:
+            invalid_count += 1
+            for err in errors:
+                invalid_breakdown[err] = invalid_breakdown.get(err, 0) + 1
+
+    # ── Breakdowns on valid records only ──
+    category_breakdown = _build_breakdown(valid, FIELD_CATEGORY, VALID_CATEGORIES)
+    status_breakdown = _build_breakdown(valid, FIELD_STATUS, VALID_STATUSES)
+    country_breakdown = _build_breakdown(valid, FIELD_COUNTRY, VALID_COUNTRIES)
+
+    # ── Satisfaction on valid CLOSED records only ──
+    closed_scored_records = [
+        rec
+        for rec in valid
+        if rec.get(FIELD_STATUS) == STATUS_CLOSED
+        and not is_missing(rec.get(FIELD_SATISFACTION_SCORE))
+    ]
+
+    closed_scored = len(closed_scored_records)
+    score_distribution = _build_score_distribution(closed_scored_records)
+
+    if closed_scored > 0:
+        total_score = sum(
+            int(rec[FIELD_SATISFACTION_SCORE])
+            for rec in closed_scored_records
+        )
+        average_satisfaction = round(total_score / closed_scored, 2)
+    else:
+        average_satisfaction = 0.0
+
+    return {
+        "total_records": total_records,
+        "valid_records": len(valid),
+        "invalid_records": invalid_count,
+        "invalid_breakdown": invalid_breakdown,
+        "category_breakdown": category_breakdown,
+        "status_breakdown": status_breakdown,
+        "country_breakdown": country_breakdown,
+        "closed_scored": closed_scored,
+        "score_distribution": score_distribution,
+        "average_satisfaction": average_satisfaction,
+    }
