@@ -9,10 +9,16 @@ from __future__ import annotations
 
 from typing import Any
 
+import csv
+import os
+
 from . import (
     ALL_CARRIERS,
+    ALL_FIELDS,
     CARRIERS_BY_COUNTRY,
+    CsvLoadError,
     DATE_PATTERN,
+    ERROR_LABELS,
     FIELD_CARRIER,
     FIELD_CATEGORY,
     FIELD_COUNTRY,
@@ -59,7 +65,7 @@ from . import (
     is_missing,
 )
 
-__all__ = ["validate_record", "analyze_records"]
+__all__ = ["validate_record", "analyze_records", "load_csv", "export_results_csv"]
 
 
 def _validate_incident_id(record: dict[str, Any], errors: list[str]) -> None:
@@ -342,3 +348,117 @@ def analyze_records(
         "score_distribution": score_distribution,
         "average_satisfaction": average_satisfaction,
     }
+
+
+# ── CSV loading ──────────────────────────────────────────────────────────────
+
+
+def load_csv(file_path: str) -> list[dict[str, str]]:
+    """
+    Load a TrackFlow CSV file and return its records as a list of dicts.
+
+    The file must be UTF-8 encoded, comma-separated, and include a header
+    row containing all required column names (see ``ALL_FIELDS``).
+
+    Parameters
+    ----------
+    file_path : str
+        Path to the CSV file.
+
+    Returns
+    -------
+    list[dict[str, str]]
+        A list of dictionaries, one per data row, with keys matching the
+        CSV header columns.
+
+    Raises
+    ------
+    CsvLoadError
+        If the file does not exist, is empty, or is missing required columns.
+    """
+    if not os.path.isfile(file_path):
+        raise CsvLoadError(f"File not found: {file_path}")
+
+    if os.path.getsize(file_path) == 0:
+        raise CsvLoadError(f"File is empty: {file_path}")
+
+    with open(file_path, encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+
+        if reader.fieldnames is None or len(reader.fieldnames) == 0:
+            raise CsvLoadError(
+                f"CSV file has no valid header row: {file_path}"
+            )
+
+        header = list(reader.fieldnames)
+        missing = [col for col in ALL_FIELDS if col not in header]
+
+        if missing:
+            raise CsvLoadError(
+                f"Missing required columns: {', '.join(missing)}"
+            )
+
+        records = list(reader)
+
+    # csv.DictReader yields empty list for an otherwise valid file with no
+    # data rows, which is acceptable — return an empty list.
+    return records
+
+
+# ── Results export ───────────────────────────────────────────────────────────
+
+
+def export_results_csv(result: dict[str, Any], output_path: str) -> None:
+    """
+    Export aggregate analysis results to a CSV file (one row per metric).
+
+    Parameters
+    ----------
+    result : dict[str, Any]
+        The dictionary returned by ``analyze_records()``.
+    output_path : str
+        Path where the CSV file will be written.
+
+    Notes
+    -----
+    The output file contains three columns: ``section``, ``metric``, ``value``.
+    No individual records, PII, or sensitive data are ever exported.
+    """
+    rows: list[tuple[str, str, str]] = []
+
+    # ── General ──
+    rows.append(("general", "total_records", str(result["total_records"])))
+    rows.append(("general", "valid_records", str(result["valid_records"])))
+    rows.append(("general", "invalid_records", str(result["invalid_records"])))
+
+    # ── Invalid breakdown ──
+    for code, count in sorted(result["invalid_breakdown"].items()):
+        label = ERROR_LABELS.get(code, code)
+        rows.append(("invalid", label, str(count)))
+
+    # ── Category ──
+    for cat, count in sorted(result["category_breakdown"].items()):
+        rows.append(("category", cat, str(count)))
+
+    # ── Status ──
+    for st, count in sorted(result["status_breakdown"].items()):
+        rows.append(("status", st, str(count)))
+
+    # ── Country ──
+    for co, count in sorted(result["country_breakdown"].items()):
+        rows.append(("country", co, str(count)))
+
+    # ── Satisfaction ──
+    rows.append(("satisfaction", "closed_scored", str(result["closed_scored"])))
+    for score in range(1, 6):
+        metric = f"score_{score}"
+        value = str(result["score_distribution"].get(score, 0))
+        rows.append(("satisfaction", metric, value))
+    rows.append(
+        ("satisfaction", "average_satisfaction", str(result["average_satisfaction"]))
+    )
+
+    with open(output_path, "w", encoding="utf-8", newline="") as f:
+        f.write("section,metric,value\n")
+        for section, metric, value in rows:
+            f.write(f"{section},{metric},{value}\n")

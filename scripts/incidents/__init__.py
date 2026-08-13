@@ -140,3 +140,44 @@ def is_missing(value: Any) -> bool:
     if isinstance(value, str) and value.strip() == "":
         return True
     return False
+
+
+# ── CSV loading errors ───────────────────────────────────────────────────────
+
+
+class CsvLoadError(Exception):
+    """
+    Raised when a TrackFlow CSV cannot be loaded or its headers are invalid.
+
+    The message only references column names and never contains row data,
+    client data, or individual email addresses.
+    """
+
+
+# ── Error code → human-readable label mapping ───────────────────────────────
+
+
+ERROR_LABELS: dict[str, str] = {
+    MISSING_INCIDENT_ID: "Missing incident ID",
+    INVALID_INCIDENT_ID: "Invalid incident ID format",
+    MISSING_DATE: "Missing date",
+    INVALID_DATE: "Invalid date format",
+    MISSING_COUNTRY: "Missing country",
+    INVALID_COUNTRY: "Invalid country",
+    MISSING_CUSTOMER_TYPE: "Missing customer type",
+    INVALID_CUSTOMER_TYPE: "Invalid customer type",
+    MISSING_TRACKING_NUMBER: "Missing tracking number",
+    SHORT_TRACKING_NUMBER: "Invalid tracking number",
+    MISSING_CARRIER: "Missing carrier",
+    INVALID_CARRIER_FOR_COUNTRY: "Carrier/country mismatch",
+    MISSING_CATEGORY: "Invalid or missing category",
+    INVALID_CATEGORY: "Invalid or missing category",
+    MISSING_DESCRIPTION: "Missing description",
+    SHORT_DESCRIPTION: "Description too short",
+    MISSING_STATUS: "Missing status",
+    INVALID_STATUS: "Invalid status",
+    MISSING_CUSTOMER_EMAIL: "Invalid or missing email",
+    INVALID_CUSTOMER_EMAIL: "Invalid or missing email",
+    MISSING_SATISFACTION_SCORE_FOR_CLOSED: "Closed incident, no score",
+    INVALID_SATISFACTION_SCORE: "Invalid satisfaction score",
+}
