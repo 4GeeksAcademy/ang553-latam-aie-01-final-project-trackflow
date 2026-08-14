@@ -12,6 +12,8 @@ dependencies = [
     "uvicorn>=0.34.0,<1.0.0",
     "python-multipart>=0.0.12,<1.0.0",
     "tinydb>=4.8.0,<5.0.0",
+    "python-jose[cryptography]>=3.5.0",
+    "libpass[bcrypt]>=1.9.3",
 ]
 
 [project.scripts]
