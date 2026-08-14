@@ -16,7 +16,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from scripts.incidents.analyzer import analyze_records, export_results_csv, load_csv
 from scripts.incidents import CsvLoadError
+from services.api.routes.auth import router as auth_router
+from services.api.routes.profiles import router as profiles_router
 from services.api.routes.suppliers import router as suppliers_router
+from services.api.routes.users import router as users_router
 
 # ── CORS (development) ──────────────────────────────────────────────────────
 #
@@ -54,7 +57,7 @@ _ALLOWED_EXTENSIONS = frozenset({".csv"})
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_DEV_ORIGINS,
-    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -66,6 +69,9 @@ app.include_router(
     prefix="/api",
     include_in_schema=False,
 )
+app.include_router(auth_router)
+app.include_router(users_router)
+app.include_router(profiles_router)
 
 
 # ── Health check ─────────────────────────────────────────────────────────────

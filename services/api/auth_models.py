@@ -67,6 +67,16 @@ class UserCreate(BaseModel):
     password: str
 
 
+class UserRegister(BaseModel):
+    """Payload for public registration — credentials + optional profile data."""
+
+    email: str
+    password: str
+    name: str | None = None
+    phone: str | None = None
+    address: str | None = None
+
+
 class UserUpdate(BaseModel):
     """Payload for updating user fields."""
 
