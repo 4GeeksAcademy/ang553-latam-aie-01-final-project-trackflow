@@ -11,12 +11,16 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, Response, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from scripts.incidents.analyzer import analyze_records, export_results_csv, load_csv
 from scripts.incidents import CsvLoadError
+from services.api.auth_security import get_current_user
+from services.api.routes.auth import router as auth_router
+from services.api.routes.profiles import router as profiles_router
 from services.api.routes.suppliers import router as suppliers_router
+from services.api.routes.users import router as users_router
 
 # ── CORS (development) ──────────────────────────────────────────────────────
 #
@@ -54,7 +58,7 @@ _ALLOWED_EXTENSIONS = frozenset({".csv"})
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_DEV_ORIGINS,
-    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -66,6 +70,9 @@ app.include_router(
     prefix="/api",
     include_in_schema=False,
 )
+app.include_router(auth_router)
+app.include_router(users_router)
+app.include_router(profiles_router)
 
 
 # ── Health check ─────────────────────────────────────────────────────────────
@@ -80,7 +87,10 @@ async def health() -> dict[str, str]:
 # ── Analyze endpoint ─────────────────────────────────────────────────────────
 
 
-@app.post("/api/incidents/analyze")
+@app.post(
+    "/api/incidents/analyze",
+    dependencies=[Depends(get_current_user)],
+)
 async def analyze_incidents(file: UploadFile | None = File(None)) -> dict:
     """
     Upload a TrackFlow incident CSV and receive aggregate analysis results.
@@ -159,7 +169,10 @@ async def analyze_incidents(file: UploadFile | None = File(None)) -> dict:
 # ── Export endpoint (last successful analysis) ───────────────────────────────
 
 
-@app.get("/api/incidents/results/export")
+@app.get(
+    "/api/incidents/results/export",
+    dependencies=[Depends(get_current_user)],
+)
 async def export_results() -> Response:
     """
     Download the last successful analysis as a CSV file.
