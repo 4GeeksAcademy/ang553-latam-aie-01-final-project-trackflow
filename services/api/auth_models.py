@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # ── Role enum ────────────────────────────────────────────────────────────────
@@ -63,15 +63,19 @@ class ProfileInDB(BaseModel):
 class UserCreate(BaseModel):
     """Payload for creating a new user — credentials only."""
 
+    model_config = ConfigDict(extra="forbid")
+
     email: str
-    password: str
+    password: str = Field(min_length=8)
 
 
 class UserRegister(BaseModel):
     """Payload for public registration — credentials + optional profile data."""
 
+    model_config = ConfigDict(extra="forbid")
+
     email: str
-    password: str
+    password: str = Field(min_length=8)
     name: str | None = None
     phone: str | None = None
     address: str | None = None
@@ -80,14 +84,18 @@ class UserRegister(BaseModel):
 class UserUpdate(BaseModel):
     """Payload for updating user fields."""
 
+    model_config = ConfigDict(extra="forbid")
+
     email: str | None = None
-    password: str | None = None
+    password: str | None = Field(default=None, min_length=8)
     is_active: bool | None = None
     role: Role | None = None
 
 
 class ProfileCreate(BaseModel):
     """Payload for creating a profile."""
+
+    model_config = ConfigDict(extra="forbid")
 
     user_id: str
     name: str | None = None
@@ -97,6 +105,8 @@ class ProfileCreate(BaseModel):
 
 class ProfileUpdate(BaseModel):
     """Payload for updating a profile."""
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str | None = None
     phone: str | None = None

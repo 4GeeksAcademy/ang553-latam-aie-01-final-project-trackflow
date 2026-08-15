@@ -110,6 +110,19 @@ def get_user_in_db_by_email(email: str) -> UserInDB | None:
     return UserInDB(**doc)
 
 
+def list_users() -> list[UserResponse]:
+    """Return all users as public ``UserResponse`` objects.
+
+    Reads from TinyDB and converts each stored user to a safe response
+    (``hashed_password`` is never exposed).
+    """
+    docs = users.all()
+    result: list[UserResponse] = []
+    for doc in docs:
+        result.append(_user_to_response(UserInDB(**doc)))
+    return result
+
+
 def update_user(user_id: str, payload: UserUpdate) -> UserResponse:
     """Update a user's mutable fields. Raises ValueError if not found.
 

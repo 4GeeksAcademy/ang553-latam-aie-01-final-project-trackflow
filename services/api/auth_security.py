@@ -76,8 +76,6 @@ def create_access_token(sub: str, expires_delta: timedelta | None = None) -> str
 
 _oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
-_UserQuery = None  # lazy import handled inline
-
 
 def _find_user_by_id(user_id: str) -> UserInDB | None:
     """Look up a user by their TinyDB id string."""
@@ -99,6 +97,7 @@ def get_current_user(token: Annotated[str, Depends(_oauth2_scheme)]) -> UserInDB
     - token is expired
     - ``sub`` claim is missing
     - ``sub`` does not match an existing user
+    - user is inactive
     """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -118,6 +117,9 @@ def get_current_user(token: Annotated[str, Depends(_oauth2_scheme)]) -> UserInDB
 
     user = _find_user_by_id(sub)
     if user is None:
+        raise credentials_exception
+
+    if not user.is_active:
         raise credentials_exception
 
     return user

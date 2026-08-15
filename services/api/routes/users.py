@@ -24,41 +24,11 @@ from services.api.auth_services import (
     create_user,
     delete_user,
     get_user_by_id,
+    list_users as list_all_users,
     update_user,
 )
 
 router = APIRouter(prefix="/users", tags=["Users"])
-
-
-def _get_all_users() -> list[UserResponse]:
-    """Return all users from TinyDB (admin-only helper)."""
-    from services.api.auth_database import users as _users_db
-    from services.api.auth_models import UserInDB as _UserInDB
-
-    docs = _users_db.all()
-    result: list[UserResponse] = []
-    for doc in docs:
-        user = _UserInDB(**doc)
-        result.append(
-            UserResponse(
-                id=user.id,
-                email=user.email,
-                is_active=user.is_active,
-                role=user.role,
-                created_at=user.created_at,
-            )
-        )
-    return result
-
-
-def _user_to_response(user: UserInDB) -> UserResponse:
-    return UserResponse(
-        id=user.id,
-        email=user.email,
-        is_active=user.is_active,
-        role=user.role,
-        created_at=user.created_at,
-    )
 
 
 # ── POST /users (public) ─────────────────────────────────────────────────────
@@ -118,7 +88,7 @@ async def list_users(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to list users",
         )
-    return _get_all_users()
+    return list_all_users()
 
 
 # ── GET /users/{user_id} ─────────────────────────────────────────────────────
@@ -181,6 +151,13 @@ async def update_user_endpoint(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to change role",
+        )
+
+    # Non-admin cannot change is_active
+    if payload.is_active is not None and current_user.role != Role.admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to change is_active",
         )
 
     # Fetch existing user to verify existence

@@ -11,12 +11,14 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from services.api.auth_models import (
+    ProfileCreate,
     ProfileResponse,
     ProfileUpdate,
     UserInDB,
 )
 from services.api.auth_security import get_current_user
 from services.api.auth_services import (
+    create_profile,
     get_profile_by_user_id,
     update_profile,
 )
@@ -57,6 +59,24 @@ async def update_my_profile(
     Only the authenticated user's own profile can be modified.
     ``user_id`` cannot be changed.
     """
+    existing_profile = get_profile_by_user_id(current_user.id)
+
+    if existing_profile is None:
+        try:
+            return create_profile(
+                ProfileCreate(
+                    user_id=current_user.id,
+                    name=payload.name,
+                    phone=payload.phone,
+                    address=payload.address,
+                )
+            )
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e),
+            )
+
     try:
         return update_profile(current_user.id, payload)
     except ValueError as e:
