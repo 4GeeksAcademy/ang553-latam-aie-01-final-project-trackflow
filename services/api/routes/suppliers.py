@@ -6,9 +6,10 @@ import re
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from tinydb.table import Document
 
+from services.api.auth_security import get_current_user
 from services.api.database import suppliers
 from services.api.models import (
     Country,
@@ -19,7 +20,7 @@ from services.api.models import (
     VALID_CATEGORIES,
 )
 
-router = APIRouter(prefix="/suppliers", tags=["Suppliers"])
+router = APIRouter(prefix="/suppliers", tags=["Suppliers"], dependencies=[Depends(get_current_user)])
 
 _CATEGORY_PATTERN = "^(" + "|".join(
     re.escape(category) for category in sorted(VALID_CATEGORIES)
