@@ -1,6 +1,18 @@
+"use client";
+
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/AuthContext";
 
 export function BackofficeHeader() {
+  const router = useRouter();
+  const { logout } = useAuth();
+
+  const handleLogout = () => {
+    logout();
+    router.replace("/login");
+  };
+
   return (
     <header className="border-b border-white/10 bg-slate-950/70 backdrop-blur">
       <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
@@ -27,9 +39,13 @@ export function BackofficeHeader() {
           >
             Suppliers
           </Link>
-          <div className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm text-cyan-100">
-            Dashboard operativo inicial
-          </div>
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="rounded-full border border-rose-400/30 bg-rose-400/10 px-4 py-2 text-sm text-rose-200 transition-colors hover:bg-rose-400/20 hover:text-rose-100"
+          >
+            Logout
+          </button>
         </nav>
       </div>
     </header>

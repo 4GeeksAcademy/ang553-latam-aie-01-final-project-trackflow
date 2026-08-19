@@ -13,9 +13,8 @@
  *   interfering with the browser's automatic ``boundary`` header.
  * - Preserves all standard ``RequestInit`` options (``method``, ``body``,
  *   ``headers``, ``signal``, etc.).
- * - On a ``401`` response the stored token is **removed** but the caller
- *   still receives the ``Response`` so it can decide how to react (e.g.
- *   redirect to login, show a toast, …).
+ * - On a ``401`` response the stored token is **removed** and the
+ *   browser is redirected to ``/login``.
  */
 
 import { getToken, removeToken } from "@/lib/auth";
@@ -59,9 +58,13 @@ export async function authFetch(
     headers,
   });
 
-  // ── Handle 401 — remove stale token, let caller decide next steps ─
+  // ── Handle 401 — remove stale token, redirect to login ──────────
   if (response.status === 401) {
     removeToken();
+
+    if (typeof window !== "undefined") {
+      window.location.replace("/login");
+    }
   }
 
   return response;
