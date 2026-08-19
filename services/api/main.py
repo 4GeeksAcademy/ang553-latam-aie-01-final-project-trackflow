@@ -8,6 +8,7 @@ Run with::
 """
 from __future__ import annotations
 
+import os
 import tempfile
 from pathlib import Path
 
@@ -32,6 +33,16 @@ _DEV_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
+
+# Allow this repository's current Codespace frontend origin on port 3000
+# when running in GitHub Codespaces.
+_codespace_name = os.getenv("CODESPACE_NAME")
+_codespaces_domain = os.getenv("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN")
+
+if _codespace_name and _codespaces_domain:
+    _DEV_ORIGINS.append(
+        f"https://{_codespace_name}-3000.{_codespaces_domain}"
+    )
 
 app = FastAPI(
     title="TrackFlow Incident Analysis API",

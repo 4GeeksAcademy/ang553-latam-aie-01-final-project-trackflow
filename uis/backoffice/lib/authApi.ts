@@ -13,7 +13,12 @@
  */
 
 import { authFetch } from "@/lib/authFetch";
-import type { AuthUser } from "@/types/auth";
+import type {
+  AuthUser,
+  LoginCredentials,
+  LoginResponse,
+  RegisterPayload,
+} from "@/types/auth";
 
 const BASE_URL: string = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -45,6 +50,94 @@ export async function getCurrentUser(): Promise<AuthUser> {
   try {
     response = await authFetch(`${BASE_URL}/auth/me`, {
       method: "GET",
+    });
+  } catch {
+    throw new ApiError("Could not reach the authentication server. Make sure the backend is running.");
+  }
+
+  if (!response.ok) {
+    const message = await extractErrorMessage(response);
+    throw new ApiError(message, response.status);
+  }
+
+  try {
+    return (await response.json()) as AuthUser;
+  } catch {
+    throw new ApiError("Auth server returned an invalid JSON response.", response.status);
+  }
+}
+
+/* ── Login ─────────────────────────────────────────────────────────── */
+
+/**
+ * Authenticate a user against the backend.
+ *
+ * Calls ``POST /auth/login`` with `application/x-www-form-urlencoded`
+ * body containing ``username`` (the user's email) and ``password``.
+ *
+ * This is a **public** endpoint — no existing session is required, so
+ * plain ``fetch`` is used instead of ``authFetch``.
+ *
+ * @param credentials - Email and password to authenticate.
+ * @returns An object containing the JWT ``access_token`` and its type.
+ * @throws {@link ApiError} on network failure or non-OK response.
+ */
+export async function login(
+  credentials: LoginCredentials,
+): Promise<LoginResponse> {
+  const body = new URLSearchParams({
+    username: credentials.email,
+    password: credentials.password,
+  });
+
+  let response: Response;
+
+  try {
+    response = await fetch(`${BASE_URL}/auth/login`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body,
+    });
+  } catch {
+    throw new ApiError("Could not reach the authentication server. Make sure the backend is running.");
+  }
+
+  if (!response.ok) {
+    const message = await extractErrorMessage(response);
+    throw new ApiError(message, response.status);
+  }
+
+  try {
+    return (await response.json()) as LoginResponse;
+  } catch {
+    throw new ApiError("Auth server returned an invalid JSON response.", response.status);
+  }
+}
+
+/* ── Register ──────────────────────────────────────────────────────── */
+
+/**
+ * Register a new user in the backend.
+ *
+ * Calls ``POST /users`` with a JSON payload.
+ * This is a **public** endpoint and does not create a session.
+ *
+ * @param payload - Registration data accepted by the backend.
+ * @returns The created user as ``UserResponse``/``AuthUser``.
+ * @throws {@link ApiError} on network failure or non-OK response.
+ */
+export async function register(payload: RegisterPayload): Promise<AuthUser> {
+  let response: Response;
+
+  try {
+    response = await fetch(`${BASE_URL}/users`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
     });
   } catch {
     throw new ApiError("Could not reach the authentication server. Make sure the backend is running.");

@@ -58,8 +58,10 @@ interface AuthContextValue {
    * 3. Updates the global state accordingly.
    *
    * @param accessToken - The raw JWT returned by the login endpoint.
+   * @returns The authenticated user on success.
+   * @throws The original error from ``getCurrentUser()`` on failure.
    */
-  setSession: (accessToken: string) => Promise<void>;
+  setSession: (accessToken: string) => Promise<AuthUser>;
 
   /**
    * Re‑fetch the current user's profile from ``/auth/me``.
@@ -117,16 +119,18 @@ export function AuthProvider({
 
   // ── setSession ────────────────────────────────────────────────────
   const setSession = useCallback(
-    async (accessToken: string): Promise<void> => {
+    async (accessToken: string): Promise<AuthUser> => {
       setToken(accessToken);
       setIsLoading(true);
 
       try {
         const fetchedUser = await getCurrentUser();
         setUser(fetchedUser);
-      } catch {
+        return fetchedUser;
+      } catch (error) {
         removeToken();
         setUser(null);
+        throw error;
       } finally {
         setIsLoading(false);
       }
