@@ -1,0 +1,74 @@
+/**
+ * Types for Talent Pipeline Tracker Authentication API.
+ *
+ * Matches the structure returned by ``GET /auth/me``.
+ * Fields use **snake_case** as returned by the backend — no
+ * client-side transformation is performed at this layer.
+ */
+
+/** Role assigned to an authenticated user. */
+export type AuthUserRole = "admin" | "manager" | "user";
+
+/**
+ * Authenticated user representation as returned by ``/auth/me``.
+ */
+export interface AuthUser {
+  id: string;
+  email: string;
+  is_active: boolean;
+  role: AuthUserRole;
+  created_at: string;
+}
+
+/* ── Login types ──────────────────────────────────────────────────── */
+
+/** Credentials required to authenticate via ``POST /auth/login``. */
+export interface LoginCredentials {
+  email: string;
+  password: string;
+}
+
+/** Successful login response returned by ``POST /auth/login``. */
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
+}
+
+/* ── Register types ───────────────────────────────────────────────── */
+
+/** Payload accepted by ``POST /users`` for public registration. */
+export interface RegisterPayload {
+  email: string;
+  password: string;
+  name?: string | null;
+  phone?: string | null;
+  address?: string | null;
+}
+
+/* ── Profile types ────────────────────────────────────────────────── */
+
+/**
+ * Authenticated user's profile as returned by ``GET /profiles/me``.
+ *
+ * All profile fields are nullable — the backend allows a profile
+ * to exist with only ``id`` and ``user_id`` populated.
+ */
+export interface UserProfile {
+  id: string;
+  user_id: string;
+  name: string | null;
+  phone: string | null;
+  address: string | null;
+}
+
+/**
+ * Payload accepted by ``PUT /profiles/me``.
+ *
+ * Every field is optional. Set a field to ``null`` explicitly to
+ * clear its value, or omit it entirely to leave it unchanged.
+ */
+export interface UpdateProfilePayload {
+  name?: string | null;
+  phone?: string | null;
+  address?: string | null;
+}
