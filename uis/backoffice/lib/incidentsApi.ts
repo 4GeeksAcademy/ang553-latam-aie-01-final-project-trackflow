@@ -5,6 +5,7 @@
  * No external dependencies — plain ``fetch`` + ``FormData``.
  */
 
+import { authFetch } from "@/lib/authFetch";
 import type { IncidentAnalysisResult } from "@/types/incidents";
 
 const BASE_URL: string = process.env.NEXT_PUBLIC_API_URL ?? "";
@@ -40,7 +41,7 @@ export async function analyzeIncidents(
   let response: Response;
 
   try {
-    response = await fetch(`${BASE_URL}/api/incidents/analyze`, {
+    response = await authFetch(`${BASE_URL}/api/incidents/analyze`, {
       method: "POST",
       body: formData,
     });
@@ -89,7 +90,7 @@ export async function downloadResultsCsv(): Promise<Blob> {
   let response: Response;
 
   try {
-    response = await fetch(`${BASE_URL}/api/incidents/results/export`);
+    response = await authFetch(`${BASE_URL}/api/incidents/results/export`);
   } catch {
     throw new ApiError(
       "Could not reach the analysis server. Make sure the backend is running.",

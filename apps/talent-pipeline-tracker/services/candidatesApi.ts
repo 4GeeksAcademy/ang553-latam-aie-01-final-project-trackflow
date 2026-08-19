@@ -1,3 +1,4 @@
+import { authFetch } from "@/lib/authFetch";
 import type {
   Candidate,
   CandidateCreatePayload,
@@ -71,7 +72,7 @@ function buildUrl(path: string): string {
 }
 
 export async function getCandidates(): Promise<Candidate[]> {
-  const response = await fetch(buildUrl("/records"), {
+  const response = await authFetch(buildUrl("/records"), {
     method: "GET",
     cache: "no-store",
   });
@@ -90,7 +91,7 @@ export async function getCandidates(): Promise<Candidate[]> {
 }
 
 export async function getCandidateById(id: string): Promise<Candidate> {
-  const response = await fetch(buildUrl(`/records/${id}`), {
+  const response = await authFetch(buildUrl(`/records/${id}`), {
     method: "GET",
     cache: "no-store",
   });
@@ -101,7 +102,7 @@ export async function getCandidateById(id: string): Promise<Candidate> {
 export async function createCandidate(
   payload: CandidateCreatePayload,
 ): Promise<Candidate> {
-  const response = await fetch(buildUrl("/records"), {
+  const response = await authFetch(buildUrl("/records"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -116,7 +117,7 @@ export async function updateCandidate(
   id: string,
   payload: CandidateUpdatePayload,
 ): Promise<Candidate> {
-  const response = await fetch(buildUrl(`/records/${id}`), {
+  const response = await authFetch(buildUrl(`/records/${id}`), {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
@@ -131,7 +132,7 @@ export async function patchCandidate(
   id: string,
   payload: CandidatePatchPayload,
 ): Promise<Candidate> {
-  const response = await fetch(buildUrl(`/records/${id}`), {
+  const response = await authFetch(buildUrl(`/records/${id}`), {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
@@ -143,7 +144,7 @@ export async function patchCandidate(
 }
 
 export async function getCandidateNotes(id: string): Promise<CandidateNote[]> {
-  const response = await fetch(buildUrl(`/records/${id}/notes`), {
+  const response = await authFetch(buildUrl(`/records/${id}/notes`), {
     method: "GET",
     cache: "no-store",
   });
@@ -156,7 +157,7 @@ export async function createCandidateNote(
   id: string,
   payload: CandidateNoteCreatePayload,
 ): Promise<CandidateNote> {
-  const response = await fetch(buildUrl(`/records/${id}/notes`), {
+  const response = await authFetch(buildUrl(`/records/${id}/notes`), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -171,7 +172,7 @@ export async function deleteCandidateNote(
   id: string,
   noteId: string,
 ): Promise<void> {
-  const response = await fetch(buildUrl(`/records/${id}/notes/${noteId}`), {
+  const response = await authFetch(buildUrl(`/records/${id}/notes/${noteId}`), {
     method: "DELETE",
   });
 

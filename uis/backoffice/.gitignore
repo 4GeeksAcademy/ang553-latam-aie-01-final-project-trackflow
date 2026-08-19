@@ -2,3 +2,6 @@
 .next/
 node_modules/
 .env*
+
+# TypeScript build artifacts
+*.tsbuildinfo

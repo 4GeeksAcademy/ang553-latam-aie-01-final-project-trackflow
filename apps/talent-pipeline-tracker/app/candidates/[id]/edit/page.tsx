@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { AuthGuard } from "@/components/AuthGuard";
+import { Header } from "@/components/Header";
 import { CandidateForm } from "@/components/CandidateForm";
 import { ErrorState } from "@/components/ErrorState";
 import { LoadingState } from "@/components/LoadingState";
@@ -82,52 +84,55 @@ export default function EditCandidatePage({ params }: EditCandidatePageProps) {
   }
 
   return (
-    <main className="min-h-screen bg-slate-100 px-4 py-8 sm:px-8 lg:px-12">
-      <div className="mx-auto w-full max-w-4xl space-y-4">
-        <Link
-          href={`/candidates/${id}`}
-          className="inline-flex text-sm font-medium text-slate-700 hover:text-slate-900"
-        >
-          Volver al detalle
-        </Link>
+    <AuthGuard>
+      <Header />
+      <main className="min-h-screen bg-slate-100 px-4 py-8 sm:px-8 lg:px-12">
+        <div className="mx-auto w-full max-w-4xl space-y-4">
+          <Link
+            href={`/candidates/${id}`}
+            className="inline-flex text-sm font-medium text-slate-700 hover:text-slate-900"
+          >
+            Volver al detalle
+          </Link>
 
-        {isLoading ? <LoadingState /> : null}
-        {!isLoading && loadError ? <ErrorState message={loadError} /> : null}
+          {isLoading ? <LoadingState /> : null}
+          {!isLoading && loadError ? <ErrorState message={loadError} /> : null}
 
-        {!isLoading && !loadError && candidate ? (
-          <article className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-            <header className="mb-5 border-b border-slate-200 pb-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">
-                TrackFlow People and Talent
-              </p>
-              <h1 className="mt-2 text-2xl font-bold text-slate-900">Editar candidatura</h1>
-              <p className="mt-1 text-sm text-slate-600">{candidate.full_name}</p>
-            </header>
+          {!isLoading && !loadError && candidate ? (
+            <article className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+              <header className="mb-5 border-b border-slate-200 pb-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">
+                  TrackFlow People and Talent
+                </p>
+                <h1 className="mt-2 text-2xl font-bold text-slate-900">Editar candidatura</h1>
+                <p className="mt-1 text-sm text-slate-600">{candidate.full_name}</p>
+              </header>
 
-            <CandidateForm
-              initialValues={candidate}
-              submitLabel="Guardar cambios"
-              isSubmitting={isSubmitting}
-              onSubmit={handleUpdate}
-            />
+              <CandidateForm
+                initialValues={candidate}
+                submitLabel="Guardar cambios"
+                isSubmitting={isSubmitting}
+                onSubmit={handleUpdate}
+              />
 
-            {saveError ? (
-              <p className="mt-3 text-sm font-medium text-rose-700">{saveError}</p>
-            ) : null}
-            {saveSuccess ? (
-              <div className="mt-3 space-y-2">
-                <p className="text-sm font-medium text-emerald-700">{saveSuccess}</p>
-                <Link
-                  href={`/candidates/${id}`}
-                  className="inline-flex text-sm font-medium text-slate-700 hover:text-slate-900"
-                >
-                  Ir al detalle actualizado
-                </Link>
-              </div>
-            ) : null}
-          </article>
-        ) : null}
-      </div>
-    </main>
+              {saveError ? (
+                <p className="mt-3 text-sm font-medium text-rose-700">{saveError}</p>
+              ) : null}
+              {saveSuccess ? (
+                <div className="mt-3 space-y-2">
+                  <p className="text-sm font-medium text-emerald-700">{saveSuccess}</p>
+                  <Link
+                    href={`/candidates/${id}`}
+                    className="inline-flex text-sm font-medium text-slate-700 hover:text-slate-900"
+                  >
+                    Ir al detalle actualizado
+                  </Link>
+                </div>
+              ) : null}
+            </article>
+          ) : null}
+        </div>
+      </main>
+    </AuthGuard>
   );
 }

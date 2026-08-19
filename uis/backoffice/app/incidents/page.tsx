@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { AuthGuard } from "@/components/layout/AuthGuard";
 import { BackofficeHeader } from "@/components/layout/BackofficeHeader";
 import { IncidentUploadCard } from "@/components/incidents/IncidentUploadCard";
 import { IncidentSummary } from "@/components/incidents/IncidentSummary";
@@ -71,6 +72,7 @@ export default function IncidentsPage() {
   }, []);
 
   return (
+    <AuthGuard>
     <div className="min-h-screen">
       <BackofficeHeader />
       <main className="mx-auto max-w-7xl px-6 py-10">
@@ -120,5 +122,6 @@ export default function IncidentsPage() {
         </div>
       </main>
     </div>
+    </AuthGuard>
   );
 }

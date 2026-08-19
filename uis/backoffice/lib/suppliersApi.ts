@@ -1,3 +1,4 @@
+import { authFetch } from "@/lib/authFetch";
 import type {
   Supplier,
   SupplierCreate,
@@ -66,7 +67,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
 
   try {
-    response = await fetch(`${BASE_URL}${path}`, {
+    response = await authFetch(`${BASE_URL}${path}`, {
       ...init,
       headers: {
         "Content-Type": "application/json",

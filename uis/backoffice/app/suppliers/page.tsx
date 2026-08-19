@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { AuthGuard } from "@/components/layout/AuthGuard";
 import { BackofficeHeader } from "@/components/layout/BackofficeHeader";
 import { SupplierForm } from "@/components/suppliers/SupplierForm";
 import { SupplierList } from "@/components/suppliers/SupplierList";
@@ -120,6 +121,7 @@ export default function SuppliersPage() {
   };
 
   return (
+    <AuthGuard>
     <div className="min-h-screen">
       <BackofficeHeader />
 
@@ -183,5 +185,6 @@ export default function SuppliersPage() {
         />
       </main>
     </div>
+    </AuthGuard>
   );
 }
