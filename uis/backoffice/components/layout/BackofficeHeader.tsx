@@ -39,6 +39,12 @@ export function BackofficeHeader() {
           >
             Suppliers
           </Link>
+          <Link
+            href="/account/profile"
+            className="text-sm font-medium text-slate-300 transition-colors hover:text-white"
+          >
+            Profile
+          </Link>
           <button
             type="button"
             onClick={handleLogout}

@@ -18,6 +18,8 @@ import type {
   LoginCredentials,
   LoginResponse,
   RegisterPayload,
+  UpdateProfilePayload,
+  UserProfile,
 } from "@/types/auth";
 
 const BASE_URL: string = process.env.NEXT_PUBLIC_API_URL ?? "";
@@ -152,6 +154,92 @@ export async function register(payload: RegisterPayload): Promise<AuthUser> {
     return (await response.json()) as AuthUser;
   } catch {
     throw new ApiError("Auth server returned an invalid JSON response.", response.status);
+  }
+}
+
+/* ── Profile ───────────────────────────────────────────────────────── */
+
+/**
+ * Fetch the authenticated user's profile.
+ *
+ * Calls ``GET /profiles/me`` with the stored JWT via ``authFetch``.
+ *
+ * @returns The authenticated user's profile data.
+ * @throws {@link ApiError} on network failure, non-OK response, or
+ *         profile-not-found (``404``).
+ */
+export async function getMyProfile(): Promise<UserProfile> {
+  let response: Response;
+
+  try {
+    response = await authFetch(`${BASE_URL}/profiles/me`, {
+      method: "GET",
+    });
+  } catch {
+    throw new ApiError(
+      "Could not reach the authentication server. Make sure the backend is running.",
+    );
+  }
+
+  if (!response.ok) {
+    const message = await extractErrorMessage(response);
+    throw new ApiError(message, response.status);
+  }
+
+  try {
+    return (await response.json()) as UserProfile;
+  } catch {
+    throw new ApiError(
+      "Auth server returned an invalid JSON response.",
+      response.status,
+    );
+  }
+}
+
+/**
+ * Update (or create) the authenticated user's profile.
+ *
+ * Calls ``PUT /profiles/me`` with a JSON payload via ``authFetch``.
+ *
+ * If no profile exists yet the backend **creates** one automatically
+ * (upsert behaviour).
+ *
+ * @param payload - Fields to update. Omit a field or pass ``null``
+ *                  to leave it unchanged / clear it.
+ * @returns The updated (or newly created) profile.
+ * @throws {@link ApiError} on network failure or non-OK response.
+ */
+export async function updateMyProfile(
+  payload: UpdateProfilePayload,
+): Promise<UserProfile> {
+  let response: Response;
+
+  try {
+    response = await authFetch(`${BASE_URL}/profiles/me`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    throw new ApiError(
+      "Could not reach the authentication server. Make sure the backend is running.",
+    );
+  }
+
+  if (!response.ok) {
+    const message = await extractErrorMessage(response);
+    throw new ApiError(message, response.status);
+  }
+
+  try {
+    return (await response.json()) as UserProfile;
+  } catch {
+    throw new ApiError(
+      "Auth server returned an invalid JSON response.",
+      response.status,
+    );
   }
 }
 

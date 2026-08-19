@@ -44,3 +44,31 @@ export interface RegisterPayload {
   phone?: string | null;
   address?: string | null;
 }
+
+/* ── Profile types ────────────────────────────────────────────────── */
+
+/**
+ * Authenticated user's profile as returned by ``GET /profiles/me``.
+ *
+ * All profile fields are nullable — the backend allows a profile
+ * to exist with only ``id`` and ``user_id`` populated.
+ */
+export interface UserProfile {
+  id: string;
+  user_id: string;
+  name: string | null;
+  phone: string | null;
+  address: string | null;
+}
+
+/**
+ * Payload accepted by ``PUT /profiles/me``.
+ *
+ * Every field is optional. Set a field to ``null`` explicitly to
+ * clear its value, or omit it entirely to leave it unchanged.
+ */
+export interface UpdateProfilePayload {
+  name?: string | null;
+  phone?: string | null;
+  address?: string | null;
+}
