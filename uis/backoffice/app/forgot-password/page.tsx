@@ -1,51 +1,38 @@
 "use client";
 
-import { useState, useEffect, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useAuth } from "@/lib/AuthContext";
-import { login, ApiError } from "@/lib/authApi";
+import { forgotPassword, ApiError } from "@/lib/authApi";
 
-export default function LoginPage() {
-  const router = useRouter();
-  const { isLoading, isAuthenticated, setSession } = useAuth();
-
+export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // ── Redirect already-authenticated users away from login ──────────
-  useEffect(() => {
-    if (!isLoading && isAuthenticated) {
-      router.replace("/");
-    }
-  }, [isLoading, isAuthenticated, router]);
-
-  // ── Don't render the form while checking existing session ─────────
-  if (isLoading) {
-    return null;
-  }
-
-  // ── Don't show the form at all if already authenticated ― the
-  //    useEffect above will redirect immediately.
-  if (isAuthenticated) {
-    return null;
-  }
-
-  // ── Submit handler ────────────────────────────────────────────────
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+
+    if (submitting) {
+      return;
+    }
+
     setError(null);
     setSubmitting(true);
 
     try {
-      const response = await login({ email, password });
-      await setSession(response.access_token);
-      router.replace("/");
+      const response = await forgotPassword({ email: email.trim() });
+      setSuccessMessage(response.message);
     } catch (err) {
       if (err instanceof ApiError) {
-        setError(err.message);
+        if (err.statusCode != null && err.statusCode >= 500) {
+          setError(
+            "The password reset service is temporarily unavailable. " +
+              "Please try again later.",
+          );
+        } else {
+          setError(err.message);
+        }
       } else {
         setError("An unexpected error occurred. Please try again.");
       }
@@ -54,7 +41,8 @@ export default function LoginPage() {
     }
   }
 
-  // ── Render ────────────────────────────────────────────────────────
+  const isDone = successMessage !== null;
+
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm">
@@ -64,18 +52,30 @@ export default function LoginPage() {
             TrackFlow Internal
           </p>
           <h1 className="mt-3 text-2xl font-bold text-white">
-            Backoffice Access
+            Reset your password
           </h1>
         </div>
 
         {/* ── Card ───────────────────────────────────────────────── */}
         <div className="rounded-xl border border-white/10 bg-slate-900/60 p-8 backdrop-blur">
+          {/* Success banner */}
+          {successMessage && (
+            <div className="mb-6 rounded-lg border border-emerald-400/30 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-200">
+              {successMessage}
+            </div>
+          )}
+
           {/* Error banner */}
           {error && (
             <div className="mb-6 rounded-lg border border-red-400/30 bg-red-400/10 px-4 py-3 text-sm text-red-200">
               {error}
             </div>
           )}
+
+          <p className="mb-6 text-sm text-slate-400">
+            Enter the email address linked to your account and we&apos;ll send
+            you a link to reset your password.
+          </p>
 
           <form onSubmit={handleSubmit} className="space-y-5">
             {/* Email */}
@@ -94,59 +94,31 @@ export default function LoginPage() {
                 placeholder="you@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                disabled={submitting}
+                disabled={submitting || isDone}
                 className="w-full rounded-lg border border-white/10 bg-slate-800/60 px-4 py-2.5 text-sm text-white placeholder-slate-500 transition-colors focus:border-cyan-400/50 focus:outline-none focus:ring-2 focus:ring-cyan-400/20 disabled:opacity-50"
               />
-            </div>
-
-            {/* Password */}
-            <div>
-              <label
-                htmlFor="password"
-                className="mb-1.5 block text-sm font-medium text-slate-300"
-              >
-                Password
-              </label>
-              <input
-                id="password"
-                type="password"
-                required
-                autoComplete="current-password"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                disabled={submitting}
-                className="w-full rounded-lg border border-white/10 bg-slate-800/60 px-4 py-2.5 text-sm text-white placeholder-slate-500 transition-colors focus:border-cyan-400/50 focus:outline-none focus:ring-2 focus:ring-cyan-400/20 disabled:opacity-50"
-              />
-            </div>
-
-            {/* Forgot password link */}
-            <div className="text-right">
-              <Link
-                href="/forgot-password"
-                className="text-xs font-medium text-slate-400 transition-colors hover:text-cyan-300"
-              >
-                Forgot your password?
-              </Link>
             </div>
 
             {/* Submit */}
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || isDone}
               className="w-full rounded-lg bg-cyan-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-400/50 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {submitting ? "Signing in..." : "Sign in"}
+              {submitting
+                ? "Sending..."
+                : isDone
+                  ? "Link sent"
+                  : "Send reset link"}
             </button>
           </form>
 
           <p className="mt-6 text-center text-sm text-slate-400">
-            Don't have an account?{" "}
             <Link
-              href="/register"
+              href="/login"
               className="font-medium text-cyan-300 transition-colors hover:text-cyan-200"
             >
-              Register
+              Back to sign in
             </Link>
           </p>
         </div>

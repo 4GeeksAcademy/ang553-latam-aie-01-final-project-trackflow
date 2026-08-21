@@ -143,6 +143,22 @@
 - Validación local de confirmación (new === confirm) antes de llamar API.
 - Feedback de éxito/error con limpieza de campos sensibles.
 
+## Frontend password recovery (validado)
+
+- `/forgot-password` usa fetch público a `/auth/forgot-password`.
+- Respuesta de éxito anti-enumeración genérica (mismo mensaje exista o no el email).
+- Formulario queda bloqueado (disabled + isDone) tras éxito.
+- Doble submit prevenido con guard `if (submitting) return`.
+- `/login` enlaza a `/forgot-password` con link "Forgot your password?".
+- `/reset-password` toma token del query string via `useSearchParams()`.
+- Si falta token: no llama API, muestra error + link a forgot-password.
+- Usa fetch público a `/auth/reset-password` (no authFetch).
+- Validación local new/confirm antes de llamar API.
+- Invalid/expired/used se trata como un único error genérico "Invalid or expired password reset link" + link a forgot-password.
+- Éxito redirige a `/login` (no login automático).
+- Token/password no se persisten en localStorage.
+- Componente `ResetPasswordForm` envuelto en `<Suspense>` (requisito Next.js para `useSearchParams()`).
+
 ## Restricciones tecnicas para futuras implementaciones
 
 - No duplicar la logica del Hito 2.
