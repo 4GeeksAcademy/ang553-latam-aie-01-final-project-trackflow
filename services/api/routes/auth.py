@@ -11,13 +11,25 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 
-from services.api.auth_models import UserInDB, UserResponse
+from services.api.auth_models import (
+    ForgotPasswordRequest,
+    MessageResponse,
+    ResetPasswordRequest,
+    UserInDB,
+    UserResponse,
+)
 from services.api.auth_security import (
     create_access_token,
     get_current_user,
     verify_password,
 )
-from services.api.auth_services import get_user_in_db_by_email
+from services.api.auth_services import (
+    get_user_in_db_by_email,
+    invalidate_password_reset_token,
+    issue_password_reset_token,
+    reset_password,
+)
+from services.api.email_service import send_password_reset_email
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -78,3 +90,105 @@ async def read_users_me(
         role=current_user.role,
         created_at=current_user.created_at,
     )
+
+
+@router.post("/forgot-password", response_model=MessageResponse)
+async def forgot_password(
+    payload: ForgotPasswordRequest,
+) -> MessageResponse:
+    """Request a password-reset email.
+
+    Always returns HTTP 200 with a generic message regardless of whether the
+    email exists, to prevent user enumeration.
+
+    If the email exists:
+        - Generates a single-use password-reset JWT.
+        - Persists its ``jti`` hash in TinyDB.
+        - Sends the reset link via Resend.
+
+    If the email does not exist:
+        - Silently returns the generic message (no token, no email).
+        - This prevents leaking account existence.
+
+    If Resend fails for an existing user:
+        - Returns HTTP 500 — a genuine infrastructure error is not hidden.
+    """
+    generic_message = (
+        "If that email address is in our system, "
+        "you will receive a password reset link."
+    )
+
+    user = get_user_in_db_by_email(payload.email)
+
+    if user is None:
+        return MessageResponse(message=generic_message)
+
+    # User exists — generate token, persist, and send email.
+    # If email delivery fails, invalidate the token so it cannot be used.
+    try:
+        token = issue_password_reset_token(user_id=user.id)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not send password reset email. Please try again later.",
+        ) from exc
+
+    try:
+        sent = send_password_reset_email(to_email=user.email, reset_token=token)
+    except Exception:
+        # Email delivery failed — invalidate the just-issued token.
+        # If invalidation itself fails, treat it as an internal error too.
+        try:
+            invalidate_password_reset_token(token)
+        except Exception as inv_exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Could not send password reset email. Please try again later.",
+            ) from inv_exc
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not send password reset email. Please try again later.",
+        )
+
+    if not sent:
+        # Email returned False — invalidate the just-issued token.
+        try:
+            invalidate_password_reset_token(token)
+        except Exception as inv_exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Could not send password reset email. Please try again later.",
+            ) from inv_exc
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not send password reset email. Please try again later.",
+        )
+
+    return MessageResponse(message=generic_message)
+
+
+@router.post("/reset-password", response_model=MessageResponse)
+async def reset_password_endpoint(
+    payload: ResetPasswordRequest,
+) -> MessageResponse:
+    """Reset a forgotten password using a single-use reset token.
+
+    Expects:
+        - ``token``: a valid password-reset JWT obtained via /auth/forgot-password.
+        - ``new_password``: the new password (min 8 characters).
+
+    The token is validated for signature, expiration, purpose (``password_reset``),
+    and single-use state. On success the user's password is updated and the token
+    is invalidated.
+
+    Returns HTTP 400 for invalid, expired, or already-used tokens.
+    """
+    try:
+        reset_password(token=payload.token, new_password=payload.new_password)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired password reset token.",
+        )
+
+    return MessageResponse(message="Password reset successfully.")
