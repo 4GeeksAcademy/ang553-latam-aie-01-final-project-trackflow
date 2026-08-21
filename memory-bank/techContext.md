@@ -132,6 +132,17 @@
 - Tabla `password_reset_tokens` agregada a `auth.json` en `auth_database.py`.
 - Dependencia `resend>=0.8.0,<1.0.0` agregada en `pyproject.toml` y `requirements.txt`.
 
+## Change-password flow (validado)
+
+- `POST /auth/change-password` requiere autenticación vía `get_current_user`.
+- Recibe `current_password` y `new_password` (min 8 chars).
+- Verifica current password contra hash bcrypt existente; 400 si incorrecta.
+- Hashea nueva password y actualiza solo al usuario autenticado por `current_user.id`.
+- Frontend `/account/change-password` protegido por `AuthGuard`.
+- `authFetch` inyecta Bearer token automáticamente.
+- Validación local de confirmación (new === confirm) antes de llamar API.
+- Feedback de éxito/error con limpieza de campos sensibles.
+
 ## Restricciones tecnicas para futuras implementaciones
 
 - No duplicar la logica del Hito 2.

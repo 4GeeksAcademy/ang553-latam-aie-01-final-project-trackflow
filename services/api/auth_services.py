@@ -27,6 +27,7 @@ from services.api.auth_security import (
     create_password_reset_token,
     decode_password_reset_token,
     hash_password,
+    verify_password,
 )
 
 
@@ -382,3 +383,32 @@ def reset_password(token: str, new_password: str) -> None:
     users.update(
         {"hashed_password": hashed}, _UserQuery.id == user_id
     )
+
+
+def change_password(user_id: str, current_password: str, new_password: str) -> None:
+    """Change the password for an authenticated user.
+
+    Verifies the current password before updating to the new one.
+
+    Args:
+        user_id: The TinyDB user id of the authenticated user.
+        current_password: The user's current plain-text password.
+        new_password: The new plain-text password.
+
+    Raises:
+        ValueError: If the current password is incorrect or the user
+                    is not found.
+    """
+    doc = _find_user_doc_by_id(user_id)
+    if doc is None:
+        raise ValueError("User not found")
+
+    user = UserInDB(**doc)
+
+    # Verify current password
+    if not verify_password(current_password, user.hashed_password):
+        raise ValueError("Current password is incorrect.")
+
+    # Hash and update
+    hashed = hash_password(new_password)
+    users.update({"hashed_password": hashed}, _UserQuery.id == user_id)

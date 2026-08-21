@@ -181,6 +181,21 @@ class ResetPasswordRequest(BaseModel):
     new_password: str = Field(min_length=8)
 
 
+# ── Request model for change-password ────────────────────────────────────────
+
+
+class ChangePasswordRequest(BaseModel):
+    """Payload for POST /auth/change-password.
+
+    Authenticated users provide their current password and a new password.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: str
+    new_password: str = Field(min_length=8)
+
+
 # ── Generic response models ─────────────────────────────────────────────────
 
 

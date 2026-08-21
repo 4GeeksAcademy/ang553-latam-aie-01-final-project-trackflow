@@ -72,3 +72,16 @@ export interface UpdateProfilePayload {
   phone?: string | null;
   address?: string | null;
 }
+
+/* ── Change password types ─────────────────────────────────────────── */
+
+/** Payload accepted by ``POST /auth/change-password``. */
+export interface ChangePasswordPayload {
+  current_password: string;
+  new_password: string;
+}
+
+/** Response returned by ``POST /auth/change-password``. */
+export interface ChangePasswordResponse {
+  message: string;
+}

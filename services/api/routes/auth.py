@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 
 from services.api.auth_models import (
+    ChangePasswordRequest,
     ForgotPasswordRequest,
     MessageResponse,
     ResetPasswordRequest,
@@ -24,6 +25,7 @@ from services.api.auth_security import (
     verify_password,
 )
 from services.api.auth_services import (
+    change_password,
     get_user_in_db_by_email,
     invalidate_password_reset_token,
     issue_password_reset_token,
@@ -192,3 +194,35 @@ async def reset_password_endpoint(
         )
 
     return MessageResponse(message="Password reset successfully.")
+
+
+@router.post("/change-password", response_model=MessageResponse)
+async def change_password_endpoint(
+    payload: ChangePasswordRequest,
+    current_user: Annotated[UserInDB, Depends(get_current_user)],
+) -> MessageResponse:
+    """Change the authenticated user's password.
+
+    Requires a valid Bearer token. The user must provide their current
+    password for verification.
+
+    Request body:
+        - ``current_password``: the user's current password.
+        - ``new_password``: the new password (min 8 characters).
+
+    Returns HTTP 400 if the current password is incorrect.
+    Returns HTTP 401 if not authenticated.
+    """
+    try:
+        change_password(
+            user_id=current_user.id,
+            current_password=payload.current_password,
+            new_password=payload.new_password,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+    return MessageResponse(message="Password changed successfully.")
