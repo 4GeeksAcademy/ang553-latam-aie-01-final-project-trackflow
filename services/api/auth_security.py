@@ -6,6 +6,7 @@ Uses bcrypt via passlib for password operations and python-jose for JWT.
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
@@ -16,7 +17,12 @@ from passlib.hash import bcrypt
 
 from services.api.auth_database import users as _users_db
 from services.api.auth_models import UserInDB
-from services.api.auth_settings import JWT_ALGORITHM, JWT_EXPIRE_MINUTES, JWT_SECRET_KEY
+from services.api.auth_settings import (
+    JWT_ALGORITHM,
+    JWT_EXPIRE_MINUTES,
+    JWT_SECRET_KEY,
+    RESET_TOKEN_EXPIRE_MINUTES,
+)
 
 # ── Password utilities ───────────────────────────────────────────────────────
 
@@ -70,6 +76,69 @@ def create_access_token(sub: str, expires_delta: timedelta | None = None) -> str
         "iat": now,
     }
     return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+
+# ── Password-reset token utilities ───────────────────────────────────────────
+#
+# The reset JWT contains:
+#   - sub: user id
+#   - jti: unique token id (used for single-use enforcement via TinyDB)
+#   - type: "password_reset" (differentiates from access tokens)
+#   - exp: expiration (default: 30 minutes)
+#   - iat: issued at
+
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def create_password_reset_token(sub: str) -> str:
+    """Create a signed JWT specifically for password reset.
+
+    The token carries a ``jti`` (unique ID) that is persisted in TinyDB so
+    it can be invalidated after use — a JWT with ``exp`` alone is not
+    sufficient because the bootcamp requires single-use semantics.
+
+    Args:
+        sub: The user's TinyDB id.
+
+    Returns:
+        The encoded password-reset JWT string.
+    """
+    jti = str(uuid.uuid4())
+    expires_delta = timedelta(minutes=RESET_TOKEN_EXPIRE_MINUTES)
+    now = _now_utc()
+
+    payload = {
+        "sub": sub,
+        "jti": jti,
+        "type": "password_reset",
+        "exp": now + expires_delta,
+        "iat": now,
+    }
+    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+
+def decode_password_reset_token(token: str) -> dict[str, str]:
+    """Decode and validate a password-reset JWT.
+
+    Verifies signature, expiration, and purpose (``type`` claim).
+
+    Args:
+        token: The raw JWT string.
+
+    Returns:
+        The decoded payload dict with at least ``sub``, ``jti``, and ``type``.
+
+    Raises:
+        JWTError: If the token is invalid, expired, or not a password-reset token.
+    """
+    payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+    if payload.get("type") != "password_reset":
+        raise JWTError("Token is not a password-reset token")
+    if "jti" not in payload:
+        raise JWTError("Token is missing required jti claim")
+    return payload
 
 
 # ── OAuth2 scheme & dependency ───────────────────────────────────────────────

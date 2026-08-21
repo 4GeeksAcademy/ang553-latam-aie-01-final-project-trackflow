@@ -1,10 +1,20 @@
 """
-TrackFlow Auth JWT configuration — loaded from environment variables.
+TrackFlow Auth configuration — loaded from environment variables.
 
-Reads ``JWT_SECRET_KEY``, ``JWT_ALGORITHM``, and ``JWT_EXPIRE_MINUTES``
-from ``os.environ``.  ``JWT_SECRET_KEY`` **must** be set — there is no
-hardcoded fallback.  The application will raise ``RuntimeError`` on import
-if the variable is missing or empty.
+Reads JWT settings, password-reset token settings, and email-provider
+settings from ``os.environ``.
+
+Required variables (will raise ``RuntimeError`` if missing):
+    JWT_SECRET_KEY
+
+Optional with sensible defaults:
+    JWT_ALGORITHM (default: HS256)
+    JWT_EXPIRE_MINUTES (default: 60)
+    RESET_TOKEN_EXPIRE_MINUTES (default: 30)
+
+Required for email sending (will warn at import if missing):
+    RESEND_API_KEY
+    FRONTEND_URL
 """
 
 from __future__ import annotations
@@ -39,3 +49,23 @@ try:
     )
 except (TypeError, ValueError):
     JWT_EXPIRE_MINUTES = _JWT_EXPIRE_DEFAULT
+
+# ── Password-reset token ─────────────────────────────────────────────────────
+# Duration in minutes.  The bootcamp requirement is 15–60 minutes.
+# 30 minutes is a balanced default.
+
+_RESET_TOKEN_EXPIRE_DEFAULT = 30
+
+try:
+    RESET_TOKEN_EXPIRE_MINUTES: int = int(
+        os.getenv("RESET_TOKEN_EXPIRE_MINUTES", str(_RESET_TOKEN_EXPIRE_DEFAULT))
+    )
+except (TypeError, ValueError):
+    RESET_TOKEN_EXPIRE_MINUTES = _RESET_TOKEN_EXPIRE_DEFAULT
+
+# ── Resend (email provider) ──────────────────────────────────────────────────
+# These are optional at import time — the app can start without them,
+# but email sending will fail at runtime.
+
+RESEND_API_KEY: str | None = os.getenv("RESEND_API_KEY")
+FRONTEND_URL: str | None = os.getenv("FRONTEND_URL")

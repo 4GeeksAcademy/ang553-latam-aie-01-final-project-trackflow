@@ -135,3 +135,71 @@ class ProfileResponse(BaseModel):
     name: str | None = None
     phone: str | None = None
     address: str | None = None
+
+
+# ── Password-reset token model ──────────────────────────────────────────────
+
+
+class PasswordResetTokenInDB(BaseModel):
+    """Persisted record of an issued password-reset token.
+
+    Stores a SHA-256 hash of the JWT ``jti`` claim rather than the raw JWT.
+    This allows checking single-use semantics without exposing the token itself.
+    """
+
+    jti_hash: str  # SHA-256 of the JWT ``jti`` claim
+    user_id: str  # TinyDB user id the token was issued for
+    expires_at: str  # ISO-8601 datetime (UTC)
+    used: bool = False  # Whether the token has been consumed
+    created_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+
+# ── Request models for password-reset flow ──────────────────────────────────
+
+
+class ForgotPasswordRequest(BaseModel):
+    """Payload for POST /auth/forgot-password."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    email: str
+
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, v: str) -> str:
+        return v.strip().lower()
+
+
+class ResetPasswordRequest(BaseModel):
+    """Payload for POST /auth/reset-password."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    token: str
+    new_password: str = Field(min_length=8)
+
+
+# ── Request model for change-password ────────────────────────────────────────
+
+
+class ChangePasswordRequest(BaseModel):
+    """Payload for POST /auth/change-password.
+
+    Authenticated users provide their current password and a new password.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: str
+    new_password: str = Field(min_length=8)
+
+
+# ── Generic response models ─────────────────────────────────────────────────
+
+
+class MessageResponse(BaseModel):
+    """Generic message response — safe for public endpoints."""
+
+    message: str

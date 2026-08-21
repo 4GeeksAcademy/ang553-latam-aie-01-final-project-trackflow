@@ -20,6 +20,12 @@ import type {
   RegisterPayload,
   UpdateProfilePayload,
   UserProfile,
+  ChangePasswordPayload,
+  ChangePasswordResponse,
+  ForgotPasswordPayload,
+  ForgotPasswordResponse,
+  ResetPasswordPayload,
+  ResetPasswordResponse,
 } from "@/types/auth";
 
 const BASE_URL: string = process.env.NEXT_PUBLIC_API_URL ?? "";
@@ -240,6 +246,144 @@ export async function updateMyProfile(
       "Auth server returned an invalid JSON response.",
       response.status,
     );
+  }
+}
+
+/* ── Change password ────────────────────────────────────────────────── */
+
+/**
+ * Change the authenticated user's password.
+ *
+ * Calls ``POST /auth/change-password`` with the stored JWT via
+ * ``authFetch``.
+ *
+ * The user must provide their current password for verification.
+ *
+ * @param payload - Current and new password.
+ * @returns A message confirming the password was changed.
+ * @throws {@link ApiError} on network failure, wrong current password
+ *         (400), or expired session (401 — handled by authFetch).
+ */
+export async function changePassword(
+  payload: ChangePasswordPayload,
+): Promise<ChangePasswordResponse> {
+  let response: Response;
+
+  try {
+    response = await authFetch(`${BASE_URL}/auth/change-password`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    throw new ApiError("Could not reach the authentication server. Make sure the backend is running.");
+  }
+
+  if (!response.ok) {
+    const message = await extractErrorMessage(response);
+    throw new ApiError(message, response.status);
+  }
+
+  try {
+    return (await response.json()) as ChangePasswordResponse;
+  } catch {
+    throw new ApiError("Auth server returned an invalid JSON response.", response.status);
+  }
+}
+
+/* ── Forgot password ────────────────────────────────────────────────── */
+
+/**
+ * Request a password-reset email.
+ *
+ * Calls ``POST /auth/forgot-password`` with a JSON body containing
+ * the user's email.
+ *
+ * This is a **public** endpoint — no existing session is required, so
+ * plain ``fetch`` is used instead of ``authFetch``.
+ *
+ * The backend always returns HTTP 200 with a generic success message
+ * to prevent user enumeration.
+ *
+ * @param payload - Email address to send the reset link to.
+ * @returns A generic message confirming an email was sent if the
+ *          account exists.
+ * @throws {@link ApiError} on network failure, 5xx infrastructure
+ *         error, or non-OK response.
+ */
+export async function forgotPassword(
+  payload: ForgotPasswordPayload,
+): Promise<ForgotPasswordResponse> {
+  let response: Response;
+
+  try {
+    response = await fetch(`${BASE_URL}/auth/forgot-password`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    throw new ApiError("Could not reach the authentication server. Make sure the backend is running.");
+  }
+
+  if (!response.ok) {
+    const message = await extractErrorMessage(response);
+    throw new ApiError(message, response.status);
+  }
+
+  try {
+    return (await response.json()) as ForgotPasswordResponse;
+  } catch {
+    throw new ApiError("Auth server returned an invalid JSON response.", response.status);
+  }
+}
+
+/* ── Reset password ─────────────────────────────────────────────────── */
+
+/**
+ * Reset a forgotten password using a single-use reset token.
+ *
+ * Calls ``POST /auth/reset-password`` with a JSON body containing
+ * the reset token and the new password.
+ *
+ * This is a **public** endpoint — no existing session is required, so
+ * plain ``fetch`` is used instead of ``authFetch``.
+ *
+ * @param payload - Token and new password.
+ * @returns A message confirming the password was reset.
+ * @throws {@link ApiError} on network failure, invalid/expired/used
+ *         token (400), or non-OK response.
+ */
+export async function resetPassword(
+  payload: ResetPasswordPayload,
+): Promise<ResetPasswordResponse> {
+  let response: Response;
+
+  try {
+    response = await fetch(`${BASE_URL}/auth/reset-password`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    throw new ApiError("Could not reach the authentication server. Make sure the backend is running.");
+  }
+
+  if (!response.ok) {
+    const message = await extractErrorMessage(response);
+    throw new ApiError(message, response.status);
+  }
+
+  try {
+    return (await response.json()) as ResetPasswordResponse;
+  } catch {
+    throw new ApiError("Auth server returned an invalid JSON response.", response.status);
   }
 }
 

@@ -72,3 +72,41 @@ export interface UpdateProfilePayload {
   phone?: string | null;
   address?: string | null;
 }
+
+/* ── Change password types ─────────────────────────────────────────── */
+
+/** Payload accepted by ``POST /auth/change-password``. */
+export interface ChangePasswordPayload {
+  current_password: string;
+  new_password: string;
+}
+
+/** Response returned by ``POST /auth/change-password``. */
+export interface ChangePasswordResponse {
+  message: string;
+}
+
+/* ── Forgot password types ─────────────────────────────────────────── */
+
+/** Payload accepted by ``POST /auth/forgot-password``. */
+export interface ForgotPasswordPayload {
+  email: string;
+}
+
+/** Response returned by ``POST /auth/forgot-password``. */
+export interface ForgotPasswordResponse {
+  message: string;
+}
+
+/* ── Reset password types ──────────────────────────────────────────── */
+
+/** Payload accepted by ``POST /auth/reset-password``. */
+export interface ResetPasswordPayload {
+  token: string;
+  new_password: string;
+}
+
+/** Response returned by ``POST /auth/reset-password``. */
+export interface ResetPasswordResponse {
+  message: string;
+}

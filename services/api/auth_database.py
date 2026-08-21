@@ -29,3 +29,6 @@ auth_db = TinyDB(str(_AUTH_DB_PATH))
 
 users = auth_db.table("users")
 profiles = auth_db.table("profiles")
+
+# ── Password-reset tokens table ─────────────────────────────────────────────
+password_reset_tokens = auth_db.table("password_reset_tokens")
