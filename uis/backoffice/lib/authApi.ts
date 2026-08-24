@@ -402,7 +402,7 @@ async function extractErrorMessage(response: Response): Promise<string> {
       return body.message;
     }
   } catch {
-    // Ignore parse errors — fall back to status-based message.
+    // Ignore parse errors — fall back to generic message.
   }
-  return `Request failed with status ${response.status}`;
+  return "An unexpected error occurred. Please try again.";
 }

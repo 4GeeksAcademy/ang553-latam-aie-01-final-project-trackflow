@@ -72,6 +72,21 @@ interface AuthContextValue {
   refreshUser: () => Promise<void>;
 
   /**
+   * A user‑friendly error message when hydration fails due to a
+   * transient error (network, 5xx), preserving the existing token.
+   * ``null`` when no hydration error occurred.
+   */
+  authError: string | null;
+
+  /**
+   * Re‑attempt the initial hydration verification.
+   *
+   * Useful after a transient error — the user can explicitly retry
+   * session validation without reloading the page.
+   */
+  retryHydration: () => Promise<void>;
+
+  /**
    * Terminate the current session.
    *
    * Removes the stored JWT and resets the user state to ``null``.
@@ -94,34 +109,55 @@ export function AuthProvider({
 }): React.ReactElement {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
 
-  // ── Hydration — validate stored JWT on mount ──────────────────────
-  useEffect(() => {
+  // ── Shared hydration logic (used both on mount and on retry) ─────
+  const hydrate = useCallback(async (): Promise<void> => {
     const token = getToken();
 
     if (!token) {
+      setUser(null);
+      setAuthError(null);
       setIsLoading(false);
       return;
     }
 
-    getCurrentUser()
-      .then((fetchedUser) => {
-        setUser(fetchedUser);
-      })
-      .catch(() => {
-        // `authFetch` already removed the token on 401; just clear state.
+    setIsLoading(true);
+    setAuthError(null);
+
+    try {
+      const fetchedUser = await getCurrentUser();
+      setUser(fetchedUser);
+    } catch {
+      // `authFetch` already removed the token on 401 (and redirected to
+      // /login); on transient errors (network, 5xx) the JWT may still
+      // be valid, so signal the error instead of clearing the user.
+      if (!getToken()) {
+        // 401 – token was removed by authFetch; treat as unauthenticated.
         setUser(null);
-      })
-      .finally(() => {
-        setIsLoading(false);
-      });
+      } else {
+        // Transient error – token still exists; keep user state and
+        // show a friendly message so AuthGuard doesn't redirect.
+        setAuthError(
+          "Could not verify your session. Check your connection and try again.",
+        );
+      }
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
+
+  // ── Hydrate on mount ─────────────────────────────────────────────
+  useEffect(() => {
+    hydrate();
+  }, [hydrate]);
 
   // ── setSession ────────────────────────────────────────────────────
   const setSession = useCallback(
     async (accessToken: string): Promise<AuthUser> => {
       setToken(accessToken);
       setIsLoading(true);
+      setAuthError(null);
 
       try {
         const fetchedUser = await getCurrentUser();
@@ -143,6 +179,7 @@ export function AuthProvider({
     try {
       const fetchedUser = await getCurrentUser();
       setUser(fetchedUser);
+      setAuthError(null);
     } catch {
       // Only clear the user if the token was actually removed (401).
       // On transient errors (network, 5xx) the JWT may still be valid,
@@ -154,10 +191,16 @@ export function AuthProvider({
     }
   }, []);
 
+  // ── retryHydration ───────────────────────────────────────────────
+  const retryHydration = useCallback(async (): Promise<void> => {
+    await hydrate();
+  }, [hydrate]);
+
   // ── logout ────────────────────────────────────────────────────────
   const logout = useCallback((): void => {
     removeToken();
     setUser(null);
+    setAuthError(null);
   }, []);
 
   // ── Derived values ────────────────────────────────────────────────
@@ -167,8 +210,10 @@ export function AuthProvider({
     user,
     isLoading,
     isAuthenticated,
+    authError,
     setSession,
     refreshUser,
+    retryHydration,
     logout,
   };
 

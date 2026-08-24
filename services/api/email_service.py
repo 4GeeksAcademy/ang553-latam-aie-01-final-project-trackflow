@@ -76,8 +76,8 @@ def send_password_reset_email(
                 f"<p>— TrackFlow Team</p>"
             ),
         })
-        _LOGGER.info("Password-reset email sent to %s (Resend id=%s)", to_email, response.get("id"))
+        _LOGGER.info("Password-reset email sent successfully (Resend id=%s)", response.get("id"))
         return True
     except Exception:
-        _LOGGER.exception("Failed to send password-reset email to %s", to_email)
+        _LOGGER.exception("Failed to send password-reset email")
         return False

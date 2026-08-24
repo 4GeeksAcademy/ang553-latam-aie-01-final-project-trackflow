@@ -6,6 +6,7 @@ All routes live under ``/users``.
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -27,6 +28,8 @@ from services.api.auth_services import (
     list_users as list_all_users,
     update_user,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -66,7 +69,13 @@ async def register_user(payload: UserRegister) -> UserResponse:
             create_profile(profile_payload)
         except ValueError as e:
             # Rollback: delete the user that was just created
-            delete_user(user_resp.id)
+            try:
+                delete_user(user_resp.id)
+            except Exception:
+                logger.exception(
+                    "Rollback failed while cleaning up user '%s' after profile creation error",
+                    user_resp.id,
+                )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=str(e),

@@ -8,6 +8,7 @@ Run with::
 """
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -22,6 +23,8 @@ from services.api.routes.auth import router as auth_router
 from services.api.routes.profiles import router as profiles_router
 from services.api.routes.suppliers import router as suppliers_router
 from services.api.routes.users import router as users_router
+
+logger = logging.getLogger(__name__)
 
 # ── CORS (development) ──────────────────────────────────────────────────────
 #
@@ -158,9 +161,10 @@ async def analyze_incidents(file: UploadFile | None = File(None)) -> dict:
         global _last_result  # noqa: PLW0603
         _last_result = result
     except CsvLoadError as e:
+        logger.warning("CSV load error: %s", e)
         raise HTTPException(
             status_code=422,
-            detail=str(e),
+            detail="Invalid CSV file.",
         )
     except Exception:
         raise HTTPException(

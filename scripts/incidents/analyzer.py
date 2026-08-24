@@ -11,6 +11,7 @@ from typing import Any
 
 import csv
 import os
+import tempfile
 
 from . import (
     ALL_CARRIERS,
@@ -382,23 +383,28 @@ def load_csv(file_path: str) -> list[dict[str, str]]:
     if os.path.getsize(file_path) == 0:
         raise CsvLoadError(f"File is empty: {file_path}")
 
-    with open(file_path, encoding="utf-8", newline="") as f:
-        reader = csv.DictReader(f)
+    try:
+        with open(file_path, encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
 
-        if reader.fieldnames is None or len(reader.fieldnames) == 0:
-            raise CsvLoadError(
-                f"CSV file has no valid header row: {file_path}"
-            )
+            if reader.fieldnames is None or len(reader.fieldnames) == 0:
+                raise CsvLoadError(
+                    f"CSV file has no valid header row: {file_path}"
+                )
 
-        header = list(reader.fieldnames)
-        missing = [col for col in ALL_FIELDS if col not in header]
+            header = list(reader.fieldnames)
+            missing = [col for col in ALL_FIELDS if col not in header]
 
-        if missing:
-            raise CsvLoadError(
-                f"Missing required columns: {', '.join(missing)}"
-            )
+            if missing:
+                raise CsvLoadError(
+                    f"Missing required columns: {', '.join(missing)}"
+                )
 
-        records = list(reader)
+            records = list(reader)
+    except UnicodeDecodeError as exc:
+        raise CsvLoadError(
+            "CSV file is not valid UTF-8. Please ensure the file is encoded as UTF-8."
+        ) from exc
 
     # csv.DictReader yields empty list for an otherwise valid file with no
     # data rows, which is acceptable — return an empty list.
@@ -458,7 +464,29 @@ def export_results_csv(result: dict[str, Any], output_path: str) -> None:
         ("satisfaction", "average_satisfaction", str(result["average_satisfaction"]))
     )
 
-    with open(output_path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["section", "metric", "value"])
-        writer.writerows(rows)
+    tmp_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="",
+            dir=os.path.dirname(output_path) or ".",
+            prefix=os.path.basename(output_path) + ".",
+            suffix=".tmp",
+            delete=False,
+        ) as f:
+            tmp_path = f.name
+            writer = csv.writer(f)
+            writer.writerow(["section", "metric", "value"])
+            writer.writerows(rows)
+            f.flush()
+            os.fsync(f.fileno())
+
+        os.replace(tmp_path, output_path)
+    finally:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except (FileNotFoundError, OSError):
+                # Cleanup is best-effort; never mask the original failure.
+                pass

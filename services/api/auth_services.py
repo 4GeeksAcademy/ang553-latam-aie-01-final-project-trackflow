@@ -23,6 +23,8 @@ from services.api.auth_models import (
     UserResponse,
     UserUpdate,
 )
+from jose import JWTError
+
 from services.api.auth_security import (
     create_password_reset_token,
     decode_password_reset_token,
@@ -296,7 +298,7 @@ def validate_password_reset_token(token: str) -> str:
     """
     try:
         payload = decode_password_reset_token(token)
-    except Exception as exc:
+    except JWTError as exc:
         raise ValueError(f"Invalid or expired token: {exc}") from exc
 
     jti = payload["jti"]
@@ -333,7 +335,7 @@ def invalidate_password_reset_token(token: str) -> None:
     """
     try:
         payload = decode_password_reset_token(token)
-    except Exception as exc:
+    except JWTError as exc:
         raise ValueError(f"Invalid token: {exc}") from exc
 
     jti = payload["jti"]

@@ -44,7 +44,15 @@ def main() -> None:
         sys.exit(1)
 
     # ── Analyze ──
-    result = analyze_records(records)
+    try:
+        result = analyze_records(records)
+    except Exception:
+        print(
+            "An unexpected error occurred while analyzing the incidents. "
+            "Please try again.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     total = result["total_records"]
     valid = result["valid_records"]
@@ -134,7 +142,11 @@ def main() -> None:
 def _prompt_export(result: dict) -> None:
     """Ask user whether to export results and handle the response."""
     while True:
-        answer = input("Export results to CSV? [y / n]: ").strip().lower()
+        try:
+            answer = input("Export results to CSV? [y / n]: ").strip().lower()
+        except EOFError:
+            print("No input was provided. Exiting.", file=sys.stderr)
+            sys.exit(1)
         if answer == "y":
             output_path = "results.csv"
             export_results_csv(result, output_path)
