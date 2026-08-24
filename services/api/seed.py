@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from datetime import datetime, timezone
 
 from services.api.database import suppliers
@@ -183,7 +184,14 @@ def main() -> None:
         supplier_data = supplier_model.model_dump(mode="json", exclude_none=True)
         supplier_data["updated_at"] = datetime.now(timezone.utc).isoformat()
 
-        suppliers.insert(supplier_data)
+        try:
+            suppliers.insert(supplier_data)
+        except Exception:
+            print(
+                "An unexpected error occurred while seeding the database. "
+                "Please try again."
+            )
+            sys.exit(1)
         existing_names.add(raw_supplier["name"])
         inserted += 1
 
