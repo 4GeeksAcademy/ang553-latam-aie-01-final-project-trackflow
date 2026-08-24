@@ -24,43 +24,62 @@ type CandidateNotesResponse = {
   data: CandidateNote[];
 };
 
+export class ApiError extends Error {
+  statusCode?: number;
+
+  constructor(message: string, statusCode?: number) {
+    super(message);
+    this.name = "ApiError";
+    this.statusCode = statusCode;
+  }
+}
+
+async function authFetchWithError(
+  url: string,
+  init?: RequestInit,
+): Promise<Response> {
+  try {
+    return await authFetch(url, init);
+  } catch {
+    throw new ApiError(
+      "We couldn't connect to the service. Please try again.",
+    );
+  }
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   const contentType = response.headers.get("content-type") ?? "";
   let jsonData: unknown = null;
-  let textData = "";
 
   if (contentType.includes("application/json")) {
     try {
       jsonData = await response.json();
     } catch {
-      jsonData = null;
-    }
-  } else {
-    try {
-      textData = await response.text();
-    } catch {
-      textData = "";
+      // Parsing failed — handled below
     }
   }
 
   if (!response.ok) {
-    let errorMessage = response.statusText || "Request failed";
+    let safeMessage = "An unexpected error occurred.";
 
-    if (jsonData && typeof jsonData === "object") {
-      const errorObj = jsonData as Record<string, unknown>;
-      if (typeof errorObj.detail === "string") {
-        errorMessage = errorObj.detail;
-      } else if (typeof errorObj.message === "string") {
-        errorMessage = errorObj.message;
-      } else if (typeof errorObj.error === "string") {
-        errorMessage = errorObj.error;
-      }
-    } else if (textData.trim()) {
-      errorMessage = textData.trim();
+    if (response.status === 404) {
+      safeMessage = "The requested resource was not found.";
+    } else if (response.status === 409) {
+      safeMessage = "The request conflicts with the current state.";
+    } else if (response.status === 401 || response.status === 403) {
+      safeMessage = "You are not authorized to perform this action.";
+    } else if (response.status >= 500) {
+      safeMessage = "The server encountered an internal error. Please try again later.";
     }
 
-    throw new Error(
-      `API request failed (${response.status}): ${errorMessage}`,
+    throw new ApiError(safeMessage, response.status);
+  }
+
+  // Successful response — only accept valid JSON, reject everything else
+  if (jsonData === null) {
+    throw new ApiError(
+      "The server returned an unexpected response. Please try again.",
+      response.status,
     );
   }
 
@@ -72,7 +91,7 @@ function buildUrl(path: string): string {
 }
 
 export async function getCandidates(): Promise<Candidate[]> {
-  const response = await authFetch(buildUrl("/records"), {
+  const response = await authFetchWithError(buildUrl("/records"), {
     method: "GET",
     cache: "no-store",
   });
@@ -87,11 +106,13 @@ export async function getCandidates(): Promise<Candidate[]> {
     return payload.data;
   }
 
-  throw new Error("Unexpected response format for GET /records");
+  throw new ApiError(
+    "The server returned data in an unexpected format. Please try again.",
+  );
 }
 
 export async function getCandidateById(id: string): Promise<Candidate> {
-  const response = await authFetch(buildUrl(`/records/${id}`), {
+  const response = await authFetchWithError(buildUrl(`/records/${id}`), {
     method: "GET",
     cache: "no-store",
   });
@@ -102,7 +123,7 @@ export async function getCandidateById(id: string): Promise<Candidate> {
 export async function createCandidate(
   payload: CandidateCreatePayload,
 ): Promise<Candidate> {
-  const response = await authFetch(buildUrl("/records"), {
+  const response = await authFetchWithError(buildUrl("/records"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -117,7 +138,7 @@ export async function updateCandidate(
   id: string,
   payload: CandidateUpdatePayload,
 ): Promise<Candidate> {
-  const response = await authFetch(buildUrl(`/records/${id}`), {
+  const response = await authFetchWithError(buildUrl(`/records/${id}`), {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
@@ -132,7 +153,7 @@ export async function patchCandidate(
   id: string,
   payload: CandidatePatchPayload,
 ): Promise<Candidate> {
-  const response = await authFetch(buildUrl(`/records/${id}`), {
+  const response = await authFetchWithError(buildUrl(`/records/${id}`), {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
@@ -144,7 +165,7 @@ export async function patchCandidate(
 }
 
 export async function getCandidateNotes(id: string): Promise<CandidateNote[]> {
-  const response = await authFetch(buildUrl(`/records/${id}/notes`), {
+  const response = await authFetchWithError(buildUrl(`/records/${id}/notes`), {
     method: "GET",
     cache: "no-store",
   });
@@ -157,7 +178,7 @@ export async function createCandidateNote(
   id: string,
   payload: CandidateNoteCreatePayload,
 ): Promise<CandidateNote> {
-  const response = await authFetch(buildUrl(`/records/${id}/notes`), {
+  const response = await authFetchWithError(buildUrl(`/records/${id}/notes`), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -172,9 +193,12 @@ export async function deleteCandidateNote(
   id: string,
   noteId: string,
 ): Promise<void> {
-  const response = await authFetch(buildUrl(`/records/${id}/notes/${noteId}`), {
-    method: "DELETE",
-  });
+  const response = await authFetchWithError(
+    buildUrl(`/records/${id}/notes/${noteId}`),
+    {
+      method: "DELETE",
+    },
+  );
 
   if (!response.ok) {
     await handleResponse<never>(response);
