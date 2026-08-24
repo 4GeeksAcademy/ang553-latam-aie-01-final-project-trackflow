@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime, timezone
 from typing import Annotated
@@ -19,6 +20,8 @@ from services.api.models import (
     SupplierStatusUpdate,
     VALID_CATEGORIES,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/suppliers", tags=["Suppliers"], dependencies=[Depends(get_current_user)])
 
@@ -41,7 +44,14 @@ def create_supplier(payload: SupplierCreate) -> SupplierResponse:
     supplier_data = payload.model_dump(mode="json", exclude_none=True)
     supplier_data["updated_at"] = _utc_now_iso()
 
-    supplier_id = suppliers.insert(supplier_data)
+    try:
+        supplier_id = suppliers.insert(supplier_data)
+    except Exception:
+        logger.exception("Failed to insert supplier")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to complete the supplier operation. Please try again.",
+        )
     created_document = suppliers.get(doc_id=supplier_id)
 
     if created_document is None:
@@ -91,13 +101,20 @@ def update_supplier_rate(
     if existing_document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier not found")
 
-    suppliers.update(
-        {
-            "rate_per_shipment": payload.rate_per_shipment,
-            "updated_at": _utc_now_iso(),
-        },
-        doc_ids=[supplier_id],
-    )
+    try:
+        suppliers.update(
+            {
+                "rate_per_shipment": payload.rate_per_shipment,
+                "updated_at": _utc_now_iso(),
+            },
+            doc_ids=[supplier_id],
+        )
+    except Exception:
+        logger.exception("Failed to update supplier rate (id=%s)", supplier_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to complete the supplier operation. Please try again.",
+        )
 
     updated_document = suppliers.get(doc_id=supplier_id)
     if updated_document is None:
@@ -115,7 +132,14 @@ def update_supplier_status(
     if existing_document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier not found")
 
-    suppliers.update({"status": payload.status.value}, doc_ids=[supplier_id])
+    try:
+        suppliers.update({"status": payload.status.value}, doc_ids=[supplier_id])
+    except Exception:
+        logger.exception("Failed to update supplier status (id=%s)", supplier_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to complete the supplier operation. Please try again.",
+        )
 
     updated_document = suppliers.get(doc_id=supplier_id)
     if updated_document is None:
@@ -130,5 +154,12 @@ def delete_supplier(supplier_id: int) -> Response:
     if existing_document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier not found")
 
-    suppliers.remove(doc_ids=[supplier_id])
+    try:
+        suppliers.remove(doc_ids=[supplier_id])
+    except Exception:
+        logger.exception("Failed to remove supplier (id=%s)", supplier_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to complete the supplier operation. Please try again.",
+        )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
