@@ -161,6 +161,34 @@
 
 ## Restricciones tecnicas para futuras implementaciones
 
+### Error handling conventions
+
+1. **Frontend API boundaries**
+   - Normalizar network errors en la capa API.
+   - No mostrar `statusText`, raw backend detail ni errores de parsing al usuario.
+   - `ApiError` puede conservar `statusCode` internamente mientras el mensaje visible permanece controlado.
+
+2. **Authentication hydration**
+   - 401 representa sesión inválida y puede limpiar token/redirigir.
+   - Network/5xx no deben tratarse automáticamente como sesión inválida.
+   - Un fallo transitorio debe terminar loading y ofrecer recovery explícito, actualmente Retry.
+
+3. **Backend exception scope**
+   - Preferir excepciones específicas (`JWTError`).
+   - Si una librería como TinyDB no ofrece una excepción común útil, `except Exception` solo alrededor de la llamada concreta de persistencia.
+   - No envolver endpoints completos o funciones principales innecesariamente.
+
+4. **Rollback**
+   - Un fallo secundario de cleanup/rollback no debe sustituir la excepción principal.
+   - Registrar el fallo secundario server-side.
+
+5. **Logs**
+   - No registrar PII innecesaria como email completo.
+   - Detalle técnico puede permanecer server-side cuando sea útil, nunca filtrarse al cliente.
+
+6. **Safe file export**
+   - Para outputs que no deben quedar parciales: temporary file in destination directory → write/flush/fsync/close → `os.replace()` → best-effort cleanup.
+
 - No duplicar la logica del Hito 2.
   - Debe importarse desde su ubicacion original en `src/`.
 - Antes de modificar una carpeta, leer primero su `README.md` si existe.
