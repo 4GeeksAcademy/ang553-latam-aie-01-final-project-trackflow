@@ -7,7 +7,8 @@
     "doc": "docs"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "jest",
+    "test:coverage": "jest --coverage",
     "typecheck": "tsc --noEmit",
     "build": "tsc"
   },
@@ -24,6 +25,9 @@
   },
   "homepage": "https://github.com/4GeeksAcademy/ang553-latam-aie-01-final-project-trackflow#readme",
   "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "jest": "^30.5.0",
+    "ts-jest": "^29.4.12",
     "typescript": "^6.0.3"
   }
 }

@@ -72,6 +72,7 @@ def create_access_token(sub: str, expires_delta: timedelta | None = None) -> str
 
     payload = {
         "sub": sub,
+        "type": "access",
         "exp": now + expires_delta,
         "iat": now,
     }
@@ -180,6 +181,9 @@ def get_current_user(token: Annotated[str, Depends(_oauth2_scheme)]) -> UserInDB
         )
         sub: str | None = payload.get("sub")
         if sub is None:
+            raise credentials_exception
+        token_type = payload.get("type")
+        if token_type not in (None, "access"):
             raise credentials_exception
     except JWTError:
         raise credentials_exception

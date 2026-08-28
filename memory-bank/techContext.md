@@ -132,6 +132,27 @@
 - Tabla `password_reset_tokens` agregada a `auth.json` en `auth_database.py`.
 - Dependencia `resend>=0.8.0,<1.0.0` agregada en `pyproject.toml` y `requirements.txt`.
 
+### Token purpose en autenticacion de sesion
+- Los nuevos access tokens JWT deben incluir `type: "access"`.
+- Los tokens de recovery/reset deben incluir `type: "password_reset"`.
+- `get_current_user` valida el proposito del token antes de aceptar sesion.
+- Por compatibilidad temporal, access tokens legacy sin claim `type` se aceptan como sesion valida.
+- Tokens con otros `type` (por ejemplo `password_reset`) se rechazan para autenticacion de sesion.
+- Motivo: evitar reutilizacion cruzada de tokens (por ejemplo, usar tokens de recuperacion de password como credenciales de acceso).
+
+## Testing automatizado (decision tecnica reutilizable)
+
+### Backend testing
+- El backend usa `pytest` con `pytest-cov` como estrategia base de pruebas y cobertura.
+- Las pruebas de backend viven en `tests/` a nivel raiz del repo.
+- Los tests deben ejecutarse con aislamiento de TinyDB para evitar contaminacion de estado entre casos.
+
+### TypeScript testing
+- Las utilidades TypeScript de raiz se validan con `Jest` + `ts-jest`.
+- La configuracion de Jest se centraliza en la raiz del repo.
+- Los tests TypeScript viven en `tests/` a nivel raiz del repo.
+- El entorno de ejecucion para estas pruebas es `node`.
+
 ## Change-password flow (validado)
 
 - `POST /auth/change-password` requiere autenticación vía `get_current_user`.
