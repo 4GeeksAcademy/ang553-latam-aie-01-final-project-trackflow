@@ -3,6 +3,10 @@ __pycache__/
 *.pyc
 .venv/
 *.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
 services/api/data/suppliers.json
 services/api/data/auth.json
 .env

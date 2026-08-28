@@ -23,3 +23,10 @@ seed = "services.api.seed:main"
 [tool.setuptools.packages.find]
 include = ["services.api*"]
 namespaces = true
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+]
