@@ -6,11 +6,9 @@ Persistent models for SKU, StockEntry, and StockExit.
 Coexists with TinyDB auth — no SQLModel User table is created.
 """
 
-from __future__ import annotations
-
 from datetime import datetime, timezone
 
-from sqlmodel import Field, Relationship, SQLModel
+from sqlmodel import Field, SQLModel
 
 
 def _utc_now() -> datetime:
@@ -62,9 +60,7 @@ class SKU(SQLModel, table=True):
     category: str
     warehouse: str
 
-    # ── ORM relationships (helpful for later joined queries) ─────────────
-    entries: list[StockEntry] = Relationship(back_populates="sku")
-    exits: list[StockExit] = Relationship(back_populates="sku")
+    # (stock is calculated, not stored — see inventory_service)
 
 
 # ── StockEntry ───────────────────────────────────────────────────────────────
@@ -102,8 +98,7 @@ class StockEntry(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_utc_now)
     user_uuid: str
 
-    # ── ORM relationship back to SKU ──────────────────────────────────────
-    sku: SKU | None = Relationship(back_populates="entries")
+    # (FK only — no ORM back-reference)
 
 
 # ── StockExit ────────────────────────────────────────────────────────────────
@@ -144,5 +139,4 @@ class StockExit(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_utc_now)
     user_uuid: str
 
-    # ── ORM relationship back to SKU ──────────────────────────────────────
-    sku: SKU | None = Relationship(back_populates="exits")
+    # (FK only — no ORM back-reference)
