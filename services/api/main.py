@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, HTTPException, Response, UploadFile
@@ -19,12 +20,44 @@ from fastapi.middleware.cors import CORSMiddleware
 from scripts.incidents.analyzer import analyze_records, export_results_csv, load_csv
 from scripts.incidents import CsvLoadError
 from services.api.auth_security import get_current_user
+from services.api.database import create_db_and_tables
 from services.api.routes.auth import router as auth_router
+from services.api.routes.inventory import router as inventory_router
 from services.api.routes.profiles import router as profiles_router
 from services.api.routes.suppliers import router as suppliers_router
 from services.api.routes.users import router as users_router
 
 logger = logging.getLogger(__name__)
+
+
+# ── Application lifecycle ───────────────────────────────────────────────────
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    """FastAPI lifespan — runs startup logic before serving traffic.
+
+    On startup, initializes SQLModel tables (SKU, StockEntry, StockExit)
+    via ``create_db_and_tables()``.
+
+    If ``DATABASE_URL`` is not set, the database cannot be reached, or
+    table creation fails, the error **propagates** and the application
+    fails to start.  This is intentional: TrackFlow requires PostgreSQL
+    for inventory.
+
+    Tables are created only if they do not exist (no data loss).
+    """
+    # ── Startup ─────────────────────────────────────────────────────────
+    create_db_and_tables()
+
+    yield
+
+    # ── Shutdown ────────────────────────────────────────────────────────
+    # Nothing to tear down at this point.
+
+    # ── Shutdown ────────────────────────────────────────────────────────
+    # Nothing to tear down at this point.
+
 
 # ── CORS (development) ──────────────────────────────────────────────────────
 #
@@ -55,6 +88,7 @@ app = FastAPI(
         "logistics platform. "
         "Business logic is provided by the ``scripts.incidents`` package."
     ),
+    lifespan=lifespan,
 )
 
 # ── Allowed file extensions for upload validation ────────────────────────────
@@ -85,6 +119,7 @@ app.include_router(
     include_in_schema=False,
 )
 app.include_router(auth_router)
+app.include_router(inventory_router)
 app.include_router(users_router)
 app.include_router(profiles_router)
 
