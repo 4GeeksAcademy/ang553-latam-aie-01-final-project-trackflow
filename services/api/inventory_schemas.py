@@ -169,3 +169,65 @@ class StockExitResponse(BaseModel):
     warehouse: Warehouse
     created_at: datetime
     user_uuid: str
+
+
+# ── Order (combined) schemas ───────────────────────────────────────────────
+
+
+class SKUSummary(BaseModel):
+    """Lightweight SKU representation included inside order responses.
+
+    This intentionally excludes ``current_stock`` — stock should not
+    be computed per-movement.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    sku: str
+    client_name: str
+    category: Category
+    warehouse: Warehouse
+
+
+class InventoryOrderResponse(BaseModel):
+    """Unified response for a stock movement (inbound or outbound).
+
+    Fields
+    ------
+    id : int
+        Primary key of the movement record.
+    movement_type : str
+        ``"inbound"`` for StockEntry, ``"outbound"`` for StockExit.
+    sku_id : int
+        Foreign key to the associated SKU.
+    quantity : int
+        Number of units moved.
+    warehouse : Warehouse
+        Warehouse where the movement occurred.
+    created_at : datetime
+        Timestamp of the movement.
+    user_uuid : str
+        UUID of the user who recorded the movement.
+    sku : SKUSummary
+        Lightweight data of the associated SKU.
+    reference : str | None
+        Purchase order / inbound reference (inbound only).
+    exit_type : str | None
+        Type of exit (outbound only).
+    tracking_number : str | None
+        Carrier tracking number (outbound only).
+    """
+
+    id: int
+    movement_type: str  # "inbound" | "outbound"
+    sku_id: int
+    quantity: int
+    warehouse: Warehouse
+    created_at: datetime
+    user_uuid: str
+    sku: SKUSummary
+    reference: Optional[str] = None
+    exit_type: Optional[str] = None
+    tracking_number: Optional[str] = None

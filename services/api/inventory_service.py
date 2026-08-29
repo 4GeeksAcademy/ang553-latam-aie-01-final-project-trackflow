@@ -40,6 +40,60 @@ def get_sku_or_none(session: Session, sku_id: int) -> object | None:
 # ═════════════════════════════════════════════════════════════════════════════
 
 
+def get_current_stocks(
+    session: Session,
+) -> dict[tuple[int, str], int]:
+    """Compute current stock for all (sku_id, warehouse) pairs in bulk.
+
+    This function performs exactly **two** aggregate queries (entries +
+    exits) regardless of the number of SKUs, avoiding N+1 behaviour.
+
+    Returns
+    -------
+    dict[(int, str), int]
+        A mapping from ``(sku_id, warehouse)`` to the current stock level.
+        SKUs with no movements are **not** present in the returned dict
+        (callers should default to 0).
+    """
+    from services.api.inventory_models import StockEntry, StockExit
+
+    # ── Aggregated entries ───────────────────────────────────────────────
+    entry_rows = session.exec(
+        select(StockEntry.sku_id, StockEntry.warehouse, func.sum(StockEntry.quantity))
+        .group_by(StockEntry.sku_id, StockEntry.warehouse)
+    ).all()
+
+    # ── Aggregated exits ─────────────────────────────────────────────────
+    exit_rows = session.exec(
+        select(StockExit.sku_id, StockExit.warehouse, func.sum(StockExit.quantity))
+        .group_by(StockExit.sku_id, StockExit.warehouse)
+    ).all()
+
+    # ── Build entry map ──────────────────────────────────────────────────
+    entry_map: dict[tuple[int, str], int] = {}
+    for row in entry_rows:
+        # row is a Row tuple: (sku_id, warehouse, sum)
+        key = (row[0], row[1])
+        entry_map[key] = row[2]  # type: ignore[assignment]
+
+    # ── Build exit map ───────────────────────────────────────────────────
+    exit_map: dict[tuple[int, str], int] = {}
+    for row in exit_rows:
+        key = (row[0], row[1])
+        exit_map[key] = row[2]  # type: ignore[assignment]
+
+    # ── Combine: entries minus exits ─────────────────────────────────────
+    # Iterate over the union of keys from both maps.
+    all_keys = set(entry_map.keys()) | set(exit_map.keys())
+    result: dict[tuple[int, str], int] = {}
+    for key in all_keys:
+        entries = entry_map.get(key, 0)
+        exits = exit_map.get(key, 0)
+        result[key] = entries - exits
+
+    return result
+
+
 def get_current_stock(
     session: Session,
     sku_id: int,
@@ -248,3 +302,94 @@ def create_stock_exit(
     session.refresh(exit_record)
 
     return exit_record
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Orders — list all movements (entries + exits) with SKU data, N+1 free
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+def list_orders(session: Session) -> list[dict]:
+    """Return all stock movements (entries + exits) with SKU data.
+
+    Strategy to avoid N+1
+    ---------------------
+    1. Fetch all StockEntry rows in **one** query.
+    2. Fetch all StockExit rows in **one** query.
+    3. Collect **all** distinct ``sku_id`` values from both sets.
+    4. Fetch **all** matching SKU rows in **one** query.
+    5. Build an ``sku_map: dict[int, SKU]`` and map SKU data in Python.
+
+    The number of database queries is **constant** (3) regardless of
+    the number of movements — no per-movement lookup.
+
+    Returns
+    -------
+    list[dict]
+        Combined list of movements sorted by ``created_at`` ascending,
+        with ties broken by ``movement_type`` then ``id``.
+        Each dict is shaped like ``InventoryOrderResponse``.
+    """
+    from services.api.inventory_models import SKU, StockEntry, StockExit
+
+    # 1. Fetch all entries and exits
+    entries = session.exec(select(StockEntry)).all()  # type: ignore[arg-type]
+    exits = session.exec(select(StockExit)).all()      # type: ignore[arg-type]
+
+    # 2. Collect unique sku_ids
+    sku_ids: set[int] = set()
+    for e in entries:
+        sku_ids.add(e.sku_id)
+    for x in exits:
+        sku_ids.add(x.sku_id)
+
+    # 3. Bulk load SKUs — exactly ONE query for all SKUs
+    sku_map: dict[int, object] = {}
+    if sku_ids:
+        skus = session.exec(select(SKU).where(SKU.id.in_(sku_ids))).all()  # type: ignore[arg-type]
+        sku_map = {sku.id: sku for sku in skus}
+
+    # 4. Build combined list
+    results: list[dict] = []
+
+    for e in entries:
+        sku = sku_map.get(e.sku_id)
+        results.append(
+            {
+                "id": e.id,
+                "movement_type": "inbound",
+                "sku_id": e.sku_id,
+                "quantity": e.quantity,
+                "warehouse": e.warehouse,
+                "created_at": e.created_at,
+                "user_uuid": e.user_uuid,
+                "sku": sku,
+                "reference": e.reference,
+                "exit_type": None,
+                "tracking_number": None,
+            }
+        )
+
+    for x in exits:
+        sku = sku_map.get(x.sku_id)
+        results.append(
+            {
+                "id": x.id,
+                "movement_type": "outbound",
+                "sku_id": x.sku_id,
+                "quantity": x.quantity,
+                "warehouse": x.warehouse,
+                "created_at": x.created_at,
+                "user_uuid": x.user_uuid,
+                "sku": sku,
+                "reference": None,
+                "exit_type": x.exit_type,
+                "tracking_number": x.tracking_number,
+            }
+        )
+
+    # 5. Sort — deterministic: created_at ascending, then movement_type,
+    #    then id
+    results.sort(key=lambda r: (r["created_at"], r["movement_type"], r["id"]))
+
+    return results
