@@ -147,8 +147,10 @@ function getStockWarning(
  * Outbound stock form.
  *
  * Displays loading / error / empty states, shows stock info for the
- * selected SKU, runs client-side validation, and displays a validation
- * message instead of calling createStockExit().
+ * selected SKU, runs client-side validation, registers the stock exit
+ * via real POST (createStockExit()), shows success/error feedback,
+ * and refreshes current_stock from the backend after a successful or
+ * failed (400) submission.
  */
 export function OutboundStockForm({
   products,

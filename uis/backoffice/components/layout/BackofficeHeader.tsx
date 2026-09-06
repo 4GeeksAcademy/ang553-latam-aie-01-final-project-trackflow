@@ -40,6 +40,18 @@ export function BackofficeHeader() {
             Suppliers
           </Link>
           <Link
+            href="/backoffice/inventory/products"
+            className="text-sm font-medium text-slate-300 transition-colors hover:text-white"
+          >
+            Inventory
+          </Link>
+          <Link
+            href="/backoffice/inventory/orders"
+            className="text-sm font-medium text-slate-300 transition-colors hover:text-white"
+          >
+            Inventory History
+          </Link>
+          <Link
             href="/account/profile"
             className="text-sm font-medium text-slate-300 transition-colors hover:text-white"
           >

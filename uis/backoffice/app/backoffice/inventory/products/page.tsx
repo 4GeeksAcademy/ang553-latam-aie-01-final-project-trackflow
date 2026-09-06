@@ -12,8 +12,8 @@
  * - Uses the existing ``<BackofficeHeader />`` for consistent layout.
  * - Current stock is displayed with visual status (colour-coded badge)
  *   and a text label (Healthy / Low / Critical).
- * - ``<ProductList />`` provides per-SKU actions (Register inbound /
- *   Register outbound) linking to future order pages.
+ * - ``<ProductList />`` provides per-SKU actions linking to the
+ *   inbound and outbound order pages.
  * - Filters, search, and pagination remain out of scope for this
  *   phase.
  */

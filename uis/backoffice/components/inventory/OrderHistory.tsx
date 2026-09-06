@@ -203,7 +203,7 @@ export function OrderHistory({
           <tbody>
             {orders.map((order) => (
               <tr
-                key={order.id}
+                key={`${order.movement_type}-${order.id}`}
                 className="border-b border-white/5 transition-colors last:border-b-0 hover:bg-slate-800/40"
               >
                 {/* Movement type badge */}
