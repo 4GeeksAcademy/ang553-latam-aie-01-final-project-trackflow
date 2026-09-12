@@ -1,0 +1,57 @@
+# ── Version control ──────────────────────────────────────────────────────────
+.git/
+.gitattributes
+.gitignore
+.github/
+
+# ── Python byte-code / cache ────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ── Virtual environments ────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+.virtualenvs/
+
+# ── Environment files (sensitive) ──────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Node / frontend artefacts (not needed by backend build) ─────────────────
+node_modules/
+.next/
+
+# ── Logs / temp ─────────────────────────────────────────────────────────────
+*.log
+logs/
+tmp/
+temp/
+
+# ── OS artefacts ────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── IDE / editor ────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Docker artefacts ────────────────────────────────────────────────────────
+.dockerignore
+
+# Ignore the UI directory — not needed by backend build
+uis/
+
+# Ignore other service Dockerfiles (only services/Dockerfile matters for this)
+services/.dockerignore

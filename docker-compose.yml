@@ -1,0 +1,57 @@
+# =============================================================================
+# TrackFlow — Docker Compose (Desarrollo con Hot Reload)
+# =============================================================================
+# Incluye bind mounts para desarrollo y volúmenes nombrados que preservan
+# node_modules instalados durante docker build.
+# =============================================================================
+
+services:
+
+  # ── Interfaces (Next.js: website + backoffice) ─────────────────────────────
+  interfaces:
+    build:
+      context: ./uis
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"   # website
+      - "3001:3001"   # backoffice
+    networks:
+      - trackflow-dev
+    depends_on:
+      - api
+    environment:
+      # Server-side backend URL for Next.js rewrites (Docker DNS)
+      - API_BACKEND_URL=${API_BACKEND_URL}
+    volumes:
+      # Bind mounts de código fuente (host → container)
+      - ./uis/website:/app/uis/website
+      - ./uis/backoffice:/app/uis/backoffice
+      # src/ compartido del monorepo (read-only)
+      - ./src:/app/src:ro
+      # Volúmenes nombrados para preservar node_modules de la imagen
+      - website-node-modules:/app/uis/website/node_modules
+      - backoffice-node-modules:/app/uis/backoffice/node_modules
+
+  # ── API (FastAPI) ──────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    networks:
+      - trackflow-dev
+    volumes:
+      # Bind mounts de código fuente (host → container)
+      - ./services:/app/services
+      - ./scripts:/app/scripts
+
+networks:
+  trackflow-dev:
+    driver: bridge
+
+volumes:
+  website-node-modules:
+  backoffice-node-modules:

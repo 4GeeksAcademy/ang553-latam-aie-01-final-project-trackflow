@@ -180,6 +180,18 @@
 - Token/password no se persisten en localStorage.
 - Componente `ResetPasswordForm` envuelto en `<Suspense>` (requisito Next.js para `useSearchParams()`).
 
+## INFRA-40: desarrollo containerizado
+
+- El desarrollo está orquestado con Docker Compose.
+- El servicio `interfaces` ejecuta website y backoffice en un único contenedor: website en `3000` y backoffice en `3001`.
+- El servicio `api` ejecuta FastAPI/Uvicorn en `8000` con `--reload`.
+- La comunicación interna backoffice → backend usa Docker DNS mediante `http://api:8000`.
+- El navegador usa rutas same-origin y Next rewrites server-side para acceder al backend.
+- Los bind mounts permiten hot reload; los volúmenes nombrados preservan `node_modules`.
+- La configuración sensible se carga desde `.env`, ignorado por Git.
+- `turbopack.root` apunta al monorepo para permitir imports desde `src/`.
+- La filesystem cache de Turbopack en desarrollo está deshabilitada para evitar la inestabilidad reproducida del React Client Manifest.
+
 ## Restricciones tecnicas para futuras implementaciones
 
 ### Error handling conventions
