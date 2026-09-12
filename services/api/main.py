@@ -61,24 +61,28 @@ async def lifespan(application: FastAPI):
 
 # ── CORS (development) ──────────────────────────────────────────────────────
 #
-# Allow the Next.js dev server (localhost:3000) to call this API directly.
+# Allow the Next.js dev servers (website on localhost:3000 and backoffice on
+# localhost:3001) to call this API directly.
 # These origins are explicit — no wildcard — and only cover local development.
 # In production, replace with the actual frontend domain(s).
 
 _DEV_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
 ]
 
-# Allow this repository's current Codespace frontend origin on port 3000
-# when running in GitHub Codespaces.
+# Allow this repository's current Codespace frontend origins on ports 3000 and
+# 3001 when running in GitHub Codespaces.
 _codespace_name = os.getenv("CODESPACE_NAME")
 _codespaces_domain = os.getenv("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN")
 
 if _codespace_name and _codespaces_domain:
-    _DEV_ORIGINS.append(
-        f"https://{_codespace_name}-3000.{_codespaces_domain}"
-    )
+    for _frontend_port in (3000, 3001):
+        _DEV_ORIGINS.append(
+            f"https://{_codespace_name}-{_frontend_port}.{_codespaces_domain}"
+        )
 
 app = FastAPI(
     title="TrackFlow Incident Analysis API",
