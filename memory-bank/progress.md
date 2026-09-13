@@ -2,7 +2,8 @@
 
 ## Estado actual
 
-- Auditoría de serialización backend en progreso.
+- Fase 1 — auditoría y consumer tracing completada.
+- Baseline formal creado en `docs/serialization-audit.md`.
 
 ## Completado relevante
 
@@ -12,16 +13,18 @@
 - Mismatch corregido preservando `sku: SKUSummary`.
 - Las referencias huérfanas generan ahora un error de integridad controlado.
 - Suite después de la corrección: 138 tests passing.
+- Consumer tracing completo.
+- Auditoría formal completada: 13 compliant, 17 optimize/contract adjustment, 3 missing explicit response contract.
 
 ## Pendiente
 
-- Trazado completo de consumidores.
-- Clasificación de endpoints.
-- `docs/serialization-audit.md`.
-- Implementación de serializers/contratos faltantes.
-- Tests HTTP de serialización.
-- Verificación manual de `/docs`.
+- Implementación de contratos explícitos.
+- Optimización de payloads aprobados.
+- Contratos HTTP 204/CSV.
+- HTTP contract tests.
+- QA de `/docs`.
+- Cierre final de auditoría.
 
 ## Siguiente paso
 
-- Fase 1.2 — consumer tracing completo.
+- Fase 2 — implementación de serializers/response contracts.
