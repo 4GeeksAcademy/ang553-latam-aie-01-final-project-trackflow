@@ -127,6 +127,19 @@
 - `ProfileMeResponse` es una proyección HTTP; los servicios pueden seguir trabajando internamente con `ProfileResponse`.
 - Los dos frontends reflejan estos contratos.
 
+### Contratos de respuesta inventory — Fase 2.3
+
+- Los endpoints inbound/outbound de inventory devuelven `MovementCreatedResponse`
+  con solo `id`.
+- `GET /inventory/orders` expone `InventoryOrderListItem` como proyección HTTP
+  plana.
+- La API no expone en ese listado `sku_id`, el objeto SKU anidado ni
+  `client_name`/`category`/`warehouse` de la relación SKU.
+- El router transforma la relación interna a `sku_name` y `sku_code`.
+- `list_orders()` conserva el bulk SKU lookup, `InventoryDataIntegrityError`,
+  la relación SKU requerida y la protección contra datos huérfanos, sin N+1.
+- El frontend backoffice consume el contrato plano.
+
 ## Autenticacion frontend (uis/backoffice)
 
 - Token JWT almacenado en `localStorage` bajo la clave `trackflow_access_token` (`lib/auth.ts`).

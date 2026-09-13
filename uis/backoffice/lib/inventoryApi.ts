@@ -16,10 +16,9 @@ import { authFetch } from "@/lib/authFetch";
 import type {
   SKUResponse,
   StockEntryCreate,
-  StockEntryResponse,
   StockExitCreate,
-  StockExitResponse,
-  InventoryOrderResponse,
+  MovementCreatedResponse,
+  InventoryOrderListItem,
 } from "@/types/inventory";
 
 const BASE_URL: string = process.env.NEXT_PUBLIC_INVENTORY_API_URL ?? "";
@@ -165,13 +164,13 @@ export async function getInventoryProduct(id: number): Promise<SKUResponse> {
  *
  * @param data - Inbound order payload (sku_id, quantity, reference,
  *               warehouse).
- * @returns The created ``StockEntryResponse``.
+ * @returns The created movement ID.
  * @throws {@link ApiError} on validation or server errors.
  */
 export async function createStockEntry(
   data: StockEntryCreate,
-): Promise<StockEntryResponse> {
-  return requestJson<StockEntryResponse>("/inventory/orders/inbound", {
+): Promise<MovementCreatedResponse> {
+  return requestJson<MovementCreatedResponse>("/inventory/orders/inbound", {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -186,14 +185,14 @@ export async function createStockEntry(
  *
  * @param data - Outbound order payload (sku_id, quantity, exit_type,
  *               tracking_number, warehouse).
- * @returns The created ``StockExitResponse``.
+ * @returns The created movement ID.
  * @throws {@link ApiError} on validation errors, insufficient stock
  *         (400), or server errors.
  */
 export async function createStockExit(
   data: StockExitCreate,
-): Promise<StockExitResponse> {
-  return requestJson<StockExitResponse>("/inventory/orders/outbound", {
+): Promise<MovementCreatedResponse> {
+  return requestJson<MovementCreatedResponse>("/inventory/orders/outbound", {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -207,13 +206,13 @@ export async function createStockExit(
  * Calls ``GET /inventory/orders``.
  *
  * Returns a flat array of combined inbound and outbound movements,
- * each annotated with ``movement_type`` and a ``sku`` summary.
+ * each annotated with ``movement_type`` and flattened SKU name/code fields.
  *
- * @returns A flat array of ``InventoryOrderResponse`` objects.
+ * @returns A flat array of ``InventoryOrderListItem`` objects.
  * @throws {@link ApiError} on failure.
  */
-export async function getInventoryOrders(): Promise<InventoryOrderResponse[]> {
-  return requestJson<InventoryOrderResponse[]>("/inventory/orders", {
+export async function getInventoryOrders(): Promise<InventoryOrderListItem[]> {
+  return requestJson<InventoryOrderListItem[]>("/inventory/orders", {
     method: "GET",
     cache: "no-store",
   });

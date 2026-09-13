@@ -12,6 +12,7 @@ from services.api.auth_models import (
     TokenResponse,
 )
 from services.api.main import HealthResponse, IncidentAnalysisResponse, app
+from services.api.inventory_schemas import InventoryOrderListItem, MovementCreatedResponse
 
 
 def _route(method: str, path: str) -> APIRoute:
@@ -102,6 +103,19 @@ def test_openapi_uses_nominal_response_schemas() -> None:
         ["application/json"]["schema"]["$ref"]
         == "#/components/schemas/TokenResponse"
     )
+
+
+def test_inventory_response_contracts_are_exact() -> None:
+    openapi = app.openapi()
+    assert set(MovementCreatedResponse.model_fields) == {"id"}
+    assert set(InventoryOrderListItem.model_fields) == {
+        "id", "movement_type", "quantity", "warehouse", "created_at",
+        "user_uuid", "sku_name", "sku_code", "reference", "exit_type",
+        "tracking_number",
+    }
+    assert _route("POST", "/inventory/orders/inbound").response_model is MovementCreatedResponse
+    assert _route("POST", "/inventory/orders/outbound").response_model is MovementCreatedResponse
+    assert _route("GET", "/inventory/orders").response_model == list[InventoryOrderListItem]
     assert (
         openapi["paths"]["/health"]["get"]["responses"]["200"]["content"]
         ["application/json"]["schema"]["$ref"]

@@ -201,7 +201,7 @@ export function InboundStockForm({
 
       // ── Success ───────────────────────────────────────────
       const skuLabel = selectedProduct.name;
-      const successMsg = `Inbound stock entry recorded: ${entry.quantity} units of ${skuLabel} at ${entry.warehouse}.`;
+      const successMsg = `Inbound stock entry recorded: ${payload.quantity} units of ${skuLabel} at ${payload.warehouse}.`;
       setSubmitSuccess(successMsg);
 
       // Reset quantity and reference; keep SKU selected.

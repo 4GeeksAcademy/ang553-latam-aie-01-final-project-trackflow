@@ -27,7 +27,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite://")
 from services.api.inventory_models import SKU, StockEntry, StockExit
 from services.api.inventory_schemas import (
     Category,
-    InventoryOrderResponse,
+    InventoryOrderListItem,
     Warehouse,
 )
 from services.api.inventory_service import InventoryDataIntegrityError, list_orders
@@ -529,27 +529,20 @@ class TestStartupLifespan:
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-class TestInventoryOrderResponseSchema:
-    """Verify that ``InventoryOrderResponse`` has the expected shape."""
+class TestInventoryOrderListItemSchema:
+    """Verify that ``InventoryOrderListItem`` has the expected shape."""
 
     def test_inbound_minimal(self) -> None:
         """SCHEMA-01: an inbound order response has the right fields."""
-        response = InventoryOrderResponse(
+        response = InventoryOrderListItem(
             id=1,
             movement_type="inbound",
-            sku_id=10,
             quantity=5,
             warehouse="LA",
             created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
             user_uuid="test-user",
-            sku={
-                "id": 10,
-                "name": "Test",
-                "sku": "SKU-001",
-                "client_name": "Client",
-                "category": "electronics",
-                "warehouse": "LA",
-            },
+            sku_name="Test",
+            sku_code="SKU-001",
             reference="PO-REF",
         )
         assert response.movement_type == "inbound"
@@ -559,22 +552,15 @@ class TestInventoryOrderResponseSchema:
 
     def test_outbound_minimal(self) -> None:
         """SCHEMA-02: an outbound order response has the right fields."""
-        response = InventoryOrderResponse(
+        response = InventoryOrderListItem(
             id=2,
             movement_type="outbound",
-            sku_id=10,
             quantity=3,
             warehouse="ZGZ",
             created_at=datetime(2024, 1, 2, tzinfo=timezone.utc),
             user_uuid="test-user-2",
-            sku={
-                "id": 10,
-                "name": "Test",
-                "sku": "SKU-001",
-                "client_name": "Client",
-                "category": "cosmetics",
-                "warehouse": "ZGZ",
-            },
+            sku_name="Test",
+            sku_code="SKU-001",
             exit_type="dispatch",
             tracking_number="TRACK-100",
         )
@@ -583,21 +569,9 @@ class TestInventoryOrderResponseSchema:
         assert response.tracking_number == "TRACK-100"
         assert response.reference is None
 
-    def test_skusummary_fields(self) -> None:
-        """SCHEMA-03: SKUSummary contains expected fields."""
-        from services.api.inventory_schemas import SKUSummary
-
-        summary = SKUSummary(
-            id=1,
-            name="Prod",
-            sku="SKU-001",
-            client_name="Client",
-            category="fashion",
-            warehouse="LA",
-        )
-        assert summary.id == 1
-        assert summary.name == "Prod"
-        assert summary.sku == "SKU-001"
-        assert summary.client_name == "Client"
-        assert summary.category == "fashion"
-        assert summary.warehouse == "LA"
+    def test_fields_are_exact(self) -> None:
+        assert set(InventoryOrderListItem.model_fields) == {
+            "id", "movement_type", "quantity", "warehouse", "created_at",
+            "user_uuid", "sku_name", "sku_code", "reference", "exit_type",
+            "tracking_number",
+        }

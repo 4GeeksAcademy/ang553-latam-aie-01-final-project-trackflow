@@ -21,8 +21,8 @@ The counts below are derived from the 33 rows in the complete endpoint table.
 | Measure | Count |
 |---|---:|
 | Total method+path registrations | 33 |
-| ✅ Compliant | 20 |
-| ⚠️ Optimize / contract adjustment | 13 |
+| ✅ Compliant | 23 |
+| ⚠️ Optimize / contract adjustment | 10 |
 | ❌ Missing explicit response contract | 0 |
 | Non-JSON/no-content special contracts | 4 |
 | Registrations with no internal consumer found | 13 |
@@ -48,9 +48,9 @@ The four special contracts are the three `204 No Content` registrations (one use
 | GET | `/inventory/products` | `list[SKUResponse]` | Uses `id`, `name`, `sku`, `client_name`, `category`, `warehouse`, `current_stock` | ✅ COMPLIANT | All response fields are used | Keep `list[SKUResponse]` |
 | GET | `/inventory/products/{id}` | `SKUResponse` | Wrapper exists, but executed consumer is not confirmed | ✅ COMPLIANT | No internal consumer evidence for a reduction | Preserve current explicit safe contract |
 | POST | `/inventory/products` | `SKUResponse` | No runtime consumer confirmed | ✅ COMPLIANT | Absence of a consumer is not evidence of unnecessary fields | Preserve request-specific input and explicit `SKUResponse` |
-| POST | `/inventory/orders/inbound` | `StockEntryResponse` | No response field used; consumer only observes success/failure | ⚠️ OPTIMIZE / CONTRACT ADJUSTMENT | Full movement metadata is discarded | `MovementCreatedResponse`: `id`; do not change status in this phase |
-| POST | `/inventory/orders/outbound` | `StockExitResponse` | No response field used; consumer only observes success/failure | ⚠️ OPTIMIZE / CONTRACT ADJUSTMENT | Full movement metadata is discarded | `MovementCreatedResponse`: `id`; do not change status in this phase |
-| GET | `/inventory/orders` | `list[InventoryOrderResponse]` with nested `SKUSummary` | Uses top-level `id`, `movement_type`, `quantity`, `warehouse`, `created_at`, `user_uuid`, `reference`, `exit_type`, `tracking_number`, plus `sku.name` and `sku.sku` | ⚠️ OPTIMIZE / CONTRACT ADJUSTMENT | Confirmed over-fetching in top-level `sku_id` and nested SKU fields; relation is oversized for HTTP projection | `InventoryOrderListItem`: `id`, `movement_type`, `quantity`, `warehouse`, `created_at`, `user_uuid`, `sku_name`, `sku_code`, `reference`, `exit_type`, `tracking_number`; flatten only HTTP output |
+| POST | `/inventory/orders/inbound` | `MovementCreatedResponse` | No response field used; consumer only observes success/failure | ✅ COMPLIANT | Implemented minimal creation response | `MovementCreatedResponse`: `id` |
+| POST | `/inventory/orders/outbound` | `MovementCreatedResponse` | No response field used; consumer only observes success/failure | ✅ COMPLIANT | Implemented minimal creation response | `MovementCreatedResponse`: `id` |
+| GET | `/inventory/orders` | `list[InventoryOrderListItem]` | Uses all projected movement fields plus `sku_name` and `sku_code` | ✅ COMPLIANT | Implemented flat HTTP projection; integrity lookup remains internal | `InventoryOrderListItem`: exact flat movement and SKU name/code fields |
 | GET | `/api/suppliers` | `list[SupplierResponse]` | Supplier list uses every `SupplierResponse` field | ✅ COMPLIANT | None identified | Keep `list[SupplierResponse]` |
 | GET | `/suppliers` | Same handler/`list[SupplierResponse]` as `/api/suppliers` | No internal consumer confirmed for canonical path | ✅ COMPLIANT | Preserve canonical alias for compatibility | Keep `list[SupplierResponse]` |
 | GET | `/api/suppliers/{supplier_id}` | `SupplierResponse` | No internal consumer confirmed | ✅ COMPLIANT | Explicit and safe; no reduction based only on missing consumer | Preserve `SupplierResponse` |
@@ -201,13 +201,15 @@ Completed:
 
 - Explicit nominal contracts for auth/login, health, and incidents JSON.
 
+Completed in this phase:
+
+1. Adjusted inventory order and movement projections.
+
 Remaining implementation:
 
-1. Adjust inventory order and movement projections.
-2. Adjust supplier mutation projections.
-3. Make 204 and CSV HTTP contracts explicit.
-4. Add HTTP contract coverage and global verification.
-5. Re-run the audit and update final statuses.
+1. Adjust supplier mutation projections.
+2. Make 204 and CSV HTTP contracts explicit.
+3. Add HTTP contract coverage and global verification.
 
 Auth, user-registration, and profile payload optimization is completed above. Phase 2.1 implementation is also reflected above; the remaining items are still pending.
 

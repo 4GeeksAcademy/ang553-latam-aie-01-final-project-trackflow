@@ -7,6 +7,7 @@
 - Fase 2 — implementación de response contracts en progreso.
 - Fase 2.1 completada.
 - Fase 2.2 completada.
+- Fase 2.3 completada.
 
 ## Completado relevante
 
@@ -29,19 +30,28 @@
 	- `POST /users` → `RegistrationResponse`.
 	- `GET/PUT /profiles/me` → `ProfileMeResponse`.
 - Frontend contracts alineados en `uis/backoffice/` y `apps/talent-pipeline-tracker/`.
-- Auditoría actual: 20 compliant, 13 optimize, 0 missing.
-- Suite backend actual: 147 tests passing.
+- `POST /inventory/orders/inbound` usa `MovementCreatedResponse` con solo `id`.
+- `POST /inventory/orders/outbound` usa `MovementCreatedResponse` con solo `id`.
+- `GET /inventory/orders` usa `InventoryOrderListItem` plano con `id`,
+  `movement_type`, `quantity`, `warehouse`, `created_at`, `user_uuid`,
+  `sku_name`, `sku_code`, `reference`, `exit_type` y `tracking_number`.
+- La relación SKU continúa siendo requerida internamente.
+- `InventoryDataIntegrityError` continúa protegiendo referencias huérfanas.
+- Bulk-loading de SKUs y comportamiento no-N+1 preservados.
+- Frontend backoffice alineado con el nuevo contrato.
+- Auditoría actual: 23 compliant, 10 optimize, 0 missing.
+- Suite backend actual: 148 tests passing.
 - Frontend: backoffice build/typecheck exitoso; Talent Pipeline compilation/TypeScript exitoso, prerender bloqueado por falta de `NEXT_PUBLIC_API_URL`; lint con fallos preexistentes no relacionados.
 
 ## Pendiente
 
-- Optimización de movimientos y órdenes de inventory.
 - Optimización de mutaciones de suppliers.
-- Contratos HTTP 204/CSV explícitos.
+- Contratos HTTP 204 explícitos.
+- Contrato HTTP/OpenAPI para respuestas CSV.
 - HTTP contract/global QA.
 - Verificación manual de `/docs`.
 - Cierre final de auditoría.
 
 ## Siguiente paso
 
-- Fase 2.3 — inventory movement/order response optimization.
+- Fase 2.4 — supplier mutation response optimization.
