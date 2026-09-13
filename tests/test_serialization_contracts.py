@@ -13,23 +13,24 @@ from services.api.auth_models import (
 )
 from services.api.main import HealthResponse, IncidentAnalysisResponse, app
 from services.api.inventory_schemas import InventoryOrderListItem, MovementCreatedResponse
+from services.api.models import SupplierCreatedResponse, SupplierMutationResponse, SupplierResponse
 
 
 def _route(method: str, path: str) -> APIRoute:
-    def routes() -> list[APIRoute]:
-        result: list[APIRoute] = []
-        for registered in app.routes:
-            if isinstance(registered, APIRoute):
-                result.append(registered)
-            elif hasattr(registered, "original_router"):
-                result.extend(
-                    route
-                    for route in registered.original_router.routes
-                    if isinstance(route, APIRoute)
-                )
-        return result
-
-    matches = [route for route in routes() if route.path == path and method in route.methods]
+    matches: list[APIRoute] = []
+    for registered in app.routes:
+        if isinstance(registered, APIRoute):
+            if registered.path == path and method in registered.methods:
+                matches.append(registered)
+        elif hasattr(registered, "original_router"):
+            prefix = registered.include_context.prefix
+            matches.extend(
+                route
+                for route in registered.original_router.routes
+                if isinstance(route, APIRoute)
+                and f"{prefix}{route.path}" == path
+                and method in route.methods
+            )
     assert len(matches) == 1
     return matches[0]
 
@@ -126,3 +127,19 @@ def test_inventory_response_contracts_are_exact() -> None:
         ["content"]["application/json"]["schema"]["$ref"]
         == "#/components/schemas/IncidentAnalysisResponse"
     )
+
+
+def test_supplier_mutation_and_read_contracts_are_exact() -> None:
+    assert set(SupplierCreatedResponse.model_fields) == {"id"}
+    assert set(SupplierMutationResponse.model_fields) == {"id", "updated_at"}
+
+    for path in ("/suppliers", "/api/suppliers"):
+        assert _route("POST", path).response_model is SupplierCreatedResponse
+
+    for suffix in ("rate", "status"):
+        for prefix in ("/suppliers", "/api/suppliers"):
+            assert _route("PATCH", f"{prefix}/{{supplier_id}}/{suffix}").response_model is SupplierMutationResponse
+
+    for path in ("/suppliers", "/api/suppliers"):
+        assert _route("GET", path).response_model == list[SupplierResponse]
+        assert _route("GET", f"{path}/{{supplier_id}}").response_model is SupplierResponse

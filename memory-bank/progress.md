@@ -8,6 +8,7 @@
 - Fase 2.1 completada.
 - Fase 2.2 completada.
 - Fase 2.3 completada.
+- Fase 2.4 completada.
 
 ## Completado relevante
 
@@ -39,19 +40,23 @@
 - `InventoryDataIntegrityError` continúa protegiendo referencias huérfanas.
 - Bulk-loading de SKUs y comportamiento no-N+1 preservados.
 - Frontend backoffice alineado con el nuevo contrato.
-- Auditoría actual: 23 compliant, 10 optimize, 0 missing.
-- Suite backend actual: 148 tests passing.
-- Frontend: backoffice build/typecheck exitoso; Talent Pipeline compilation/TypeScript exitoso, prerender bloqueado por falta de `NEXT_PUBLIC_API_URL`; lint con fallos preexistentes no relacionados.
+- Supplier create aliases usan `SupplierCreatedResponse` con solo `id`.
+- Supplier rate/status aliases usan `SupplierMutationResponse` con `id` y `updated_at`.
+- Los handlers compartidos mantienen el mismo contrato bajo `/suppliers` y `/api/suppliers`.
+- `GET` list/detail conservan `SupplierResponse` completo.
+- Persistencia TinyDB verificada; rate/status actualizan `updated_at`.
+- Frontend backoffice alineado con los contratos mínimos.
+- Auditoría actual: 29 compliant, 4 optimize, 0 missing.
+- Suite backend actual: 153 tests passing.
 
 ## Pendiente
 
-- Optimización de mutaciones de suppliers.
-- Contratos HTTP 204 explícitos.
-- Contrato HTTP/OpenAPI para respuestas CSV.
-- HTTP contract/global QA.
+- Contratos HTTP 204 explícitos para `DELETE /users/{user_id}` y suppliers.
+- Contrato HTTP/OpenAPI para `GET /api/incidents/results/export` (CSV).
+- Verificación global de serialización HTTP.
 - Verificación manual de `/docs`.
 - Cierre final de auditoría.
 
 ## Siguiente paso
 
-- Fase 2.4 — supplier mutation response optimization.
+- Fase 2.5 — explicit 204 and CSV response contracts.

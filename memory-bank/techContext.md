@@ -140,6 +140,20 @@
   la relación SKU requerida y la protección contra datos huérfanos, sin N+1.
 - El frontend backoffice consume el contrato plano.
 
+### Contratos de respuesta suppliers — Fase 2.4
+
+- Los endpoints de creación de suppliers devuelven `SupplierCreatedResponse`
+  con solo `id`.
+- Los endpoints de rate/status devuelven `SupplierMutationResponse` con
+  `id` y `updated_at`.
+- Los aliases `/suppliers` y `/api/suppliers` comparten handlers y response
+  contracts.
+- `SupplierResponse` permanece como contrato completo para GET list/detail.
+- Los updates de status persisten `updated_at`, igual que los updates de rate.
+- El backoffice ignora los mutation acknowledgements y vuelve a consultar la
+  lista.
+- Los tests de suppliers usan TinyDB temporal aislado para validar persistencia.
+
 ## Autenticacion frontend (uis/backoffice)
 
 - Token JWT almacenado en `localStorage` bajo la clave `trackflow_access_token` (`lib/auth.ts`).

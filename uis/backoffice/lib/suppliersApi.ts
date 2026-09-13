@@ -1,8 +1,10 @@
 import { authFetch } from "@/lib/authFetch";
 import type {
   Supplier,
+  SupplierCreatedResponse,
   SupplierCreate,
   SupplierFilters,
+  SupplierMutationResponse,
   SupplierRateUpdate,
   SupplierStatusUpdate,
 } from "@/types/suppliers";
@@ -97,22 +99,22 @@ export async function getSuppliers(filters?: SupplierFilters): Promise<Supplier[
   });
 }
 
-export async function createSupplier(payload: SupplierCreate): Promise<Supplier> {
-  return requestJson<Supplier>("/api/suppliers", {
+export async function createSupplier(payload: SupplierCreate): Promise<SupplierCreatedResponse> {
+  return requestJson<SupplierCreatedResponse>("/api/suppliers", {
     method: "POST",
     body: JSON.stringify(payload),
   });
 }
 
-export async function updateSupplierRate(id: number, payload: SupplierRateUpdate): Promise<Supplier> {
-  return requestJson<Supplier>(`/api/suppliers/${id}/rate`, {
+export async function updateSupplierRate(id: number, payload: SupplierRateUpdate): Promise<SupplierMutationResponse> {
+  return requestJson<SupplierMutationResponse>(`/api/suppliers/${id}/rate`, {
     method: "PATCH",
     body: JSON.stringify(payload),
   });
 }
 
-export async function updateSupplierStatus(id: number, payload: SupplierStatusUpdate): Promise<Supplier> {
-  return requestJson<Supplier>(`/api/suppliers/${id}/status`, {
+export async function updateSupplierStatus(id: number, payload: SupplierStatusUpdate): Promise<SupplierMutationResponse> {
+  return requestJson<SupplierMutationResponse>(`/api/suppliers/${id}/status`, {
     method: "PATCH",
     body: JSON.stringify(payload),
   });

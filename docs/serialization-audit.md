@@ -55,12 +55,12 @@ The four special contracts are the three `204 No Content` registrations (one use
 | GET | `/suppliers` | Same handler/`list[SupplierResponse]` as `/api/suppliers` | No internal consumer confirmed for canonical path | ✅ COMPLIANT | Preserve canonical alias for compatibility | Keep `list[SupplierResponse]` |
 | GET | `/api/suppliers/{supplier_id}` | `SupplierResponse` | No internal consumer confirmed | ✅ COMPLIANT | Explicit and safe; no reduction based only on missing consumer | Preserve `SupplierResponse` |
 | GET | `/suppliers/{supplier_id}` | Same handler/`SupplierResponse` as `/api/suppliers/{supplier_id}` | No internal consumer confirmed | ✅ COMPLIANT | Explicit and safe; preserve alias | Preserve `SupplierResponse` |
-| POST | `/api/suppliers` | `SupplierResponse` | Ignores returned object and immediately calls `fetchSuppliers()` | ⚠️ OPTIMIZE / CONTRACT ADJUSTMENT | Mutation returns 11 fields that the consumer discards | `SupplierMutationResponse`: `id` or equivalent minimal nominal acknowledgement |
-| POST | `/suppliers` | Same handler/`SupplierResponse` as `/api/suppliers` | No internal consumer confirmed for canonical path; `/api` consumer refetches | ⚠️ OPTIMIZE / CONTRACT ADJUSTMENT | Shared handler has an oversized write response | Same `SupplierMutationResponse` for both aliases: `id` |
-| PATCH | `/api/suppliers/{supplier_id}/rate` | `SupplierResponse` | Response ignored; list is refetched | ⚠️ OPTIMIZE / CONTRACT ADJUSTMENT | Mutation returns fields the consumer discards | `SupplierMutationResponse`: `id`, `updated_at` |
-| PATCH | `/suppliers/{supplier_id}/rate` | Same handler/`SupplierResponse` as `/api` rate alias | No internal consumer confirmed for canonical path; `/api` consumer refetches | ⚠️ OPTIMIZE / CONTRACT ADJUSTMENT | Shared handler has an oversized write response | Same `SupplierMutationResponse`: `id`, `updated_at` |
-| PATCH | `/api/suppliers/{supplier_id}/status` | `SupplierResponse` | Response ignored; list is refetched | ⚠️ OPTIMIZE / CONTRACT ADJUSTMENT | Mutation returns fields the consumer discards | `SupplierMutationResponse`: `id`, `updated_at` |
-| PATCH | `/suppliers/{supplier_id}/status` | Same handler/`SupplierResponse` as `/api` status alias | No internal consumer confirmed for canonical path; `/api` consumer refetches | ⚠️ OPTIMIZE / CONTRACT ADJUSTMENT | Shared handler has an oversized write response | Same `SupplierMutationResponse`: `id`, `updated_at` |
+| POST | `/api/suppliers` | `SupplierCreatedResponse` | Ignores returned object and immediately calls `fetchSuppliers()` | ✅ COMPLIANT | Implemented minimal nominal creation acknowledgement | `SupplierCreatedResponse`: `id` |
+| POST | `/suppliers` | Same handler/`SupplierCreatedResponse` as `/api/suppliers` | No internal consumer confirmed for canonical path; `/api` consumer refetches | ✅ COMPLIANT | Shared handler now applies the approved minimal contract | Same `SupplierCreatedResponse`: `id` |
+| PATCH | `/api/suppliers/{supplier_id}/rate` | `SupplierMutationResponse` | Response ignored; list is refetched | ✅ COMPLIANT | Implemented mutation acknowledgement with persisted update timestamp | `SupplierMutationResponse`: `id`, `updated_at` |
+| PATCH | `/suppliers/{supplier_id}/rate` | Same handler/`SupplierMutationResponse` as `/api` rate alias | No internal consumer confirmed for canonical path; `/api` consumer refetches | ✅ COMPLIANT | Shared handler now applies the approved minimal contract | Same `SupplierMutationResponse`: `id`, `updated_at` |
+| PATCH | `/api/suppliers/{supplier_id}/status` | `SupplierMutationResponse` | Response ignored; list is refetched | ✅ COMPLIANT | Implemented mutation acknowledgement with persisted update timestamp | `SupplierMutationResponse`: `id`, `updated_at` |
+| PATCH | `/suppliers/{supplier_id}/status` | Same handler/`SupplierMutationResponse` as `/api` status alias | No internal consumer confirmed for canonical path; `/api` consumer refetches | ✅ COMPLIANT | Shared handler now applies the approved minimal contract | Same `SupplierMutationResponse`: `id`, `updated_at` |
 | DELETE | `/api/suppliers/{supplier_id}` | HTTP 204 without body | No JSON consumer; deletion is status-based | ⚠️ OPTIMIZE / CONTRACT ADJUSTMENT | No-content contract can be made more explicit | Explicit `204 No Content`; no JSON/Pydantic body |
 | DELETE | `/suppliers/{supplier_id}` | Same handler/HTTP 204 as `/api` alias | No internal consumer confirmed for canonical path | ⚠️ OPTIMIZE / CONTRACT ADJUSTMENT | Shared alias should document the same no-content contract | Explicit `204 No Content`; no JSON/Pydantic body |
 | POST | `/api/incidents/analyze` | `IncidentAnalysisResponse` | Consumer uses all ten fields | ✅ COMPLIANT | None identified | `IncidentAnalysisResponse`: exact fields listed in section 5 |
@@ -132,9 +132,9 @@ Remove `sku_id`, the nested `sku` object, and unused `SKUSummary` fields from th
 
 ### Supplier mutation aliases
 
-**Current:** `/api/suppliers` and `/suppliers` share a create handler returning `SupplierResponse`. The `/api` consumer ignores the object and refetches the list. The rate and status PATCH pairs likewise share handlers, and their `/api` responses are ignored before refetching.
+**Implemented:** The shared aliases use nominal mutation response schemas. Create returns `SupplierCreatedResponse` with only `id`; rate and status return `SupplierMutationResponse` with only `id` and `updated_at`. The backoffice ignores these acknowledgements and refetches the list as before.
 
-**Target:** For both create aliases, use a nominal `SupplierMutationResponse` containing exactly `id` (or an equivalent minimal acknowledgement). For both rate aliases and both status aliases, use `SupplierMutationResponse` containing exactly `id` and `updated_at`. Keep both aliases and do not change status codes. The implementation must apply the same contract consistently to each shared handler.
+**Final contract:** For both create aliases, use `SupplierCreatedResponse` containing exactly `id`. For both rate aliases and both status aliases, use `SupplierMutationResponse` containing exactly `id` and `updated_at`. Keep both aliases and status codes unchanged; the shared handlers apply the same contracts consistently.
 
 ### Supplier delete aliases
 
@@ -207,9 +207,8 @@ Completed in this phase:
 
 Remaining implementation:
 
-1. Adjust supplier mutation projections.
-2. Make 204 and CSV HTTP contracts explicit.
-3. Add HTTP contract coverage and global verification.
+1. Make 204 and CSV HTTP contracts explicit.
+2. Add HTTP contract coverage and global verification.
 
 Auth, user-registration, and profile payload optimization is completed above. Phase 2.1 implementation is also reflected above; the remaining items are still pending.
 
