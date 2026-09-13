@@ -4,7 +4,7 @@ export function Footer() {
       <div className="mx-auto max-w-6xl">
         <div className="mb-8 grid grid-cols-1 gap-8 md:grid-cols-2">
           <div>
-            <h3 className="mb-4 text-lg font-semibold">TrackFlow</h3>
+            <h2 className="mb-4 text-lg font-semibold">TrackFlow</h2>
             <p className="text-gray-400">Logística que escala con tu e-commerce</p>
           </div>
           <div className="md:text-right">
