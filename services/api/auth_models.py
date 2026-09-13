@@ -127,6 +127,13 @@ class UserResponse(BaseModel):
     created_at: str
 
 
+class TokenResponse(BaseModel):
+    """OAuth2 access-token response returned by the login endpoint."""
+
+    access_token: str
+    token_type: str
+
+
 class ProfileResponse(BaseModel):
     """Public representation of a Profile — safe for HTTP responses."""
 

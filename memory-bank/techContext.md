@@ -112,6 +112,13 @@
 - Routers en `routes/auth.py`, `routes/users.py`, `routes/profiles.py`.
 - Todos integrados via `main.py` con CORS para desarrollo local y Codespaces.
 
+### Contratos de respuesta explícitos — Fase 2.1
+
+- `POST /auth/login` usa el response model nominal `TokenResponse` con `access_token` y `token_type`.
+- `GET /health` usa `HealthResponse` con `status`.
+- `POST /api/incidents/analyze` usa `IncidentAnalysisResponse` con la shape completa de diez campos.
+- Estas rutas tienen `response_model` explícito y aparecen como schemas nominales en OpenAPI.
+
 ## Autenticacion frontend (uis/backoffice)
 
 - Token JWT almacenado en `localStorage` bajo la clave `trackflow_access_token` (`lib/auth.ts`).

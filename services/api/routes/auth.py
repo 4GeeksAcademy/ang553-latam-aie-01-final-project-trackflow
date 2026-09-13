@@ -16,6 +16,7 @@ from services.api.auth_models import (
     ForgotPasswordRequest,
     MessageResponse,
     ResetPasswordRequest,
+    TokenResponse,
     UserInDB,
     UserResponse,
 )
@@ -36,10 +37,10 @@ from services.api.email_service import send_password_reset_email
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
 
-@router.post("/login")
+@router.post("/login", response_model=TokenResponse)
 async def login(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
-) -> dict[str, str]:
+) -> TokenResponse:
     """OAuth2-compatible login.
 
     Accepts ``username`` (email) and ``password`` via form data.

@@ -21,9 +21,9 @@ The counts below are derived from the 33 rows in the complete endpoint table.
 | Measure | Count |
 |---|---:|
 | Total method+path registrations | 33 |
-| ✅ Compliant | 13 |
+| ✅ Compliant | 16 |
 | ⚠️ Optimize / contract adjustment | 17 |
-| ❌ Missing explicit response contract | 3 |
+| ❌ Missing explicit response contract | 0 |
 | Non-JSON/no-content special contracts | 4 |
 | Registrations with no internal consumer found | 13 |
 
@@ -33,7 +33,7 @@ The four special contracts are the three `204 No Content` registrations (one use
 
 | Method | Path | Current response contract | Consumer evidence | Status | Problem | Target output contract |
 |---|---|---|---|---|---|---|
-| POST | `/auth/login` | Inferred `dict[str, str]` | Backoffice login consumes the token response | ❌ MISSING EXPLICIT RESPONSE CONTRACT | Stable keys are not represented by a nominal response schema | `TokenResponse`/`LoginResponse`: `access_token`, `token_type` |
+| POST | `/auth/login` | `TokenResponse` | Backoffice login consumes the token response | ✅ COMPLIANT | None identified | `TokenResponse`: `access_token`, `token_type` |
 | GET | `/auth/me` | `UserResponse` | Uses `id`, `email`, `is_active`, `role`; does not read `created_at` | ⚠️ OPTIMIZE / CONTRACT ADJUSTMENT | `created_at` is not needed by the known consumer | `AuthMeResponse`: `id`, `email`, `is_active`, `role` |
 | POST | `/auth/forgot-password` | `MessageResponse` | UI uses `message` | ✅ COMPLIANT | None identified | Keep `MessageResponse`: `message` |
 | POST | `/auth/reset-password` | `MessageResponse` | Current consumer ignores `message`; stable generic confirmation remains safe | ✅ COMPLIANT | No objective issue; removing one message field is not justified | Keep `MessageResponse`: `message` |
@@ -63,17 +63,17 @@ The four special contracts are the three `204 No Content` registrations (one use
 | PATCH | `/suppliers/{supplier_id}/status` | Same handler/`SupplierResponse` as `/api` status alias | No internal consumer confirmed for canonical path; `/api` consumer refetches | ⚠️ OPTIMIZE / CONTRACT ADJUSTMENT | Shared handler has an oversized write response | Same `SupplierMutationResponse`: `id`, `updated_at` |
 | DELETE | `/api/suppliers/{supplier_id}` | HTTP 204 without body | No JSON consumer; deletion is status-based | ⚠️ OPTIMIZE / CONTRACT ADJUSTMENT | No-content contract can be made more explicit | Explicit `204 No Content`; no JSON/Pydantic body |
 | DELETE | `/suppliers/{supplier_id}` | Same handler/HTTP 204 as `/api` alias | No internal consumer confirmed for canonical path | ⚠️ OPTIMIZE / CONTRACT ADJUSTMENT | Shared alias should document the same no-content contract | Explicit `204 No Content`; no JSON/Pydantic body |
-| POST | `/api/incidents/analyze` | Stable generic dict with ten fields | Consumer uses all ten fields | ❌ MISSING EXPLICIT RESPONSE CONTRACT | Stable JSON shape is declared generically | `IncidentAnalysisResponse`: exact fields listed in section 5 |
+| POST | `/api/incidents/analyze` | `IncidentAnalysisResponse` | Consumer uses all ten fields | ✅ COMPLIANT | None identified | `IncidentAnalysisResponse`: exact fields listed in section 5 |
 | GET | `/api/incidents/results/export` | Runtime `text/csv`; OpenAPI currently describes empty `application/json` | Export is a file response, not a JSON object | ⚠️ OPTIMIZE / CONTRACT ADJUSTMENT | HTTP/OpenAPI content type is incorrect or incomplete | Explicit CSV contract: `text/csv`, suitable `Response`/`response_class`, correct `responses`, and documented `Content-Disposition` when applicable |
-| GET | `/health` | Inferred `dict[str, str]` | No internal consumer confirmed; infrastructure may consume it | ❌ MISSING EXPLICIT RESPONSE CONTRACT | Stable `{ "status": "ok" }` shape has no nominal schema | `HealthResponse`: `status: str`; preserve body |
+| GET | `/health` | `HealthResponse` | No internal consumer confirmed; infrastructure may consume it | ✅ COMPLIANT | None identified | `HealthResponse`: `status: str`; preserve body |
 
 ## 5. Endpoint details requiring changes
 
 ### POST `/auth/login`
 
-**Current:** The route returns a stable token dictionary, but FastAPI infers `dict[str, str]`; there is no nominal schema with explicit keys. The known backoffice login flow consumes the token.
+**Implemented:** The route uses the nominal `TokenResponse` schema. The known backoffice login flow consumes the token.
 
-**Target:** Introduce a `TokenResponse` or `LoginResponse` with exactly:
+**Final contract:** `TokenResponse` with exactly:
 
 - `access_token`
 - `token_type`
@@ -144,9 +144,9 @@ Remove `sku_id`, the nested `sku` object, and unused `SKUSummary` fields from th
 
 ### POST `/api/incidents/analyze`
 
-**Current:** The shape is stable and all ten fields are used, but the route exposes a generic dictionary rather than a nominal response contract.
+**Implemented:** The route uses the nominal `IncidentAnalysisResponse` schema. The analyzer logic and all ten output fields are unchanged.
 
-**Target:** `IncidentAnalysisResponse` with exactly:
+**Final contract:** `IncidentAnalysisResponse` with exactly:
 
 - `total_records: int`
 - `valid_records: int`
@@ -169,9 +169,9 @@ Do not remove any field.
 
 ### GET `/health`
 
-**Current:** FastAPI infers `dict[str, str]`; the actual stable body is `{ "status": "ok" }`. No internal consumer is confirmed, but infrastructure or external monitoring may depend on it.
+**Implemented:** The route uses the nominal `HealthResponse` schema and preserves the stable body `{ "status": "ok" }`. No internal consumer is confirmed, but infrastructure or external monitoring may depend on it.
 
-**Target:** `HealthResponse` with exactly `status: str`. Preserve the current body and do not turn the endpoint into an empty response merely because no repository caller was found.
+**Final contract:** `HealthResponse` with exactly `status: str`. The current body is preserved and the endpoint remains a JSON response.
 
 ## 6. Security findings
 
@@ -197,15 +197,20 @@ Do not remove any field.
 
 ## 8. Planned implementation
 
-1. Add explicit contracts for auth/login, health, and incidents JSON.
-2. Optimize auth, user-registration, and profile payloads.
-3. Adjust inventory order and movement projections.
-4. Adjust supplier mutation projections.
-5. Make 204 and CSV HTTP contracts explicit.
-6. Add HTTP contract tests.
-7. Re-run the audit and update final statuses.
+Completed:
 
-No implementation is included in this baseline audit.
+- Explicit nominal contracts for auth/login, health, and incidents JSON.
+
+Remaining implementation:
+
+1. Optimize auth, user-registration, and profile payloads.
+2. Adjust inventory order and movement projections.
+3. Adjust supplier mutation projections.
+4. Make 204 and CSV HTTP contracts explicit.
+5. Add HTTP contract coverage and global verification.
+6. Re-run the audit and update final statuses.
+
+Phase 2.1 implementation is reflected above; the remaining items are still pending.
 
 ## 9. Definition of done
 
