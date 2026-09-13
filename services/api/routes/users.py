@@ -9,10 +9,11 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from services.api.auth_models import (
     ProfileCreate,
+    RegistrationResponse,
     Role,
     UserInDB,
     UserRegister,
@@ -37,8 +38,8 @@ router = APIRouter(prefix="/users", tags=["Users"])
 # ── POST /users (public) ─────────────────────────────────────────────────────
 
 
-@router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def register_user(payload: UserRegister) -> UserResponse:
+@router.post("", response_model=RegistrationResponse, status_code=status.HTTP_201_CREATED)
+async def register_user(payload: UserRegister) -> RegistrationResponse:
     """Register a new user.
 
     Public endpoint. Creates a user with ``role=user``.
@@ -81,7 +82,7 @@ async def register_user(payload: UserRegister) -> UserResponse:
                 detail=str(e),
             )
 
-    return user_resp
+    return RegistrationResponse(message="User registered successfully.")
 
 
 # ── GET /users (admin only) ──────────────────────────────────────────────────
@@ -189,7 +190,11 @@ async def update_user_endpoint(
 # ── DELETE /users/{user_id} ──────────────────────────────────────────────────
 
 
-@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{user_id}",
+    response_class=Response,
+    status_code=status.HTTP_204_NO_CONTENT,
+)
 async def delete_user_endpoint(
     user_id: str,
     current_user: Annotated[UserInDB, Depends(get_current_user)],
@@ -214,4 +219,4 @@ async def delete_user_endpoint(
         )
 
     delete_user(user_id)
-    return None
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

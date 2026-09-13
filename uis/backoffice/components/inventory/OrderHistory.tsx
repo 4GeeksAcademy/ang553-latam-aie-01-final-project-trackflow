@@ -240,16 +240,12 @@ export function OrderHistory({
 
                 {/* Product name */}
                 <td className="px-4 py-3 text-white">
-                  {order.sku?.name ?? (
-                    <span className="text-slate-500">Unknown</span>
-                  )}
+                  {order.sku_name}
                 </td>
 
                 {/* SKU code */}
                 <td className="px-4 py-3 font-mono text-xs text-slate-300">
-                  {order.sku?.sku ?? (
-                    <span className="text-slate-500">—</span>
-                  )}
+                  {order.sku_code}
                 </td>
 
                 {/* Quantity */}

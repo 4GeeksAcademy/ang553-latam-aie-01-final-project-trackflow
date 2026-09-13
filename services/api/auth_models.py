@@ -127,11 +127,41 @@ class UserResponse(BaseModel):
     created_at: str
 
 
+class AuthMeResponse(BaseModel):
+    """Authenticated user identity returned by ``GET /auth/me``."""
+
+    id: str
+    email: str
+    is_active: bool
+    role: Role
+
+
+class RegistrationResponse(BaseModel):
+    """Confirmation returned after successful public registration."""
+
+    message: str
+
+
+class TokenResponse(BaseModel):
+    """OAuth2 access-token response returned by the login endpoint."""
+
+    access_token: str
+    token_type: str
+
+
 class ProfileResponse(BaseModel):
     """Public representation of a Profile — safe for HTTP responses."""
 
     id: str
     user_id: str
+    name: str | None = None
+    phone: str | None = None
+    address: str | None = None
+
+
+class ProfileMeResponse(BaseModel):
+    """Authenticated user's profile projection."""
+
     name: str | None = None
     phone: str | None = None
     address: str | None = None

@@ -20,6 +20,17 @@ from sqlmodel import Session, func, select
 from services.api.inventory_schemas import StockEntryCreate, StockExitCreate
 
 
+class InventoryDataIntegrityError(RuntimeError):
+    """Raised when an inventory movement references a missing SKU."""
+
+    def __init__(self, missing_sku_ids: set[int]) -> None:
+        self.missing_sku_ids = frozenset(missing_sku_ids)
+        super().__init__(
+            "Inventory movements reference missing SKUs: "
+            f"{sorted(self.missing_sku_ids)}"
+        )
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # Internal helpers
 # ═════════════════════════════════════════════════════════════════════════════
@@ -349,11 +360,17 @@ def list_orders(session: Session) -> list[dict]:
         skus = session.exec(select(SKU).where(SKU.id.in_(sku_ids))).all()  # type: ignore[arg-type]
         sku_map = {sku.id: sku for sku in skus}
 
+    # A missing SKU is a data-integrity failure, not a valid nullable
+    # relationship.  Detect it before constructing any movement result.
+    missing_sku_ids = sku_ids - set(sku_map)
+    if missing_sku_ids:
+        raise InventoryDataIntegrityError(missing_sku_ids)
+
     # 4. Build combined list
     results: list[dict] = []
 
     for e in entries:
-        sku = sku_map.get(e.sku_id)
+        sku = sku_map[e.sku_id]
         results.append(
             {
                 "id": e.id,
@@ -371,7 +388,7 @@ def list_orders(session: Session) -> list[dict]:
         )
 
     for x in exits:
-        sku = sku_map.get(x.sku_id)
+        sku = sku_map[x.sku_id]
         results.append(
             {
                 "id": x.id,

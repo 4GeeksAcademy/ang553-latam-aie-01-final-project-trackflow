@@ -115,6 +115,12 @@ class StockEntryResponse(BaseModel):
     user_uuid: str
 
 
+class MovementCreatedResponse(BaseModel):
+    """Minimal response returned after creating a stock movement."""
+
+    id: int
+
+
 # ── StockExit schemas ────────────────────────────────────────────────────────
 
 
@@ -228,6 +234,21 @@ class InventoryOrderResponse(BaseModel):
     created_at: datetime
     user_uuid: str
     sku: SKUSummary
+    reference: Optional[str] = None
+    exit_type: Optional[str] = None
+
+
+class InventoryOrderListItem(BaseModel):
+    """Flat, consumer-focused representation of an inventory movement."""
+
+    id: int
+    movement_type: str
+    quantity: int
+    warehouse: Warehouse
+    created_at: datetime
+    user_uuid: str
+    sku_name: str
+    sku_code: str
     reference: Optional[str] = None
     exit_type: Optional[str] = None
     tracking_number: Optional[str] = None

@@ -18,6 +18,7 @@ import type {
   LoginCredentials,
   LoginResponse,
   RegisterPayload,
+  RegistrationResponse,
   UpdateProfilePayload,
   UserProfile,
   ChangePasswordPayload,
@@ -133,10 +134,10 @@ export async function login(
  * This is a **public** endpoint and does not create a session.
  *
  * @param payload - Registration data accepted by the backend.
- * @returns The created user as ``UserResponse``/``AuthUser``.
+ * @returns A registration confirmation.
  * @throws {@link ApiError} on network failure or non-OK response.
  */
-export async function register(payload: RegisterPayload): Promise<AuthUser> {
+export async function register(payload: RegisterPayload): Promise<RegistrationResponse> {
   let response: Response;
 
   try {
@@ -157,7 +158,7 @@ export async function register(payload: RegisterPayload): Promise<AuthUser> {
   }
 
   try {
-    return (await response.json()) as AuthUser;
+    return (await response.json()) as RegistrationResponse;
   } catch {
     throw new ApiError("Auth server returned an invalid JSON response.", response.status);
   }

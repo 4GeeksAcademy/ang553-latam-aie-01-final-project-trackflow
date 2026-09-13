@@ -58,6 +58,11 @@
 
 ## Decisiones de arquitectura ya tomadas
 
+- `InventoryOrderResponse.sku` es una relación requerida, representada por `SKUSummary`.
+- Los movimientos que referencien un SKU inexistente se consideran una inconsistencia de datos, no un estado nullable válido.
+- `list_orders()` detecta referencias huérfanas después de la carga bulk y lanza `InventoryDataIntegrityError`.
+- El router traduce esa excepción específica a un HTTP 500 genérico sin exponer IDs internos.
+
 - El repo sigue una organizacion de monorepo por responsabilidades:
   - interfaces en `uis/`
   - servicios en `services/`
@@ -106,6 +111,91 @@
 - `auth_services.py` — CRUD de usuarios y perfiles sobre TinyDB.
 - Routers en `routes/auth.py`, `routes/users.py`, `routes/profiles.py`.
 - Todos integrados via `main.py` con CORS para desarrollo local y Codespaces.
+
+### Contratos de respuesta explícitos — Fase 2.1
+
+- `POST /auth/login` usa el response model nominal `TokenResponse` con `access_token` y `token_type`.
+- `GET /health` usa `HealthResponse` con `status`.
+- `POST /api/incidents/analyze` usa `IncidentAnalysisResponse` con la shape completa de diez campos.
+- Estas rutas tienen `response_model` explícito y aparecen como schemas nominales en OpenAPI.
+
+### Contratos de respuesta auth/profile — Fase 2.2
+
+- `GET /auth/me` usa `AuthMeResponse` con `id`, `email`, `is_active` y `role`.
+- `POST /users` usa `RegistrationResponse` con `message`.
+- `GET/PUT /profiles/me` usan `ProfileMeResponse` con `name`, `phone` y `address`.
+- `ProfileMeResponse` es una proyección HTTP; los servicios pueden seguir trabajando internamente con `ProfileResponse`.
+- Los dos frontends reflejan estos contratos.
+
+### Contratos de respuesta inventory — Fase 2.3
+
+- Los endpoints inbound/outbound de inventory devuelven `MovementCreatedResponse`
+  con solo `id`.
+- `GET /inventory/orders` expone `InventoryOrderListItem` como proyección HTTP
+  plana.
+- La API no expone en ese listado `sku_id`, el objeto SKU anidado ni
+  `client_name`/`category`/`warehouse` de la relación SKU.
+- El router transforma la relación interna a `sku_name` y `sku_code`.
+- `list_orders()` conserva el bulk SKU lookup, `InventoryDataIntegrityError`,
+  la relación SKU requerida y la protección contra datos huérfanos, sin N+1.
+- El frontend backoffice consume el contrato plano.
+
+### Contratos de respuesta suppliers — Fase 2.4
+
+- Los endpoints de creación de suppliers devuelven `SupplierCreatedResponse`
+  con solo `id`.
+- Los endpoints de rate/status devuelven `SupplierMutationResponse` con
+  `id` y `updated_at`.
+- Los aliases `/suppliers` y `/api/suppliers` comparten handlers y response
+  contracts.
+- `SupplierResponse` permanece como contrato completo para GET list/detail.
+- Los updates de status persisten `updated_at`, igual que los updates de rate.
+- El backoffice ignora los mutation acknowledgements y vuelve a consultar la
+  lista.
+- Los tests de suppliers usan TinyDB temporal aislado para validar persistencia.
+
+### Contratos HTTP especiales — Fase 2.5
+
+- `DELETE /users/{user_id}` usa `Response` explícita con 204 No Content.
+- DELETE supplier canonical y alias `/api` comparten contrato explícito 204 sin
+  body.
+- Las respuestas 204 no usan modelos Pydantic ni response models JSON.
+- `GET /api/incidents/results/export` usa `Response` y declara `text/csv`
+  explícitamente en OpenAPI.
+- El CSV mantiene `Content-Disposition: attachment` con filename
+  `results.csv`.
+- El endpoint CSV no expone `application/json` como success contract.
+
+### Global serialization verification — Fase 3.1
+
+- El backend tiene 33 method+path registrations efectivas.
+- 29 son JSON con `response_model` Pydantic nominal.
+- 4 son contratos HTTP especiales.
+- Existen 27 decorators fuente: 24 JSON con `response_model` explícito y 3
+  special con metadata HTTP explícita.
+- Los 6 aliases `/api/suppliers` reutilizan handlers/decorators y se validan
+  separadamente en runtime.
+- OpenAPI muestra 27 registrations porque los 6 aliases `/api/suppliers`
+  están ocultos con `include_in_schema=False`.
+- La verificación HTTP global usa `httpx.AsyncClient` + `ASGITransport`.
+- Auth/suppliers usan TinyDB temporal aislado.
+- Inventory usa SQLite in-memory con `StaticPool` y dependency override de
+  `get_db`.
+- Los dependency overrides se limpian al finalizar.
+- `_last_result` de incidents se aísla/restaura con `monkeypatch`.
+- No se usan servicios externos durante QA HTTP.
+
+### Manual Swagger QA — Fase 3.2
+
+- FastAPI real probado mediante `/docs`.
+- QA usó SQLite temporal para inventory.
+- Contratos representativos validados manualmente.
+- Bearer auth comprobado: 401 sin token y respuesta pública correcta con
+  token válido.
+- Supplier create mínimo y GET completo comprobados.
+- Inventory movement create mínimo y list plano comprobados.
+- Incidents CSV contract comprobado.
+- Datos temporales de QA fueron limpiados/restaurados al finalizar.
 
 ## Autenticacion frontend (uis/backoffice)
 

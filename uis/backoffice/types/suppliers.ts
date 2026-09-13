@@ -34,6 +34,15 @@ export interface Supplier {
   notes: string | null;
 }
 
+export interface SupplierCreatedResponse {
+  id: number;
+}
+
+export interface SupplierMutationResponse {
+  id: number;
+  updated_at: string;
+}
+
 export interface SupplierCreate {
   name: string;
   country: SupplierCountry;

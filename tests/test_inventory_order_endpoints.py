@@ -20,9 +20,8 @@ from services.api.inventory_models import SKU, StockEntry, StockExit
 from services.api.inventory_schemas import (
     ExitType,
     StockEntryCreate,
-    StockEntryResponse,
+    MovementCreatedResponse,
     StockExitCreate,
-    StockExitResponse,
     Warehouse,
 )
 from services.api.inventory_service import (
@@ -33,6 +32,7 @@ from services.api.inventory_service import (
 from services.api.routes.inventory import (
     create_inbound_order,
     create_outbound_order,
+    list_orders_endpoint,
 )
 
 
@@ -126,10 +126,8 @@ class TestCreateInboundOrder:
         )
 
         assert result.id is not None
-        assert result.sku_id == sku.id
-        assert result.quantity == 50
-        assert result.reference == "PO-12345"
-        assert result.warehouse == Warehouse.LA
+        assert isinstance(result, MovementCreatedResponse)
+        assert result.model_dump() == {"id": result.id}
 
         # Verify it's persisted in the database
         db_entry = db_session.get(StockEntry, result.id)
@@ -142,8 +140,7 @@ class TestCreateInboundOrder:
     def test_response_contains_all_fields(
         self, db_session: Session, auth_user: UserInDB
     ) -> None:
-        """INBOUND-02: response has id, sku_id, quantity, reference, warehouse,
-        created_at, user_uuid."""
+        """INBOUND-02: response has the exact id-only shape."""
         sku = _create_sku(db_session, sku_code="INB-SKU-02")
 
         payload = StockEntryCreate(
@@ -160,19 +157,21 @@ class TestCreateInboundOrder:
         )
 
         assert result.id is not None
-        assert result.sku_id == sku.id
-        assert result.quantity == 10
-        assert result.reference == "PO-REF"
-        assert result.warehouse == Warehouse.LA
-        assert result.created_at is not None
-        assert result.user_uuid is not None
+        assert isinstance(result, MovementCreatedResponse)
+        assert result.model_dump() == {"id": result.id}
+        persisted = db_session.get(StockEntry, result.id)
+        assert persisted is not None
+        assert persisted.quantity == 10
+        assert persisted.reference == "PO-REF"
+        assert persisted.warehouse == "LA"
+        assert persisted.user_uuid == auth_user.id
 
     # ── 3. Response contains warehouse ──────────────────────────────────
 
     def test_response_includes_warehouse(
         self, db_session: Session, auth_user: UserInDB
     ) -> None:
-        """INBOUND-03: response has warehouse field."""
+        """INBOUND-03: persisted entry preserves its warehouse."""
         sku = _create_sku(db_session, sku_code="INB-SKU-03", warehouse="ZGZ")
 
         payload = StockEntryCreate(
@@ -188,14 +187,17 @@ class TestCreateInboundOrder:
             current_user=auth_user,
         )
 
-        assert result.warehouse == Warehouse.ZGZ
+        assert result.model_dump() == {"id": result.id}
+        persisted = db_session.get(StockEntry, result.id)
+        assert persisted is not None
+        assert persisted.warehouse == "ZGZ"
 
     # ── 4. user_uuid matches current_user.id ────────────────────────────
 
     def test_user_uuid_matches_current_user(
         self, db_session: Session, auth_user: UserInDB
     ) -> None:
-        """INBOUND-04: user_uuid in response equals current_user.id."""
+        """INBOUND-04: persisted entry uses the authenticated user UUID."""
         sku = _create_sku(db_session, sku_code="INB-SKU-04")
 
         payload = StockEntryCreate(
@@ -211,7 +213,10 @@ class TestCreateInboundOrder:
             current_user=auth_user,
         )
 
-        assert result.user_uuid == auth_user.id
+        assert result.model_dump() == {"id": result.id}
+        persisted = db_session.get(StockEntry, result.id)
+        assert persisted is not None
+        assert persisted.user_uuid == auth_user.id
 
     # ── 5. Client cannot decide user_uuid ───────────────────────────────
 
@@ -347,13 +352,37 @@ class TestCreateInboundOrder:
             current_user=auth_user,
         )
 
-        assert isinstance(result, StockEntryResponse)
+        assert isinstance(result, MovementCreatedResponse)
         assert not isinstance(result, StockEntry)  # not a raw ORM
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # POST /inventory/orders/outbound
 # ═════════════════════════════════════════════════════════════════════════════
+
+
+class TestListOrdersEndpoint:
+    """Suite for ``GET /inventory/orders`` integrity handling."""
+
+    def test_orphaned_sku_reference_returns_generic_500(
+        self, db_session: Session
+    ) -> None:
+        """ORDERS-ENDPOINT-01: integrity failures are mapped to HTTP 500."""
+        orphaned_entry = StockEntry(
+            sku_id=99903,
+            quantity=1,
+            reference="ORPHANED",
+            warehouse="LA",
+            user_uuid="test-user",
+        )
+        db_session.add(orphaned_entry)
+        db_session.commit()
+
+        with pytest.raises(HTTPException) as exc_info:
+            list_orders_endpoint(session=db_session)
+
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.detail == "Inventory data integrity error."
 
 
 class TestCreateOutboundOrder:
@@ -392,11 +421,8 @@ class TestCreateOutboundOrder:
         )
 
         assert result.id is not None
-        assert result.sku_id == sku.id
-        assert result.quantity == 30
-        assert result.exit_type == ExitType.DISPATCH
-        assert result.tracking_number == "DISP-001"
-        assert result.warehouse == Warehouse.LA
+        assert isinstance(result, MovementCreatedResponse)
+        assert result.model_dump() == {"id": result.id}
 
         # Verify it's persisted in the database
         db_exit = db_session.get(StockExit, result.id)
@@ -409,8 +435,7 @@ class TestCreateOutboundOrder:
     def test_response_contains_all_fields(
         self, db_session: Session, auth_user: UserInDB
     ) -> None:
-        """OUTBOUND-02: response has id, sku_id, quantity, exit_type,
-        tracking_number, warehouse, created_at, user_uuid."""
+        """OUTBOUND-02: response has the exact id-only shape."""
         sku = _create_sku(db_session, sku_code="OUT-SKU-12")
         create_stock_entry(
             session=db_session,
@@ -438,20 +463,15 @@ class TestCreateOutboundOrder:
         )
 
         assert result.id is not None
-        assert result.sku_id == sku.id
-        assert result.quantity == 10
-        assert result.exit_type == ExitType.DISPATCH
-        assert result.tracking_number == "DISP-002"
-        assert result.warehouse == Warehouse.LA
-        assert result.created_at is not None
-        assert result.user_uuid is not None
+        assert isinstance(result, MovementCreatedResponse)
+        assert result.model_dump() == {"id": result.id}
 
     # ── 13. user_uuid matches current_user.id ───────────────────────────
 
     def test_user_uuid_matches_current_user(
         self, db_session: Session, auth_user: UserInDB
     ) -> None:
-        """OUTBOUND-03: user_uuid in response equals current_user.id."""
+        """OUTBOUND-03: persisted exit uses the authenticated user UUID."""
         sku = _create_sku(db_session, sku_code="OUT-SKU-13")
         create_stock_entry(
             session=db_session,
@@ -478,7 +498,10 @@ class TestCreateOutboundOrder:
             current_user=auth_user,
         )
 
-        assert result.user_uuid == auth_user.id
+        assert result.model_dump() == {"id": result.id}
+        persisted = db_session.get(StockExit, result.id)
+        assert persisted is not None
+        assert persisted.user_uuid == auth_user.id
 
     # ── 14. Valid exit reduces stock ────────────────────────────────────
 
@@ -550,7 +573,12 @@ class TestCreateOutboundOrder:
             current_user=auth_user,
         )
 
-        assert result.quantity == 50
+        assert result.model_dump() == {"id": result.id}
+        persisted = db_session.get(StockExit, result.id)
+        assert persisted is not None
+        assert persisted.exit_type == "dispatch"
+        assert persisted.tracking_number == "DISP-EXACT"
+        assert persisted.warehouse == "LA"
 
         # Stock is now 0
         after = get_current_stock(db_session, sku_id=sku.id, warehouse="LA")
@@ -796,8 +824,12 @@ class TestCreateOutboundOrder:
             current_user=auth_user,
         )
 
-        assert result.exit_type == ExitType.DISPATCH
-        assert result.tracking_number == "TRACK-001"
+        assert result.model_dump() == {"id": result.id}
+        persisted = db_session.get(StockExit, result.id)
+        assert persisted is not None
+        assert persisted.exit_type == "dispatch"
+        assert persisted.tracking_number == "TRACK-001"
+        assert persisted.warehouse == "LA"
 
     # ── 23. Valid loss with tracking None works ─────────────────────────
 
@@ -831,8 +863,11 @@ class TestCreateOutboundOrder:
             current_user=auth_user,
         )
 
-        assert result.exit_type == ExitType.LOSS
-        assert result.tracking_number is None
+        assert result.model_dump() == {"id": result.id}
+        persisted = db_session.get(StockExit, result.id)
+        assert persisted is not None
+        assert persisted.exit_type == "loss"
+        assert persisted.tracking_number is None
 
 
 # ═════════════════════════════════════════════════════════════════════════════

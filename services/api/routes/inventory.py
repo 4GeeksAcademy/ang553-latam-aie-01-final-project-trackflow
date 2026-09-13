@@ -24,16 +24,15 @@ from services.api.auth_security import get_current_user
 from services.api.database import get_db
 from services.api.inventory_models import SKU
 from services.api.inventory_schemas import (
-    InventoryOrderResponse,
+    InventoryOrderListItem,
     SKUCreate,
-    SKUSummary,
     SKUResponse,
     StockEntryCreate,
-    StockEntryResponse,
+    MovementCreatedResponse,
     StockExitCreate,
-    StockExitResponse,
 )
 from services.api.inventory_service import (
+    InventoryDataIntegrityError,
     create_stock_entry,
     create_stock_exit,
     get_current_stock,
@@ -155,12 +154,12 @@ def create_product(
 # ── POST /inventory/orders/inbound ────────────────────────────────────────────
 
 
-@router.post("/orders/inbound", response_model=StockEntryResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/orders/inbound", response_model=MovementCreatedResponse, status_code=status.HTTP_201_CREATED)
 def create_inbound_order(
     payload: StockEntryCreate,
     session: Annotated[Session, Depends(get_db)],
     current_user: Annotated[UserInDB, Depends(get_current_user)],
-) -> StockEntryResponse:
+) -> MovementCreatedResponse:
     """Register an inbound stock movement (stock entry).
 
     Delegates all business logic (SKU existence, warehouse mismatch,
@@ -175,26 +174,18 @@ def create_inbound_order(
         data=payload,
         user_uuid=current_user.id,
     )
-    return StockEntryResponse(
-        id=entry.id,
-        sku_id=entry.sku_id,
-        quantity=entry.quantity,
-        reference=entry.reference,
-        warehouse=entry.warehouse,
-        created_at=entry.created_at,
-        user_uuid=entry.user_uuid,
-    )
+    return MovementCreatedResponse(id=entry.id)
 
 
 # ── POST /inventory/orders/outbound ──────────────────────────────────────────
 
 
-@router.post("/orders/outbound", response_model=StockExitResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/orders/outbound", response_model=MovementCreatedResponse, status_code=status.HTTP_201_CREATED)
 def create_outbound_order(
     payload: StockExitCreate,
     session: Annotated[Session, Depends(get_db)],
     current_user: Annotated[UserInDB, Depends(get_current_user)],
-) -> StockExitResponse:
+) -> MovementCreatedResponse:
     """Register an outbound stock movement (stock exit).
 
     Delegates all business logic (SKU existence, warehouse mismatch,
@@ -209,25 +200,16 @@ def create_outbound_order(
         data=payload,
         user_uuid=current_user.id,
     )
-    return StockExitResponse(
-        id=exit_record.id,
-        sku_id=exit_record.sku_id,
-        quantity=exit_record.quantity,
-        exit_type=exit_record.exit_type,
-        tracking_number=exit_record.tracking_number,
-        warehouse=exit_record.warehouse,
-        created_at=exit_record.created_at,
-        user_uuid=exit_record.user_uuid,
-    )
+    return MovementCreatedResponse(id=exit_record.id)
 
 
 # ── GET /inventory/orders ───────────────────────────────────────────────────
 
 
-@router.get("/orders", response_model=list[InventoryOrderResponse])
+@router.get("/orders", response_model=list[InventoryOrderListItem])
 def list_orders_endpoint(
     session: Annotated[Session, Depends(get_db)],
-) -> list[InventoryOrderResponse]:
+) -> list[InventoryOrderListItem]:
     """Return all stock movements (entries + exits) with SKU data.
 
     Movements are combined in a single list sorted by ``created_at``
@@ -238,24 +220,24 @@ def list_orders_endpoint(
 
     No authentication required (public, like GET products).
     """
-    raw = list_orders(session=session)
+    try:
+        raw = list_orders(session=session)
+    except InventoryDataIntegrityError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Inventory data integrity error.",
+        ) from exc
+
     return [
-        InventoryOrderResponse(
+        InventoryOrderListItem(
             id=item["id"],
             movement_type=item["movement_type"],
-            sku_id=item["sku_id"],
             quantity=item["quantity"],
             warehouse=item["warehouse"],
             created_at=item["created_at"],
             user_uuid=item["user_uuid"],
-            sku=SKUSummary(
-                id=item["sku"].id,
-                name=item["sku"].name,
-                sku=item["sku"].sku,
-                client_name=item["sku"].client_name,
-                category=item["sku"].category,
-                warehouse=item["sku"].warehouse,
-            ) if item["sku"] else None,
+            sku_name=item["sku"].name,
+            sku_code=item["sku"].sku,
             reference=item["reference"],
             exit_type=item["exit_type"],
             tracking_number=item["tracking_number"],

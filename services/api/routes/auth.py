@@ -13,11 +13,12 @@ from fastapi.security import OAuth2PasswordRequestForm
 
 from services.api.auth_models import (
     ChangePasswordRequest,
+    AuthMeResponse,
     ForgotPasswordRequest,
     MessageResponse,
     ResetPasswordRequest,
+    TokenResponse,
     UserInDB,
-    UserResponse,
 )
 from services.api.auth_security import (
     create_access_token,
@@ -36,10 +37,10 @@ from services.api.email_service import send_password_reset_email
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
 
-@router.post("/login")
+@router.post("/login", response_model=TokenResponse)
 async def login(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
-) -> dict[str, str]:
+) -> TokenResponse:
     """OAuth2-compatible login.
 
     Accepts ``username`` (email) and ``password`` via form data.
@@ -77,20 +78,19 @@ async def login(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-@router.get("/me", response_model=UserResponse)
+@router.get("/me", response_model=AuthMeResponse)
 async def read_users_me(
     current_user: Annotated[UserInDB, Depends(get_current_user)],
-) -> UserResponse:
+) -> AuthMeResponse:
     """Return the authenticated user's public profile.
 
     Requires a valid Bearer token.
     """
-    return UserResponse(
+    return AuthMeResponse(
         id=current_user.id,
         email=current_user.email,
         is_active=current_user.is_active,
         role=current_user.role,
-        created_at=current_user.created_at,
     )
 
 

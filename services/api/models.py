@@ -102,6 +102,15 @@ class SupplierResponse(BaseModel):
     notes: str | None = None
 
 
+class SupplierCreatedResponse(BaseModel):
+    id: int
+
+
+class SupplierMutationResponse(BaseModel):
+    id: int
+    updated_at: datetime
+
+
 # ── Partial-update models ────────────────────────────────────────────────────
 
 

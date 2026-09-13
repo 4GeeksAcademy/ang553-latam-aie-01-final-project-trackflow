@@ -15,6 +15,8 @@ from services.api.database import suppliers
 from services.api.models import (
     Country,
     SupplierCreate,
+    SupplierCreatedResponse,
+    SupplierMutationResponse,
     SupplierRateUpdate,
     SupplierResponse,
     SupplierStatusUpdate,
@@ -39,8 +41,8 @@ def _supplier_document_to_response(document: Document) -> SupplierResponse:
     return SupplierResponse.model_validate(payload)
 
 
-@router.post("", response_model=SupplierResponse, status_code=status.HTTP_201_CREATED)
-def create_supplier(payload: SupplierCreate) -> SupplierResponse:
+@router.post("", response_model=SupplierCreatedResponse, status_code=status.HTTP_201_CREATED)
+def create_supplier(payload: SupplierCreate) -> SupplierCreatedResponse:
     supplier_data = payload.model_dump(mode="json", exclude_none=True)
     supplier_data["updated_at"] = _utc_now_iso()
 
@@ -60,7 +62,7 @@ def create_supplier(payload: SupplierCreate) -> SupplierResponse:
             detail="Supplier created but could not be retrieved",
         )
 
-    return _supplier_document_to_response(created_document)
+    return SupplierCreatedResponse(id=created_document.doc_id)
 
 
 @router.get("", response_model=list[SupplierResponse])
@@ -92,11 +94,11 @@ def get_supplier(supplier_id: int) -> SupplierResponse:
     return _supplier_document_to_response(document)
 
 
-@router.patch("/{supplier_id}/rate", response_model=SupplierResponse)
+@router.patch("/{supplier_id}/rate", response_model=SupplierMutationResponse)
 def update_supplier_rate(
     supplier_id: int,
     payload: SupplierRateUpdate,
-) -> SupplierResponse:
+) -> SupplierMutationResponse:
     existing_document = suppliers.get(doc_id=supplier_id)
     if existing_document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier not found")
@@ -120,20 +122,29 @@ def update_supplier_rate(
     if updated_document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier not found")
 
-    return _supplier_document_to_response(updated_document)
+    return SupplierMutationResponse(
+        id=updated_document.doc_id,
+        updated_at=updated_document["updated_at"],
+    )
 
 
-@router.patch("/{supplier_id}/status", response_model=SupplierResponse)
+@router.patch("/{supplier_id}/status", response_model=SupplierMutationResponse)
 def update_supplier_status(
     supplier_id: int,
     payload: SupplierStatusUpdate,
-) -> SupplierResponse:
+) -> SupplierMutationResponse:
     existing_document = suppliers.get(doc_id=supplier_id)
     if existing_document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier not found")
 
     try:
-        suppliers.update({"status": payload.status.value}, doc_ids=[supplier_id])
+        suppliers.update(
+            {
+                "status": payload.status.value,
+                "updated_at": _utc_now_iso(),
+            },
+            doc_ids=[supplier_id],
+        )
     except Exception:
         logger.exception("Failed to update supplier status (id=%s)", supplier_id)
         raise HTTPException(
@@ -145,10 +156,17 @@ def update_supplier_status(
     if updated_document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier not found")
 
-    return _supplier_document_to_response(updated_document)
+    return SupplierMutationResponse(
+        id=updated_document.doc_id,
+        updated_at=updated_document["updated_at"],
+    )
 
 
-@router.delete("/{supplier_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{supplier_id}",
+    response_class=Response,
+    status_code=status.HTTP_204_NO_CONTENT,
+)
 def delete_supplier(supplier_id: int) -> Response:
     existing_document = suppliers.get(doc_id=supplier_id)
     if existing_document is None:

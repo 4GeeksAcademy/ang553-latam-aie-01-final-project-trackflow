@@ -49,15 +49,9 @@ export interface StockEntryCreate {
   warehouse: Warehouse;
 }
 
-/** Public representation of a stock-in movement. */
-export interface StockEntryResponse {
+/** Minimal response returned after creating either movement type. */
+export interface MovementCreatedResponse {
   id: number;
-  sku_id: number;
-  quantity: number;
-  reference: string;
-  warehouse: Warehouse;
-  created_at: string;
-  user_uuid: string;
 }
 
 /* ── StockExit schemas (outbound) ─────────────────────────────────────────── */
@@ -71,41 +65,22 @@ export interface StockExitCreate {
   warehouse: Warehouse;
 }
 
-/** Public representation of a stock-out movement. */
-export interface StockExitResponse {
-  id: number;
-  sku_id: number;
-  quantity: number;
-  exit_type: ExitType;
-  tracking_number: string | null;
-  warehouse: Warehouse;
-  created_at: string;
-  user_uuid: string;
-}
-
 /* ── Order (combined) schemas ─────────────────────────────────────────────── */
 
-/** Lightweight SKU representation included inside order responses. */
-export interface SKUSummary {
-  id: number;
-  name: string;
-  sku: string;
-  client_name: string;
-  category: Category;
-  warehouse: Warehouse;
-}
-
-/** Unified response for a stock movement (inbound or outbound). */
-export interface InventoryOrderResponse {
+/** Flat response for a stock movement (inbound or outbound). */
+export interface InventoryOrderListItem {
   id: number;
   movement_type: MovementType;
-  sku_id: number;
   quantity: number;
   warehouse: Warehouse;
   created_at: string;
   user_uuid: string;
-  sku: SKUSummary;
+  sku_name: string;
+  sku_code: string;
   reference: string | null;
   exit_type: ExitType | null;
   tracking_number: string | null;
 }
+
+/** Backwards-compatible local alias for existing component imports. */
+export type InventoryOrderResponse = InventoryOrderListItem;

@@ -16,6 +16,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from scripts.incidents.analyzer import analyze_records, export_results_csv, load_csv
 from scripts.incidents import CsvLoadError
@@ -28,6 +29,27 @@ from services.api.routes.suppliers import router as suppliers_router
 from services.api.routes.users import router as users_router
 
 logger = logging.getLogger(__name__)
+
+
+class HealthResponse(BaseModel):
+    """Stable JSON response for the service health check."""
+
+    status: str
+
+
+class IncidentAnalysisResponse(BaseModel):
+    """Aggregate result returned by the incident analysis endpoint."""
+
+    total_records: int
+    valid_records: int
+    invalid_records: int
+    invalid_breakdown: dict[str, int]
+    category_breakdown: dict[str, int]
+    status_breakdown: dict[str, int]
+    country_breakdown: dict[str, int]
+    closed_scored: int
+    score_distribution: dict[int, int]
+    average_satisfaction: float
 
 
 # ── Application lifecycle ───────────────────────────────────────────────────
@@ -131,10 +153,10 @@ app.include_router(profiles_router)
 # ── Health check ─────────────────────────────────────────────────────────────
 
 
-@app.get("/health")
-async def health() -> dict[str, str]:
+@app.get("/health", response_model=HealthResponse)
+async def health() -> HealthResponse:
     """Return a simple status ping to confirm the service is running."""
-    return {"status": "ok"}
+    return HealthResponse(status="ok")
 
 
 # ── Analyze endpoint ─────────────────────────────────────────────────────────
@@ -142,9 +164,12 @@ async def health() -> dict[str, str]:
 
 @app.post(
     "/api/incidents/analyze",
+    response_model=IncidentAnalysisResponse,
     dependencies=[Depends(get_current_user)],
 )
-async def analyze_incidents(file: UploadFile | None = File(None)) -> dict:
+async def analyze_incidents(
+    file: UploadFile | None = File(None),
+) -> IncidentAnalysisResponse:
     """
     Upload a TrackFlow incident CSV and receive aggregate analysis results.
 
@@ -225,6 +250,23 @@ async def analyze_incidents(file: UploadFile | None = File(None)) -> dict:
 
 @app.get(
     "/api/incidents/results/export",
+    response_class=Response,
+    responses={
+        200: {
+            "description": "CSV export of the last successful analysis.",
+            "content": {
+                "text/csv": {
+                    "schema": {"type": "string"},
+                }
+            },
+            "headers": {
+                "Content-Disposition": {
+                    "description": "Attachment filename for the CSV export.",
+                    "schema": {"type": "string"},
+                }
+            },
+        }
+    },
     dependencies=[Depends(get_current_user)],
 )
 async def export_results() -> Response:

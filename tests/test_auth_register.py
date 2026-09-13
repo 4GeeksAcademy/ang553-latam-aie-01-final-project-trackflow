@@ -8,7 +8,7 @@ import pytest
 from fastapi import HTTPException
 from tinydb import Query
 
-from services.api.auth_models import UserRegister
+from services.api.auth_models import RegistrationResponse, UserRegister
 from services.api import auth_services
 from services.api.auth_security import verify_password
 from services.api.routes import users as users_route
@@ -28,12 +28,11 @@ def test_register_user_creates_standard_active_user() -> None:
 
     created = _run(users_route.register_user(payload))
 
-    assert created.email == "new.user@example.com"
-    assert created.role.value == "user"
-    assert created.is_active is True
+    assert isinstance(created, RegistrationResponse)
+    assert created.model_dump() == {"message": "User registered successfully."}
 
     q = Query()
-    stored = auth_services.users.search(q.id == created.id)
+    stored = auth_services.users.search(q.email == "new.user@example.com")
     assert len(stored) == 1
     stored_doc = stored[0]
 
@@ -53,10 +52,11 @@ def test_register_user_with_partial_optional_profile_data() -> None:
     created = _run(users_route.register_user(payload))
 
     q = Query()
-    users_found = auth_services.users.search(q.id == created.id)
+    users_found = auth_services.users.search(q.email == "partial.profile@example.com")
     assert len(users_found) == 1
+    created_id = users_found[0]["id"]
 
-    profiles_found = auth_services.profiles.search(q.user_id == created.id)
+    profiles_found = auth_services.profiles.search(q.user_id == created_id)
     assert len(profiles_found) == 1
     profile_doc = profiles_found[0]
     assert profile_doc["name"] == "Partial Name"
@@ -70,7 +70,7 @@ def test_register_user_rejects_duplicate_email_and_preserves_original() -> None:
         email="duplicate@example.com",
         password="StrongPass123",
     )
-    first_created = _run(users_route.register_user(first_payload))
+    _run(users_route.register_user(first_payload))
 
     duplicate_payload = UserRegister(
         email="  DUPLICATE@EXAMPLE.COM  ",
@@ -85,7 +85,7 @@ def test_register_user_rejects_duplicate_email_and_preserves_original() -> None:
     q = Query()
     duplicate_records = auth_services.users.search(q.email == "duplicate@example.com")
     assert len(duplicate_records) == 1
-    assert duplicate_records[0]["id"] == first_created.id
+    assert duplicate_records[0]["email"] == "duplicate@example.com"
 
 
 def test_register_user_rolls_back_when_profile_creation_fails(
