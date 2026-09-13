@@ -166,6 +166,25 @@
   `results.csv`.
 - El endpoint CSV no expone `application/json` como success contract.
 
+### Global serialization verification — Fase 3.1
+
+- El backend tiene 33 method+path registrations efectivas.
+- 29 son JSON con `response_model` Pydantic nominal.
+- 4 son contratos HTTP especiales.
+- Existen 27 decorators fuente: 24 JSON con `response_model` explícito y 3
+  special con metadata HTTP explícita.
+- Los 6 aliases `/api/suppliers` reutilizan handlers/decorators y se validan
+  separadamente en runtime.
+- OpenAPI muestra 27 registrations porque los 6 aliases `/api/suppliers`
+  están ocultos con `include_in_schema=False`.
+- La verificación HTTP global usa `httpx.AsyncClient` + `ASGITransport`.
+- Auth/suppliers usan TinyDB temporal aislado.
+- Inventory usa SQLite in-memory con `StaticPool` y dependency override de
+  `get_db`.
+- Los dependency overrides se limpian al finalizar.
+- `_last_result` de incidents se aísla/restaura con `monkeypatch`.
+- No se usan servicios externos durante QA HTTP.
+
 ## Autenticacion frontend (uis/backoffice)
 
 - Token JWT almacenado en `localStorage` bajo la clave `trackflow_access_token` (`lib/auth.ts`).

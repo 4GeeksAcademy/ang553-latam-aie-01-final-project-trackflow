@@ -10,6 +10,8 @@
 - Fase 2.3 completada.
 - Fase 2.4 completada.
 - Fase 2.5 completada.
+- Fase 3 en progreso.
+- Fase 3.1 completada.
 
 ## Completado relevante
 
@@ -53,17 +55,27 @@
 - CSV export documenta `text/csv` correctamente en OpenAPI.
 - No se usan serializers JSON artificiales para 204 o CSV.
 - Auditoría actual: 33 compliant, 0 optimize, 0 missing.
-- Suite backend actual: 161 tests passing.
+- Fase 3.1 — verificación global HTTP completada.
+- Manifest runtime global verifica exactamente 33 registrations.
+- Las 29 respuestas JSON usan contratos Pydantic nominales.
+- Los 4 contratos especiales son 3 respuestas 204 No Content y 1 respuesta text/csv.
+- Los 27 decorators fuente tienen contrato explícito: 24 JSON y 3 special.
+- No existen contratos JSON inferred-only.
+- OpenAPI contiene 27 registrations visibles.
+- HTTP real verificado vía ASGI/FastAPI para user/auth, profile, suppliers,
+  inventory, incidents, CSV export y health.
+- Inventory HTTP usa SQLite in-memory aislado mediante dependency override.
+- Incidents HTTP verifica analyze real seguido de CSV export.
+- Suite actual: 170 tests passing.
+- Audit permanece 33 compliant / 0 optimize / 0 missing.
 
 ## Pendiente
 
-- Fase 3 — verificación global HTTP.
-- Test global de cobertura de contratos.
-- QA manual de mínimo 3 endpoints vía `/docs`.
+- Fase 3.2 — QA manual de mínimo 3 endpoints vía `/docs`.
 - Actualización/cierre final del audit.
 - Revisión Git final.
 - PR.
 
 ## Siguiente paso
 
-- Fase 3.1 — global HTTP serialization verification.
+- Fase 3.2 — manual `/docs` QA.
