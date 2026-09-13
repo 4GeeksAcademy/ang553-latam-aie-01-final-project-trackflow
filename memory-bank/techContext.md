@@ -119,6 +119,14 @@
 - `POST /api/incidents/analyze` usa `IncidentAnalysisResponse` con la shape completa de diez campos.
 - Estas rutas tienen `response_model` explícito y aparecen como schemas nominales en OpenAPI.
 
+### Contratos de respuesta auth/profile — Fase 2.2
+
+- `GET /auth/me` usa `AuthMeResponse` con `id`, `email`, `is_active` y `role`.
+- `POST /users` usa `RegistrationResponse` con `message`.
+- `GET/PUT /profiles/me` usan `ProfileMeResponse` con `name`, `phone` y `address`.
+- `ProfileMeResponse` es una proyección HTTP; los servicios pueden seguir trabajando internamente con `ProfileResponse`.
+- Los dos frontends reflejan estos contratos.
+
 ## Autenticacion frontend (uis/backoffice)
 
 - Token JWT almacenado en `localStorage` bajo la clave `trackflow_access_token` (`lib/auth.ts`).

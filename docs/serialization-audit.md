@@ -21,8 +21,8 @@ The counts below are derived from the 33 rows in the complete endpoint table.
 | Measure | Count |
 |---|---:|
 | Total method+path registrations | 33 |
-| ✅ Compliant | 16 |
-| ⚠️ Optimize / contract adjustment | 17 |
+| ✅ Compliant | 20 |
+| ⚠️ Optimize / contract adjustment | 13 |
 | ❌ Missing explicit response contract | 0 |
 | Non-JSON/no-content special contracts | 4 |
 | Registrations with no internal consumer found | 13 |
@@ -34,17 +34,17 @@ The four special contracts are the three `204 No Content` registrations (one use
 | Method | Path | Current response contract | Consumer evidence | Status | Problem | Target output contract |
 |---|---|---|---|---|---|---|
 | POST | `/auth/login` | `TokenResponse` | Backoffice login consumes the token response | ✅ COMPLIANT | None identified | `TokenResponse`: `access_token`, `token_type` |
-| GET | `/auth/me` | `UserResponse` | Uses `id`, `email`, `is_active`, `role`; does not read `created_at` | ⚠️ OPTIMIZE / CONTRACT ADJUSTMENT | `created_at` is not needed by the known consumer | `AuthMeResponse`: `id`, `email`, `is_active`, `role` |
+| GET | `/auth/me` | `AuthMeResponse` | Uses `id`, `email`, `is_active`, `role`; does not read `created_at` | ✅ COMPLIANT | Implemented: response is limited to the confirmed identity fields | `AuthMeResponse`: `id`, `email`, `is_active`, `role` |
 | POST | `/auth/forgot-password` | `MessageResponse` | UI uses `message` | ✅ COMPLIANT | None identified | Keep `MessageResponse`: `message` |
 | POST | `/auth/reset-password` | `MessageResponse` | Current consumer ignores `message`; stable generic confirmation remains safe | ✅ COMPLIANT | No objective issue; removing one message field is not justified | Keep `MessageResponse`: `message` |
 | POST | `/auth/change-password` | `MessageResponse` | UI uses `message` | ✅ COMPLIANT | None identified | Keep `MessageResponse`: `message` |
-| POST | `/users` | `UserResponse` | Parses JSON but reads no field; performs a separate login afterward | ⚠️ OPTIMIZE / CONTRACT ADJUSTMENT | Full user representation is unnecessary for registration flow | `RegistrationResponse`: `message` (or equivalent minimal nominal acknowledgement) |
+| POST | `/users` | `RegistrationResponse` | Parses JSON but reads no field; performs a separate login afterward | ✅ COMPLIANT | Implemented: registration returns only a nominal acknowledgement | `RegistrationResponse`: `message` |
 | GET | `/users` | `list[UserResponse]` with safe projection | No internal runtime consumer confirmed | ✅ COMPLIANT | No evidence sufficient to reduce an administrative/external contract | Preserve explicit `UserResponse` safe projection |
 | GET | `/users/{user_id}` | `UserResponse` with safe projection | No internal runtime consumer confirmed | ✅ COMPLIANT | No evidence sufficient to reduce an administrative/external contract | Preserve explicit `UserResponse` safe projection |
 | PUT | `/users/{user_id}` | `UserResponse` with safe projection | No internal runtime consumer confirmed | ✅ COMPLIANT | No evidence sufficient to reduce an administrative/external contract | Preserve explicit `UserResponse` safe projection |
 | DELETE | `/users/{user_id}` | HTTP 204 without body | No JSON consumer; deletion is status-based | ⚠️ OPTIMIZE / CONTRACT ADJUSTMENT | No-content contract can be made more explicit | Explicit `204 No Content` using `Response`/`response_class` and status documentation; no body |
-| GET | `/profiles/me` | `ProfileResponse` | Uses `name`, `phone`, `address`; does not use `id`, `user_id` | ⚠️ OPTIMIZE / CONTRACT ADJUSTMENT | Internal IDs are over-fetching for the current UI | `ProfileMeResponse`: `name`, `phone`, `address`, preserving current nullability |
-| PUT | `/profiles/me` | `ProfileResponse` | Uses `name`, `phone`, `address`; does not use `id`, `user_id` | ⚠️ OPTIMIZE / CONTRACT ADJUSTMENT | Internal IDs are over-fetching for the current UI | `ProfileMeResponse`: `name`, `phone`, `address`, preserving current nullability |
+| GET | `/profiles/me` | `ProfileMeResponse` | Uses `name`, `phone`, `address`; does not use `id`, `user_id` | ✅ COMPLIANT | Implemented: response is limited to the UI profile fields | `ProfileMeResponse`: `name`, `phone`, `address`, preserving current nullability |
+| PUT | `/profiles/me` | `ProfileMeResponse` | Uses `name`, `phone`, `address`; does not use `id`, `user_id` | ✅ COMPLIANT | Implemented: response is limited to the UI profile fields | `ProfileMeResponse`: `name`, `phone`, `address`, preserving current nullability |
 | GET | `/inventory/products` | `list[SKUResponse]` | Uses `id`, `name`, `sku`, `client_name`, `category`, `warehouse`, `current_stock` | ✅ COMPLIANT | All response fields are used | Keep `list[SKUResponse]` |
 | GET | `/inventory/products/{id}` | `SKUResponse` | Wrapper exists, but executed consumer is not confirmed | ✅ COMPLIANT | No internal consumer evidence for a reduction | Preserve current explicit safe contract |
 | POST | `/inventory/products` | `SKUResponse` | No runtime consumer confirmed | ✅ COMPLIANT | Absence of a consumer is not evidence of unnecessary fields | Preserve request-specific input and explicit `SKUResponse` |
@@ -82,15 +82,15 @@ Keep `token_type` even though current code does not branch on it: it is part of 
 
 ### GET `/auth/me`
 
-**Current:** `UserResponse` contains `id`, `email`, `is_active`, `role`, and `created_at`. Consumer tracing confirms reads of the first four and no runtime read of `created_at`.
+**Implemented:** The route uses `AuthMeResponse` and projects only the confirmed identity fields.
 
-**Target:** `AuthMeResponse` with exactly `id`, `email`, `is_active`, and `role`. Do not remove `email`: this endpoint represents authenticated identity and the consumer uses it.
+**Final contract:** `AuthMeResponse` with exactly `id`, `email`, `is_active`, and `role`. Do not remove `email`: this endpoint represents authenticated identity and the consumer uses it.
 
 ### POST `/users`
 
-**Current:** The client parses JSON but reads no returned field, then performs a separate login whose token establishes the session. Returning the complete `UserResponse` is therefore unnecessary for the known registration flow.
+**Implemented:** The client parses JSON but reads no returned field, then performs a separate login whose token establishes the session. The route now returns only a nominal registration acknowledgement.
 
-**Target:** A nominal minimal registration acknowledgement, for example `RegistrationResponse` with exactly `message`. Do not return `email`, `role`, `is_active`, `created_at`, or `hashed_password`. The exact message text is intentionally not fixed in this audit.
+**Final contract:** `RegistrationResponse` with exactly `message`. The stable message is `User registered successfully.` Do not return `email`, `role`, `is_active`, `created_at`, or `hashed_password`.
 
 ### DELETE `/users/{user_id}`
 
@@ -100,9 +100,9 @@ Keep `token_type` even though current code does not branch on it: it is part of 
 
 ### GET and PUT `/profiles/me`
 
-**Current:** `ProfileResponse` contains `id`, `user_id`, `name`, `phone`, and `address`. The UI reads only `name`, `phone`, and `address`; IDs are not used.
+**Implemented:** Both routes project `ProfileMeResponse`. The UI reads only `name`, `phone`, and `address`; IDs are not used.
 
-**Target:** `ProfileMeResponse` with exactly `name`, `phone`, and `address`, preserving current nullability. The IDs are removed from this UI-specific projection based on consumer evidence, not merely because they are internal.
+**Final contract:** `ProfileMeResponse` with exactly `name`, `phone`, and `address`, preserving current nullability. The IDs are removed from this UI-specific projection based on consumer evidence, not merely because they are internal.
 
 ### POST `/inventory/orders/inbound` and `/inventory/orders/outbound`
 
@@ -203,14 +203,13 @@ Completed:
 
 Remaining implementation:
 
-1. Optimize auth, user-registration, and profile payloads.
-2. Adjust inventory order and movement projections.
-3. Adjust supplier mutation projections.
-4. Make 204 and CSV HTTP contracts explicit.
-5. Add HTTP contract coverage and global verification.
-6. Re-run the audit and update final statuses.
+1. Adjust inventory order and movement projections.
+2. Adjust supplier mutation projections.
+3. Make 204 and CSV HTTP contracts explicit.
+4. Add HTTP contract coverage and global verification.
+5. Re-run the audit and update final statuses.
 
-Phase 2.1 implementation is reflected above; the remaining items are still pending.
+Auth, user-registration, and profile payload optimization is completed above. Phase 2.1 implementation is also reflected above; the remaining items are still pending.
 
 ## 9. Definition of done
 

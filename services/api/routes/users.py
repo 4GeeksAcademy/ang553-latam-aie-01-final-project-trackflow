@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from services.api.auth_models import (
     ProfileCreate,
+    RegistrationResponse,
     Role,
     UserInDB,
     UserRegister,
@@ -37,8 +38,8 @@ router = APIRouter(prefix="/users", tags=["Users"])
 # ── POST /users (public) ─────────────────────────────────────────────────────
 
 
-@router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def register_user(payload: UserRegister) -> UserResponse:
+@router.post("", response_model=RegistrationResponse, status_code=status.HTTP_201_CREATED)
+async def register_user(payload: UserRegister) -> RegistrationResponse:
     """Register a new user.
 
     Public endpoint. Creates a user with ``role=user``.
@@ -81,7 +82,7 @@ async def register_user(payload: UserRegister) -> UserResponse:
                 detail=str(e),
             )
 
-    return user_resp
+    return RegistrationResponse(message="User registered successfully.")
 
 
 # ── GET /users (admin only) ──────────────────────────────────────────────────

@@ -17,7 +17,6 @@ export interface AuthUser {
   email: string;
   is_active: boolean;
   role: AuthUserRole;
-  created_at: string;
 }
 
 /* ── Login types ──────────────────────────────────────────────────── */
@@ -45,17 +44,19 @@ export interface RegisterPayload {
   address?: string | null;
 }
 
+export interface RegistrationResponse {
+  message: string;
+}
+
 /* ── Profile types ────────────────────────────────────────────────── */
 
 /**
  * Authenticated user's profile as returned by ``GET /profiles/me``.
  *
- * All profile fields are nullable — the backend allows a profile
- * to exist with only ``id`` and ``user_id`` populated.
+ * The projection contains only ``name``, ``phone``, and ``address``;
+ * each field may be null according to the HTTP contract.
  */
 export interface UserProfile {
-  id: string;
-  user_id: string;
   name: string | null;
   phone: string | null;
   address: string | null;

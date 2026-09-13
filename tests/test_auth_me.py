@@ -9,7 +9,7 @@ import pytest
 from fastapi import HTTPException
 from jose import jwt
 
-from services.api.auth_models import UserCreate, UserUpdate
+from services.api.auth_models import AuthMeResponse, UserCreate, UserUpdate
 from services.api.auth_security import create_access_token, get_current_user
 from services.api.auth_services import create_user, delete_user, get_user_in_db_by_email, update_user
 from services.api.auth_settings import JWT_ALGORITHM, JWT_SECRET_KEY
@@ -41,6 +41,8 @@ def test_auth_me_with_valid_access_token_returns_expected_identity() -> None:
     me = _run(auth_route.read_users_me(current_user=current_user))
     assert me.id == created.id
     assert me.email == "me.active@example.com"
+    assert isinstance(me, AuthMeResponse)
+    assert set(me.model_dump()) == {"id", "email", "is_active", "role"}
     assert me.is_active is True
 
 

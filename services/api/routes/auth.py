@@ -13,12 +13,12 @@ from fastapi.security import OAuth2PasswordRequestForm
 
 from services.api.auth_models import (
     ChangePasswordRequest,
+    AuthMeResponse,
     ForgotPasswordRequest,
     MessageResponse,
     ResetPasswordRequest,
     TokenResponse,
     UserInDB,
-    UserResponse,
 )
 from services.api.auth_security import (
     create_access_token,
@@ -78,20 +78,19 @@ async def login(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-@router.get("/me", response_model=UserResponse)
+@router.get("/me", response_model=AuthMeResponse)
 async def read_users_me(
     current_user: Annotated[UserInDB, Depends(get_current_user)],
-) -> UserResponse:
+) -> AuthMeResponse:
     """Return the authenticated user's public profile.
 
     Requires a valid Bearer token.
     """
-    return UserResponse(
+    return AuthMeResponse(
         id=current_user.id,
         email=current_user.email,
         is_active=current_user.is_active,
         role=current_user.role,
-        created_at=current_user.created_at,
     )
 
 

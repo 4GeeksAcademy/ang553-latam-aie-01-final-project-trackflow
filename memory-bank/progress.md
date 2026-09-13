@@ -6,6 +6,7 @@
 - Baseline formal creado en `docs/serialization-audit.md`.
 - Fase 2 — implementación de response contracts en progreso.
 - Fase 2.1 completada.
+- Fase 2.2 completada.
 
 ## Completado relevante
 
@@ -22,19 +23,25 @@
 	- `GET /health` → `HealthResponse`.
 	- `POST /api/incidents/analyze` → `IncidentAnalysisResponse`.
 - OpenAPI refleja los tres schemas nominales.
-- Auditoría actual: 16 compliant, 17 optimize/contract adjustment, 0 missing explicit response contract.
-- Suite actual: 142 tests passing.
+- Contratos nominales explícitos de Fase 2.1 implementados para auth/login, health e incidents.
+- Auth/profile response contracts optimizados:
+	- `GET /auth/me` → `AuthMeResponse`.
+	- `POST /users` → `RegistrationResponse`.
+	- `GET/PUT /profiles/me` → `ProfileMeResponse`.
+- Frontend contracts alineados en `uis/backoffice/` y `apps/talent-pipeline-tracker/`.
+- Auditoría actual: 20 compliant, 13 optimize, 0 missing.
+- Suite backend actual: 147 tests passing.
+- Frontend: backoffice build/typecheck exitoso; Talent Pipeline compilation/TypeScript exitoso, prerender bloqueado por falta de `NEXT_PUBLIC_API_URL`; lint con fallos preexistentes no relacionados.
 
 ## Pendiente
 
-- Optimización de payloads auth/user/profile.
 - Optimización de movimientos y órdenes de inventory.
 - Optimización de mutaciones de suppliers.
 - Contratos HTTP 204/CSV explícitos.
-- HTTP contract QA.
+- HTTP contract/global QA.
 - Verificación manual de `/docs`.
 - Cierre final de auditoría.
 
 ## Siguiente paso
 
-- Fase 2.2 — auth/user/profile payload optimization.
+- Fase 2.3 — inventory movement/order response optimization.

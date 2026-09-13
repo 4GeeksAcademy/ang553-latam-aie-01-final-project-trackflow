@@ -5,7 +5,12 @@ from __future__ import annotations
 from fastapi.routing import APIRoute
 
 from scripts.incidents.analyzer import analyze_records
-from services.api.auth_models import TokenResponse
+from services.api.auth_models import (
+    AuthMeResponse,
+    ProfileMeResponse,
+    RegistrationResponse,
+    TokenResponse,
+)
 from services.api.main import HealthResponse, IncidentAnalysisResponse, app
 
 
@@ -35,6 +40,16 @@ def test_login_response_contract_has_only_token_fields() -> None:
         "token_type": "bearer",
     }
     assert _route("POST", "/auth/login").response_model is TokenResponse
+
+
+def test_auth_registration_and_profile_contracts_are_exact() -> None:
+    assert set(AuthMeResponse.model_fields) == {"id", "email", "is_active", "role"}
+    assert set(RegistrationResponse.model_fields) == {"message"}
+    assert set(ProfileMeResponse.model_fields) == {"name", "phone", "address"}
+    assert _route("GET", "/auth/me").response_model is AuthMeResponse
+    assert _route("POST", "/users").response_model is RegistrationResponse
+    assert _route("GET", "/profiles/me").response_model is ProfileMeResponse
+    assert _route("PUT", "/profiles/me").response_model is ProfileMeResponse
 
 
 def test_health_response_contract_preserves_stable_shape() -> None:
