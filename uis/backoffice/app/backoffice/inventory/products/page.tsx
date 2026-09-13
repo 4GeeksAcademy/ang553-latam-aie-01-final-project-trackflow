@@ -20,66 +20,23 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
 import { AuthGuard } from "@/components/layout/AuthGuard";
 import { BackofficeHeader } from "@/components/layout/BackofficeHeader";
 import { ProductList } from "@/components/inventory/ProductList";
-import {
-  ApiError,
-  getInventoryProducts,
-} from "@/lib/inventoryApi";
+import { getInventoryProducts } from "@/lib/inventoryApi";
 import type { SKUResponse } from "@/types/inventory";
-
-/**
- * Extract a user-safe message from an arbitrary error value.
- * Prefers ``ApiError.message``, falls back to ``Error.message``,
- * then uses a generic fallback string.
- */
-function getErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof ApiError) {
-    return error.message;
-  }
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return fallback;
-}
+import { useApiResource } from "@/hooks/useApiResource";
 
 export default function InventoryProductsPage() {
-  const [products, setProducts] = useState<SKUResponse[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const load = async () => {
-      setIsLoading(true);
-      setLoadError(null);
-
-      try {
-        const data = await getInventoryProducts();
-        if (!cancelled) {
-          setProducts(data);
-        }
-      } catch (error: unknown) {
-        if (!cancelled) {
-          setLoadError(
-            getErrorMessage(error, "Failed to load inventory products."),
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoading(false);
-        }
-      }
-    };
-
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const {
+    data: products,
+    isLoading,
+    error: loadError,
+  } = useApiResource<SKUResponse[]>(
+    getInventoryProducts,
+    "Failed to load inventory products.",
+    [],
+  );
 
   return (
     <AuthGuard>
