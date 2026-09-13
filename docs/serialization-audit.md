@@ -194,20 +194,16 @@ Do not remove any field.
 Completed:
 
 - Explicit nominal contracts for auth/login, health, and incidents JSON.
+- Auth, user-registration, and profile payload optimization.
+- Inventory order and movement projections.
+- Global HTTP contract verification.
+- Manual Swagger QA through a real FastAPI/Uvicorn server.
 
-Completed in this phase:
-
-1. Adjusted inventory order and movement projections.
-
-Remaining implementation:
-
-1. Add global HTTP contract verification.
-
-Auth, user-registration, and profile payload optimization is completed above. Phase 2.1 implementation is also reflected above; the remaining items are still pending.
+No implementation work remains for this ticket.
 
 ## 9. Definition of done
 
-The implementation phase will be complete when:
+Completed:
 
 - all 33/33 registrations are represented and reviewed;
 - every JSON success response has an explicit nominal output schema;
@@ -217,7 +213,51 @@ The implementation phase will be complete when:
 - sensitive credentials are excluded;
 - optimized projections match known consumers;
 - tests pass;
-- at least three manual `/docs` verifications are completed;
+- manual `/docs` verifications are completed;
 - final audit statuses are updated to ✅.
 
-This document is the baseline classification only. It does not implement serializers, modify backend/frontend/tests, update the Memory Bank, commit, or push changes.
+## Final verification
+
+### Automated verification
+
+- Exact runtime manifest: 33 registrations.
+- 29 nominal JSON response contracts.
+- 4 special HTTP contracts.
+- 27 OpenAPI-visible registrations.
+- No inferred-only JSON contracts.
+- ASGI HTTP verification completed for auth/profile, suppliers, inventory,
+  incidents, and health.
+- Full backend suite: 170 passing.
+
+### Manual Swagger QA
+
+`/docs` was tested manually against a real FastAPI server running through
+Uvicorn. Representative endpoints validated:
+
+- `GET /health`
+- `POST /users`
+- `POST /auth/login`
+- `GET /auth/me`
+- `POST /suppliers`
+- `GET /suppliers`
+- `POST /inventory/products`
+- `POST /inventory/orders/inbound`
+- `GET /inventory/orders`
+- incidents analyze and CSV export
+
+The checks confirmed the minimal registration, token, supplier mutation,
+inventory movement, flat inventory list, and incidents CSV contracts. Bearer
+authentication returned 401 without a token and the approved safe identity
+projection with a valid token. No credential or persistence-internal fields
+were exposed.
+
+### Final verdict
+
+Serialization audit complete.
+
+- 33 compliant
+- 0 optimize
+- 0 missing
+
+No raw persistence objects exposed. No credential/internal fields leaked.
+Special 204 and CSV contracts are explicit.

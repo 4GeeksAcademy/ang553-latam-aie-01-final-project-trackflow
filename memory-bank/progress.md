@@ -10,8 +10,9 @@
 - Fase 2.3 completada.
 - Fase 2.4 completada.
 - Fase 2.5 completada.
-- Fase 3 en progreso.
+- Fase 3 completada.
 - Fase 3.1 completada.
+- Fase 3.2 completada.
 
 ## Completado relevante
 
@@ -68,14 +69,16 @@
 - Incidents HTTP verifica analyze real seguido de CSV export.
 - Suite actual: 170 tests passing.
 - Audit permanece 33 compliant / 0 optimize / 0 missing.
+- Manual `/docs` QA passed contra FastAPI real mediante Uvicorn.
+- Ticket técnicamente completado.
 
 ## Pendiente
 
-- Fase 3.2 — QA manual de mínimo 3 endpoints vía `/docs`.
-- Actualización/cierre final del audit.
 - Revisión Git final.
+- Commit final.
+- Push.
 - PR.
 
 ## Siguiente paso
 
-- Fase 3.2 — manual `/docs` QA.
+- Final repository verification and PR.

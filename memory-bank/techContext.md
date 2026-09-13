@@ -185,6 +185,18 @@
 - `_last_result` de incidents se aísla/restaura con `monkeypatch`.
 - No se usan servicios externos durante QA HTTP.
 
+### Manual Swagger QA — Fase 3.2
+
+- FastAPI real probado mediante `/docs`.
+- QA usó SQLite temporal para inventory.
+- Contratos representativos validados manualmente.
+- Bearer auth comprobado: 401 sin token y respuesta pública correcta con
+  token válido.
+- Supplier create mínimo y GET completo comprobados.
+- Inventory movement create mínimo y list plano comprobados.
+- Incidents CSV contract comprobado.
+- Datos temporales de QA fueron limpiados/restaurados al finalizar.
+
 ## Autenticacion frontend (uis/backoffice)
 
 - Token JWT almacenado en `localStorage` bajo la clave `trackflow_access_token` (`lib/auth.ts`).
