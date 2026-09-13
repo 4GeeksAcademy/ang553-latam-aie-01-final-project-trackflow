@@ -30,7 +30,7 @@ from services.api.inventory_schemas import (
     InventoryOrderResponse,
     Warehouse,
 )
-from services.api.inventory_service import list_orders
+from services.api.inventory_service import InventoryDataIntegrityError, list_orders
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -335,6 +335,18 @@ class TestListOrdersService:
         assert (sku_a.id, "inbound") in sku_ids
         assert (sku_b.id, "inbound") in sku_ids
         assert (sku_a.id, "outbound") in sku_ids
+
+    def test_orphaned_sku_reference_raises_integrity_error(
+        self, db_session: Session
+    ) -> None:
+        """ORDERS-SRV-17: orphaned entry/exit SKU references fail explicitly."""
+        _add_entry(db_session, sku_id=99901)
+        _add_exit(db_session, sku_id=99902)
+
+        with pytest.raises(InventoryDataIntegrityError) as exc_info:
+            list_orders(db_session)
+
+        assert exc_info.value.missing_sku_ids == frozenset({99901, 99902})
 
 
 # ═════════════════════════════════════════════════════════════════════════════

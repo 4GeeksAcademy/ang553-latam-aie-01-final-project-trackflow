@@ -34,6 +34,7 @@ from services.api.inventory_schemas import (
     StockExitResponse,
 )
 from services.api.inventory_service import (
+    InventoryDataIntegrityError,
     create_stock_entry,
     create_stock_exit,
     get_current_stock,
@@ -238,7 +239,14 @@ def list_orders_endpoint(
 
     No authentication required (public, like GET products).
     """
-    raw = list_orders(session=session)
+    try:
+        raw = list_orders(session=session)
+    except InventoryDataIntegrityError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Inventory data integrity error.",
+        ) from exc
+
     return [
         InventoryOrderResponse(
             id=item["id"],
@@ -255,7 +263,7 @@ def list_orders_endpoint(
                 client_name=item["sku"].client_name,
                 category=item["sku"].category,
                 warehouse=item["sku"].warehouse,
-            ) if item["sku"] else None,
+            ),
             reference=item["reference"],
             exit_type=item["exit_type"],
             tracking_number=item["tracking_number"],

@@ -58,6 +58,11 @@
 
 ## Decisiones de arquitectura ya tomadas
 
+- `InventoryOrderResponse.sku` es una relación requerida, representada por `SKUSummary`.
+- Los movimientos que referencien un SKU inexistente se consideran una inconsistencia de datos, no un estado nullable válido.
+- `list_orders()` detecta referencias huérfanas después de la carga bulk y lanza `InventoryDataIntegrityError`.
+- El router traduce esa excepción específica a un HTTP 500 genérico sin exponer IDs internos.
+
 - El repo sigue una organizacion de monorepo por responsabilidades:
   - interfaces en `uis/`
   - servicios en `services/`

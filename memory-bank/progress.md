@@ -2,18 +2,26 @@
 
 ## Estado actual
 
-- INFRA-40 completado y validado en `feature/infra-40-containerization`.
-- Interfaces, API, hot reload, Docker DNS y configuración mediante `.env` validados con QA 17/17.
+- Auditoría de serialización backend en progreso.
 
-## Completado en INFRA-40
+## Completado relevante
 
-- Contenedor único de interfaces con website en `:3000` y backoffice en `:3001`.
-- FastAPI en `:8000` con reload y Docker Compose para desarrollo.
-- Bind mounts y volúmenes nombrados para hot reload y preservación de `node_modules`.
-- Comunicación interna mediante Docker DNS `api:8000`.
-- Configuración mediante `.env`, ignorado por Git.
-- QA aprobado: 17/17.
+- Baseline backend reproducido inicialmente: 136 tests passing.
+- Inventario exhaustivo de superficie API: 33 registros method+path, 27 visibles en OpenAPI y 6 aliases ocultos de suppliers.
+- Detectado mismatch real en `GET /inventory/orders` para movimientos con referencias SKU huérfanas.
+- Mismatch corregido preservando `sku: SKUSummary`.
+- Las referencias huérfanas generan ahora un error de integridad controlado.
+- Suite después de la corrección: 138 tests passing.
+
+## Pendiente
+
+- Trazado completo de consumidores.
+- Clasificación de endpoints.
+- `docs/serialization-audit.md`.
+- Implementación de serializers/contratos faltantes.
+- Tests HTTP de serialización.
+- Verificación manual de `/docs`.
 
 ## Siguiente paso
 
-- Commit, push, PR y sign-off.
+- Fase 1.2 — consumer tracing completo.

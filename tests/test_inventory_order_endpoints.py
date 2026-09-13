@@ -33,6 +33,7 @@ from services.api.inventory_service import (
 from services.api.routes.inventory import (
     create_inbound_order,
     create_outbound_order,
+    list_orders_endpoint,
 )
 
 
@@ -354,6 +355,30 @@ class TestCreateInboundOrder:
 # ═════════════════════════════════════════════════════════════════════════════
 # POST /inventory/orders/outbound
 # ═════════════════════════════════════════════════════════════════════════════
+
+
+class TestListOrdersEndpoint:
+    """Suite for ``GET /inventory/orders`` integrity handling."""
+
+    def test_orphaned_sku_reference_returns_generic_500(
+        self, db_session: Session
+    ) -> None:
+        """ORDERS-ENDPOINT-01: integrity failures are mapped to HTTP 500."""
+        orphaned_entry = StockEntry(
+            sku_id=99903,
+            quantity=1,
+            reference="ORPHANED",
+            warehouse="LA",
+            user_uuid="test-user",
+        )
+        db_session.add(orphaned_entry)
+        db_session.commit()
+
+        with pytest.raises(HTTPException) as exc_info:
+            list_orders_endpoint(session=db_session)
+
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.detail == "Inventory data integrity error."
 
 
 class TestCreateOutboundOrder:
