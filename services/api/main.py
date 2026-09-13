@@ -250,6 +250,23 @@ async def analyze_incidents(
 
 @app.get(
     "/api/incidents/results/export",
+    response_class=Response,
+    responses={
+        200: {
+            "description": "CSV export of the last successful analysis.",
+            "content": {
+                "text/csv": {
+                    "schema": {"type": "string"},
+                }
+            },
+            "headers": {
+                "Content-Disposition": {
+                    "description": "Attachment filename for the CSV export.",
+                    "schema": {"type": "string"},
+                }
+            },
+        }
+    },
     dependencies=[Depends(get_current_user)],
 )
 async def export_results() -> Response:

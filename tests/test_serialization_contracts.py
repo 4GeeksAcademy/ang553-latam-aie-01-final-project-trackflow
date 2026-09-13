@@ -143,3 +143,35 @@ def test_supplier_mutation_and_read_contracts_are_exact() -> None:
     for path in ("/suppliers", "/api/suppliers"):
         assert _route("GET", path).response_model == list[SupplierResponse]
         assert _route("GET", f"{path}/{{supplier_id}}").response_model is SupplierResponse
+
+
+def test_no_content_delete_contracts_are_explicit() -> None:
+    for path in ("/users/{user_id}", "/suppliers/{supplier_id}"):
+        route = _route("DELETE", path)
+        assert route.response_model is None
+        assert route.status_code == 204
+        assert route.response_class.__name__ == "Response"
+
+    supplier_alias = next(
+        route
+        for registered in app.routes
+        if hasattr(registered, "original_router")
+        for route in registered.original_router.routes
+        if isinstance(route, APIRoute)
+        and f"{registered.include_context.prefix}{route.path}" == "/api/suppliers/{supplier_id}"
+        and "DELETE" in route.methods
+    )
+    assert supplier_alias.response_model is None
+    assert supplier_alias.status_code == 204
+    assert supplier_alias.response_class.__name__ == "Response"
+
+
+def test_csv_export_contract_is_explicit() -> None:
+    route = _route("GET", "/api/incidents/results/export")
+    assert route.response_model is None
+    assert route.response_class.__name__ == "Response"
+
+    success = app.openapi()["paths"]["/api/incidents/results/export"]["get"]["responses"]["200"]
+    assert success["content"]["text/csv"]["schema"] == {"type": "string"}
+    assert "application/json" not in success["content"]
+    assert "Content-Disposition" in success["headers"]

@@ -21,8 +21,8 @@ The counts below are derived from the 33 rows in the complete endpoint table.
 | Measure | Count |
 |---|---:|
 | Total method+path registrations | 33 |
-| ✅ Compliant | 23 |
-| ⚠️ Optimize / contract adjustment | 10 |
+| ✅ Compliant | 33 |
+| ⚠️ Optimize / contract adjustment | 0 |
 | ❌ Missing explicit response contract | 0 |
 | Non-JSON/no-content special contracts | 4 |
 | Registrations with no internal consumer found | 13 |
@@ -42,7 +42,7 @@ The four special contracts are the three `204 No Content` registrations (one use
 | GET | `/users` | `list[UserResponse]` with safe projection | No internal runtime consumer confirmed | ✅ COMPLIANT | No evidence sufficient to reduce an administrative/external contract | Preserve explicit `UserResponse` safe projection |
 | GET | `/users/{user_id}` | `UserResponse` with safe projection | No internal runtime consumer confirmed | ✅ COMPLIANT | No evidence sufficient to reduce an administrative/external contract | Preserve explicit `UserResponse` safe projection |
 | PUT | `/users/{user_id}` | `UserResponse` with safe projection | No internal runtime consumer confirmed | ✅ COMPLIANT | No evidence sufficient to reduce an administrative/external contract | Preserve explicit `UserResponse` safe projection |
-| DELETE | `/users/{user_id}` | HTTP 204 without body | No JSON consumer; deletion is status-based | ⚠️ OPTIMIZE / CONTRACT ADJUSTMENT | No-content contract can be made more explicit | Explicit `204 No Content` using `Response`/`response_class` and status documentation; no body |
+| DELETE | `/users/{user_id}` | Explicit 204 No Content | No JSON consumer; deletion is status-based | ✅ COMPLIANT | None identified | 204 No Content, no body |
 | GET | `/profiles/me` | `ProfileMeResponse` | Uses `name`, `phone`, `address`; does not use `id`, `user_id` | ✅ COMPLIANT | Implemented: response is limited to the UI profile fields | `ProfileMeResponse`: `name`, `phone`, `address`, preserving current nullability |
 | PUT | `/profiles/me` | `ProfileMeResponse` | Uses `name`, `phone`, `address`; does not use `id`, `user_id` | ✅ COMPLIANT | Implemented: response is limited to the UI profile fields | `ProfileMeResponse`: `name`, `phone`, `address`, preserving current nullability |
 | GET | `/inventory/products` | `list[SKUResponse]` | Uses `id`, `name`, `sku`, `client_name`, `category`, `warehouse`, `current_stock` | ✅ COMPLIANT | All response fields are used | Keep `list[SKUResponse]` |
@@ -61,13 +61,13 @@ The four special contracts are the three `204 No Content` registrations (one use
 | PATCH | `/suppliers/{supplier_id}/rate` | Same handler/`SupplierMutationResponse` as `/api` rate alias | No internal consumer confirmed for canonical path; `/api` consumer refetches | ✅ COMPLIANT | Shared handler now applies the approved minimal contract | Same `SupplierMutationResponse`: `id`, `updated_at` |
 | PATCH | `/api/suppliers/{supplier_id}/status` | `SupplierMutationResponse` | Response ignored; list is refetched | ✅ COMPLIANT | Implemented mutation acknowledgement with persisted update timestamp | `SupplierMutationResponse`: `id`, `updated_at` |
 | PATCH | `/suppliers/{supplier_id}/status` | Same handler/`SupplierMutationResponse` as `/api` status alias | No internal consumer confirmed for canonical path; `/api` consumer refetches | ✅ COMPLIANT | Shared handler now applies the approved minimal contract | Same `SupplierMutationResponse`: `id`, `updated_at` |
-| DELETE | `/api/suppliers/{supplier_id}` | HTTP 204 without body | No JSON consumer; deletion is status-based | ⚠️ OPTIMIZE / CONTRACT ADJUSTMENT | No-content contract can be made more explicit | Explicit `204 No Content`; no JSON/Pydantic body |
-| DELETE | `/suppliers/{supplier_id}` | Same handler/HTTP 204 as `/api` alias | No internal consumer confirmed for canonical path | ⚠️ OPTIMIZE / CONTRACT ADJUSTMENT | Shared alias should document the same no-content contract | Explicit `204 No Content`; no JSON/Pydantic body |
+| DELETE | `/api/suppliers/{supplier_id}` | Explicit 204 No Content | No JSON consumer; deletion is status-based | ✅ COMPLIANT | None identified | 204 No Content, no body |
+| DELETE | `/suppliers/{supplier_id}` | Same explicit 204 contract as `/api` alias | No internal consumer confirmed for canonical path | ✅ COMPLIANT | None identified | 204 No Content, no body |
 | POST | `/api/incidents/analyze` | `IncidentAnalysisResponse` | Consumer uses all ten fields | ✅ COMPLIANT | None identified | `IncidentAnalysisResponse`: exact fields listed in section 5 |
-| GET | `/api/incidents/results/export` | Runtime `text/csv`; OpenAPI currently describes empty `application/json` | Export is a file response, not a JSON object | ⚠️ OPTIMIZE / CONTRACT ADJUSTMENT | HTTP/OpenAPI content type is incorrect or incomplete | Explicit CSV contract: `text/csv`, suitable `Response`/`response_class`, correct `responses`, and documented `Content-Disposition` when applicable |
+| GET | `/api/incidents/results/export` | Explicit `text/csv` HTTP/OpenAPI contract | Export is a file response, not a JSON object | ✅ COMPLIANT | None identified | `text/csv` with documented attachment response |
 | GET | `/health` | `HealthResponse` | No internal consumer confirmed; infrastructure may consume it | ✅ COMPLIANT | None identified | `HealthResponse`: `status: str`; preserve body |
 
-## 5. Endpoint details requiring changes
+## 5. Endpoint contract details
 
 ### POST `/auth/login`
 
@@ -94,9 +94,7 @@ Keep `token_type` even though current code does not branch on it: it is part of 
 
 ### DELETE `/users/{user_id}`
 
-**Current:** The route has no body and returns 204.
-
-**Target:** Make the HTTP contract explicit with `Response`/`response_class`, status documentation, or equivalent FastAPI metadata. Keep 204 and keep the body empty. Do not invent a JSON response model.
+**Final:** The route explicitly declares `Response`, returns 204, and has no body.
 
 ### GET and PUT `/profiles/me`
 
@@ -138,9 +136,7 @@ Remove `sku_id`, the nested `sku` object, and unused `SKUSummary` fields from th
 
 ### Supplier delete aliases
 
-**Current:** `/api/suppliers/{supplier_id}` and `/suppliers/{supplier_id}` share a 204 no-content behavior.
-
-**Target:** Make 204 explicit through HTTP response metadata, with no JSON/Pydantic body and no status change.
+**Final:** `/api/suppliers/{supplier_id}` and `/suppliers/{supplier_id}` share an explicit 204 no-content contract.
 
 ### POST `/api/incidents/analyze`
 
@@ -163,9 +159,7 @@ Do not remove any field.
 
 ### GET `/api/incidents/results/export`
 
-**Current:** Runtime returns CSV, but OpenAPI currently documents an empty `application/json` response.
-
-**Target:** Document the actual HTTP contract as `text/csv`, using an appropriate `Response`/`response_class`, correct OpenAPI `responses`, and `Content-Disposition` where applicable. Do not create a Pydantic model for CSV content.
+**Final:** The route explicitly documents a `text/csv` success response and the attachment header.
 
 ### GET `/health`
 
@@ -207,8 +201,7 @@ Completed in this phase:
 
 Remaining implementation:
 
-1. Make 204 and CSV HTTP contracts explicit.
-2. Add HTTP contract coverage and global verification.
+1. Add global HTTP contract verification.
 
 Auth, user-registration, and profile payload optimization is completed above. Phase 2.1 implementation is also reflected above; the remaining items are still pending.
 

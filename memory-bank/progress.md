@@ -4,11 +4,12 @@
 
 - Fase 1 — auditoría y consumer tracing completada.
 - Baseline formal creado en `docs/serialization-audit.md`.
-- Fase 2 — implementación de response contracts en progreso.
+- Fase 2 — implementación de response contracts completada.
 - Fase 2.1 completada.
 - Fase 2.2 completada.
 - Fase 2.3 completada.
 - Fase 2.4 completada.
+- Fase 2.5 completada.
 
 ## Completado relevante
 
@@ -46,17 +47,23 @@
 - `GET` list/detail conservan `SupplierResponse` completo.
 - Persistencia TinyDB verificada; rate/status actualizan `updated_at`.
 - Frontend backoffice alineado con los contratos mínimos.
-- Auditoría actual: 29 compliant, 4 optimize, 0 missing.
-- Suite backend actual: 153 tests passing.
+- Todos los 33 method+path registrations tienen contrato explícito apropiado.
+- DELETE user y supplier usan explicit 204 No Content.
+- Supplier alias `/api` comparte el mismo contrato 204.
+- CSV export documenta `text/csv` correctamente en OpenAPI.
+- No se usan serializers JSON artificiales para 204 o CSV.
+- Auditoría actual: 33 compliant, 0 optimize, 0 missing.
+- Suite backend actual: 161 tests passing.
 
 ## Pendiente
 
-- Contratos HTTP 204 explícitos para `DELETE /users/{user_id}` y suppliers.
-- Contrato HTTP/OpenAPI para `GET /api/incidents/results/export` (CSV).
-- Verificación global de serialización HTTP.
-- Verificación manual de `/docs`.
-- Cierre final de auditoría.
+- Fase 3 — verificación global HTTP.
+- Test global de cobertura de contratos.
+- QA manual de mínimo 3 endpoints vía `/docs`.
+- Actualización/cierre final del audit.
+- Revisión Git final.
+- PR.
 
 ## Siguiente paso
 
-- Fase 2.5 — explicit 204 and CSV response contracts.
+- Fase 3.1 — global HTTP serialization verification.

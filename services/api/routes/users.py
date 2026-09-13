@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from services.api.auth_models import (
     ProfileCreate,
@@ -190,7 +190,11 @@ async def update_user_endpoint(
 # ── DELETE /users/{user_id} ──────────────────────────────────────────────────
 
 
-@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{user_id}",
+    response_class=Response,
+    status_code=status.HTTP_204_NO_CONTENT,
+)
 async def delete_user_endpoint(
     user_id: str,
     current_user: Annotated[UserInDB, Depends(get_current_user)],
@@ -215,4 +219,4 @@ async def delete_user_endpoint(
         )
 
     delete_user(user_id)
-    return None
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

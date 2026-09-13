@@ -154,6 +154,18 @@
   lista.
 - Los tests de suppliers usan TinyDB temporal aislado para validar persistencia.
 
+### Contratos HTTP especiales — Fase 2.5
+
+- `DELETE /users/{user_id}` usa `Response` explícita con 204 No Content.
+- DELETE supplier canonical y alias `/api` comparten contrato explícito 204 sin
+  body.
+- Las respuestas 204 no usan modelos Pydantic ni response models JSON.
+- `GET /api/incidents/results/export` usa `Response` y declara `text/csv`
+  explícitamente en OpenAPI.
+- El CSV mantiene `Content-Disposition: attachment` con filename
+  `results.csv`.
+- El endpoint CSV no expone `application/json` como success contract.
+
 ## Autenticacion frontend (uis/backoffice)
 
 - Token JWT almacenado en `localStorage` bajo la clave `trackflow_access_token` (`lib/auth.ts`).

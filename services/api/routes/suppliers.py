@@ -162,7 +162,11 @@ def update_supplier_status(
     )
 
 
-@router.delete("/{supplier_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{supplier_id}",
+    response_class=Response,
+    status_code=status.HTTP_204_NO_CONTENT,
+)
 def delete_supplier(supplier_id: int) -> Response:
     existing_document = suppliers.get(doc_id=supplier_id)
     if existing_document is None:
