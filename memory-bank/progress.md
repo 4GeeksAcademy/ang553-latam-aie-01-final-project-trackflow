@@ -87,6 +87,10 @@
 - Fases 2.2–2.5 de caching — proyecciones autenticadas de productos y órdenes
 	cacheadas con TTL, invalidación tras creación de SKU y movimientos, y QA de
 	cache hit/invalidation.
+- Fase 2.6 — integración de seguridad verificada: las lecturas de inventario
+	siguen requiriendo Bearer token; 60 tests focalizados pasan.
+- Fase 2.7 — benchmark post-cache base ejecutado: `products` ~2.13 ms y
+	`orders` ~2.16 ms de wall average en lecturas calientes.
 - Evidencia principal: `orders` crece de ~2.32 ms a ~104.36 ms (44.98x) y
 	~1.44 MB de payload en `large`; `products` de ~2.73 ms a ~12.51 ms
 	(4.58x); `suppliers` de ~1.72 ms a ~10.60 ms (6.16x).
