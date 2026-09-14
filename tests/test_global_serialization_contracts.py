@@ -328,7 +328,7 @@ def test_http_inventory_contracts_use_isolated_sqlite(isolated_auth_db, monkeypa
         created = _exact_keys(inbound, {"id"})
         assert isinstance(created["id"], int)
 
-        orders = _request("GET", "/inventory/orders")
+        orders = _request("GET", "/inventory/orders", headers=headers)
         assert orders.status_code == 200, orders.text
         item = next(item for item in orders.json() if item["id"] == created["id"])
         assert set(item) == {

@@ -62,7 +62,11 @@ def _sku_to_response(sku: SKU, stock_map: dict[tuple[int, str], int]) -> SKUResp
 # ── GET /inventory/products ─────────────────────────────────────────────────
 
 
-@router.get("/products", response_model=list[SKUResponse])
+@router.get(
+    "/products",
+    response_model=list[SKUResponse],
+    dependencies=[Depends(get_current_user)],
+)
 def list_products(
     session: Annotated[Session, Depends(get_db)],
 ) -> list[SKUResponse]:
@@ -80,7 +84,11 @@ def list_products(
 # ── GET /inventory/products/{id} ─────────────────────────────────────────────
 
 
-@router.get("/products/{id}", response_model=SKUResponse)
+@router.get(
+    "/products/{id}",
+    response_model=SKUResponse,
+    dependencies=[Depends(get_current_user)],
+)
 def get_product(
     id: int,
     session: Annotated[Session, Depends(get_db)],
@@ -206,7 +214,11 @@ def create_outbound_order(
 # ── GET /inventory/orders ───────────────────────────────────────────────────
 
 
-@router.get("/orders", response_model=list[InventoryOrderListItem])
+@router.get(
+    "/orders",
+    response_model=list[InventoryOrderListItem],
+    dependencies=[Depends(get_current_user)],
+)
 def list_orders_endpoint(
     session: Annotated[Session, Depends(get_db)],
 ) -> list[InventoryOrderListItem]:

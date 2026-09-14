@@ -70,15 +70,17 @@
 - Suite actual: 170 tests passing.
 - Audit permanece 33 compliant / 0 optimize / 0 missing.
 - Manual `/docs` QA passed contra FastAPI real mediante Uvicorn.
-- Ticket técnicamente completado.
+- Fase 1.2D — autorización de lecturas de inventory corregida: los tres GET
+	requieren `get_current_user` y devuelven 401 sin Bearer token.
+- La regresión de contratos globales de orders usa headers autenticados.
+- Suite actual tras la corrección: 172 tests passing.
+- QA específico de 1.2D completado; no se implementó caching ni middleware de
+	timing.
 
 ## Pendiente
 
-- Revisión Git final.
-- Commit final.
-- Push.
-- PR.
+- Revisión Git final y commit posterior.
 
 ## Siguiente paso
 
-- Final repository verification and PR.
+- Ejecutar verificación final y revisar el diff antes del commit.

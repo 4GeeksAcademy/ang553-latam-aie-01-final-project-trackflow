@@ -63,6 +63,15 @@
 - `list_orders()` detecta referencias huérfanas después de la carga bulk y lanza `InventoryDataIntegrityError`.
 - El router traduce esa excepción específica a un HTTP 500 genérico sin exponer IDs internos.
 
+### Autorización de lecturas inventory — Fase 1.2D
+
+- `GET /inventory/stock`, `GET /inventory/products` y `GET /inventory/orders`
+  requieren `get_current_user` mediante dependencia a nivel de ruta.
+- Las lecturas de inventory devuelven 401 sin Bearer token; con token válido
+  conservan sus contratos y comportamiento previos.
+- Los endpoints POST de inventory mantienen su dependencia explícita de
+  `current_user` y no fueron modificados por esta corrección.
+
 - El repo sigue una organizacion de monorepo por responsabilidades:
   - interfaces en `uis/`
   - servicios en `services/`
