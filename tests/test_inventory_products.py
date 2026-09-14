@@ -23,6 +23,8 @@ from services.api.inventory_service import (
     get_current_stock,
     get_current_stocks,
 )
+from services.api.cache import TTLCache, inventory_cache_key, orders_cache, products_cache
+from services.api.routes import inventory as inventory_routes
 from services.api.routes.inventory import create_product, get_product, list_products
 
 
@@ -208,6 +210,115 @@ class TestListProducts:
 
         result = list_products(session=db_session)
         assert hasattr(result[0], "current_stock")
+
+    def test_second_read_uses_cached_projection(self, db_session: Session, monkeypatch) -> None:
+        """PROD-CACHE-01: repeated reads do not re-query the product table."""
+        _create_sku(db_session, sku_code="SKU-CACHE")
+        first = list_products(session=db_session)
+
+        def fail_query(*args, **kwargs):
+            raise AssertionError("cached product projection should be used")
+
+        monkeypatch.setattr(db_session, "exec", fail_query)
+        second = list_products(session=db_session)
+
+        assert second == first
+
+    def test_cache_expires_after_30_seconds_and_requeries(
+        self, db_session: Session, monkeypatch
+    ) -> None:
+        """PROD-CACHE-03: a product projection expires at its 30s TTL."""
+        class FakeClock:
+            now = 0.0
+
+            def __call__(self) -> float:
+                return self.now
+
+        clock = FakeClock()
+        cache = TTLCache[list](ttl_seconds=30, clock=clock)
+        monkeypatch.setattr(inventory_routes, "products_cache", cache)
+        _create_sku(db_session, sku_code="SKU-EXPIRY")
+
+        first = list_products(session=db_session)
+        monkeypatch.setattr(
+            db_session,
+            "exec",
+            lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("query should not run before product TTL expiry")
+            ),
+        )
+        assert list_products(session=db_session) == first
+
+        clock.now = 30
+        monkeypatch.setattr(db_session, "exec", Session.exec.__get__(db_session))
+        assert list_products(session=db_session) == first
+
+    def test_create_product_invalidates_products_but_not_orders(
+        self, db_session: Session, auth_user: UserInDB
+    ) -> None:
+        """PROD-CACHE-04: product creation selectively invalidates caches."""
+        products = list_products(session=db_session)
+        orders = []
+        products_key = inventory_cache_key("products", db_session)
+        orders_key = inventory_cache_key("orders", db_session)
+        orders_cache.set(orders_key, orders)
+        assert products_cache.get(products_key) == products
+
+        create_product(
+            payload=SKUCreate(
+                name="Created SKU",
+                sku="SKU-CREATE-CACHE",
+                client_name="ClientA",
+                category="electronics",
+                warehouse="LA",
+            ),
+            session=db_session,
+            current_user=auth_user,
+        )
+
+        assert products_cache.get(products_key) is None
+        assert orders_cache.get(orders_key) == orders
+
+    def test_movement_invalidates_cached_projection(self, db_session: Session) -> None:
+        """PROD-CACHE-02: stock movement makes the next read fresh."""
+        sku = _create_sku(db_session, sku_code="SKU-INVALIDATE")
+        assert list_products(session=db_session)[0].current_stock == 0
+        _add_entry(db_session, sku.id, quantity=7)
+
+        assert list_products(session=db_session)[0].current_stock == 7
+
+    def test_outbound_invalidates_both_caches_and_updates_stock(
+        self, db_session: Session
+    ) -> None:
+        """PROD-CACHE-05: outbound invalidates both projections."""
+        sku = _create_sku(db_session, sku_code="SKU-OUTBOUND-CACHE")
+        _add_entry(db_session, sku.id, quantity=10)
+        list_products(session=db_session)
+        orders_cache.set(inventory_cache_key("orders", db_session), [])
+        _add_exit(db_session, sku.id, quantity=4)
+
+        assert products_cache.get(inventory_cache_key("products", db_session)) is None
+        assert orders_cache.get(inventory_cache_key("orders", db_session)) is None
+        refreshed = list_products(session=db_session)
+        assert refreshed[0].current_stock == 6
+
+    def test_failed_outbound_preserves_warm_caches(
+        self, db_session: Session
+    ) -> None:
+        """PROD-CACHE-06: insufficient stock does not invalidate projections."""
+        sku = _create_sku(db_session, sku_code="SKU-FAILED-OUTBOUND")
+        list_products(session=db_session)
+        orders_cache.set(inventory_cache_key("orders", db_session), [])
+        products_key = inventory_cache_key("products", db_session)
+        orders_key = inventory_cache_key("orders", db_session)
+        products_snapshot = products_cache.get(products_key)
+
+        with pytest.raises(HTTPException) as exc_info:
+            _add_exit(db_session, sku.id, quantity=1)
+
+        assert exc_info.value.status_code == 400
+        assert products_cache.get(products_key) == products_snapshot
+        assert orders_cache.get(orders_key) == []
 
 
 # ═════════════════════════════════════════════════════════════════════════════

@@ -21,6 +21,12 @@ from sqlmodel import Session, select
 
 from services.api.auth_models import UserInDB
 from services.api.auth_security import get_current_user
+from services.api.cache import (
+    invalidate_products_cache,
+    inventory_cache_key,
+    orders_cache,
+    products_cache,
+)
 from services.api.database import get_db
 from services.api.inventory_models import SKU
 from services.api.inventory_schemas import (
@@ -59,10 +65,34 @@ def _sku_to_response(sku: SKU, stock_map: dict[tuple[int, str], int]) -> SKUResp
     )
 
 
+def _order_items_to_response(raw: list[dict]) -> list[InventoryOrderListItem]:
+    """Convert service rows into session-independent HTTP projections."""
+    return [
+        InventoryOrderListItem(
+            id=item["id"],
+            movement_type=item["movement_type"],
+            quantity=item["quantity"],
+            warehouse=item["warehouse"],
+            created_at=item["created_at"],
+            user_uuid=item["user_uuid"],
+            sku_name=item["sku"].name,
+            sku_code=item["sku"].sku,
+            reference=item["reference"],
+            exit_type=item["exit_type"],
+            tracking_number=item["tracking_number"],
+        )
+        for item in raw
+    ]
+
+
 # ── GET /inventory/products ─────────────────────────────────────────────────
 
 
-@router.get("/products", response_model=list[SKUResponse])
+@router.get(
+    "/products",
+    response_model=list[SKUResponse],
+    dependencies=[Depends(get_current_user)],
+)
 def list_products(
     session: Annotated[Session, Depends(get_db)],
 ) -> list[SKUResponse]:
@@ -72,15 +102,26 @@ def list_products(
     grouped by (sku_id, warehouse) — this avoids N+1 behaviour while
     maintaining per-warehouse accuracy.
     """
+    cache_key = inventory_cache_key("products", session)
+    cached = products_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     skus = session.exec(select(SKU)).all()
     stock_map = get_current_stocks(session)
-    return [_sku_to_response(sku, stock_map) for sku in skus]
+    result = [_sku_to_response(sku, stock_map) for sku in skus]
+    products_cache.set(cache_key, result)
+    return result
 
 
 # ── GET /inventory/products/{id} ─────────────────────────────────────────────
 
 
-@router.get("/products/{id}", response_model=SKUResponse)
+@router.get(
+    "/products/{id}",
+    response_model=SKUResponse,
+    dependencies=[Depends(get_current_user)],
+)
 def get_product(
     id: int,
     session: Annotated[Session, Depends(get_db)],
@@ -138,6 +179,7 @@ def create_product(
     session.add(sku)
     session.commit()
     session.refresh(sku)
+    invalidate_products_cache(session)
 
     # New SKUs have zero stock — no movements recorded yet.
     return SKUResponse(
@@ -206,7 +248,11 @@ def create_outbound_order(
 # ── GET /inventory/orders ───────────────────────────────────────────────────
 
 
-@router.get("/orders", response_model=list[InventoryOrderListItem])
+@router.get(
+    "/orders",
+    response_model=list[InventoryOrderListItem],
+    dependencies=[Depends(get_current_user)],
+)
 def list_orders_endpoint(
     session: Annotated[Session, Depends(get_db)],
 ) -> list[InventoryOrderListItem]:
@@ -218,8 +264,13 @@ def list_orders_endpoint(
     This endpoint avoids N+1 lookups by bulk-loading all SKU records
     in a single query and mapping them in Python.
 
-    No authentication required (public, like GET products).
+    Inventory reads require authentication.
     """
+    cache_key = inventory_cache_key("orders", session)
+    cached = orders_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     try:
         raw = list_orders(session=session)
     except InventoryDataIntegrityError as exc:
@@ -228,19 +279,6 @@ def list_orders_endpoint(
             detail="Inventory data integrity error.",
         ) from exc
 
-    return [
-        InventoryOrderListItem(
-            id=item["id"],
-            movement_type=item["movement_type"],
-            quantity=item["quantity"],
-            warehouse=item["warehouse"],
-            created_at=item["created_at"],
-            user_uuid=item["user_uuid"],
-            sku_name=item["sku"].name,
-            sku_code=item["sku"].sku,
-            reference=item["reference"],
-            exit_type=item["exit_type"],
-            tracking_number=item["tracking_number"],
-        )
-        for item in raw
-    ]
+    result = _order_items_to_response(raw)
+    orders_cache.set(cache_key, result)
+    return result

@@ -57,6 +57,12 @@
 - No se usan serializers JSON artificiales para 204 o CSV.
 - Auditoría actual: 33 compliant, 0 optimize, 0 missing.
 - Fase 3.1 — verificación global HTTP completada.
+- Lazy Loading real de IncidentSummary mediante `next/dynamic` completado.
+- Placeholder ligero compartido mantiene la UI inicial.
+- IncidentSummary completo solo se carga cuando existe `result`.
+- ESLint específico pasa.
+- Build de backoffice pasa.
+- QA manual completado.
 - Manifest runtime global verifica exactamente 33 registrations.
 - Las 29 respuestas JSON usan contratos Pydantic nominales.
 - Los 4 contratos especiales son 3 respuestas 204 No Content y 1 respuesta text/csv.
@@ -70,15 +76,40 @@
 - Suite actual: 170 tests passing.
 - Audit permanece 33 compliant / 0 optimize / 0 missing.
 - Manual `/docs` QA passed contra FastAPI real mediante Uvicorn.
-- Ticket técnicamente completado.
+- Fase 1.2D — autorización de lecturas de inventory corregida: los tres GET
+	requieren `get_current_user` y devuelven 401 sin Bearer token.
+- La regresión de contratos globales de orders usa headers autenticados.
+- Suite actual tras la corrección: 172 tests passing.
+- QA específico de 1.2D completado; no se implementó caching ni middleware de
+	timing.
+- Fase 1.3A — middleware HTTP de timing implementado con logger dedicado
+	`api.timing`, logging seguro de método/path/status/duración y test focalizado.
+- Suite completa: 173 tests passing.
+- Baseline pequeño de candidatos ejecutado antes del seed.
+- Harness reproducible aislado creado para perfiles `base`, `medium` y `large`.
+- Suite completa continúa pasando con 173 tests.
+- Primitive TTL in-process completada con reloj monotónico inyectable,
+	thread-safety, expiración lazy e invalidación explícita.
+- Products cache completada con TTL de 30 s.
+- Orders cache completada con TTL de 15 s y proyecciones serializables.
+- Invalidación selectiva completada: creación de producto invalida products;
+	inbound y outbound invalidan products + orders.
+- Mutaciones fallidas conservan las cachés calientes.
+- La autenticación continúa ejecutándose antes del cache hit.
+- La suite completa actual: 193 tests passing.
+- Benchmark post-cache base y large completado.
+- Freshness validada después de mutaciones.
+- Evidencia large: products pre ~12.51 ms, warm post-cache ~1.84 ms,
+	~85% de reducción; orders pre ~104.36 ms, warm post-cache ~9.6 ms,
+	~91% de reducción.
 
 ## Pendiente
 
-- Revisión Git final.
-- Commit final.
-- Push.
+- Decisión final sobre useMemo.
+- `CACHING_REPORT.md`.
+- Auditoría final del ticket.
 - PR.
 
 ## Siguiente paso
 
-- Final repository verification and PR.
+- Cerrar decisión sobre useMemo y preparar `CACHING_REPORT.md`.

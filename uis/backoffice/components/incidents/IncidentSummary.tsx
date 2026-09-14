@@ -1,6 +1,7 @@
 "use client";
 
 import type { IncidentAnalysisResult } from "@/types/incidents";
+import { IncidentSummaryPlaceholder } from "@/components/incidents/IncidentSummaryPlaceholder";
 
 // ── Error labels for invalid_breakdown ────────────────────────────────────
 
@@ -167,6 +168,10 @@ interface Props {
 
 export function IncidentSummary({ result, onDownload, isDownloading }: Props) {
   const hasData = result !== null;
+  if (!hasData) {
+    return <IncidentSummaryPlaceholder />;
+  }
+
   const valid = result?.valid_records ?? 1;
 
   // ── Category (ordered) ──
@@ -205,23 +210,20 @@ export function IncidentSummary({ result, onDownload, isDownloading }: Props) {
     <div className="space-y-8">
       {/* ── Top metric cards ── */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricCard
-          title="Total records"
-          value={hasData ? String(result.total_records) : "\u2014"}
-        />
+        <MetricCard title="Total records" value={String(result.total_records)} />
         <MetricCard
           title="Valid records"
-          value={hasData ? String(result.valid_records) : "\u2014"}
+          value={String(result.valid_records)}
           accent="text-emerald-400"
         />
         <MetricCard
           title="Invalid records"
-          value={hasData ? String(result.invalid_records) : "\u2014"}
+          value={String(result.invalid_records)}
           accent="text-rose-400"
         />
         <MetricCard
           title="Average satisfaction"
-          value={hasData ? String(result.average_satisfaction) : "\u2014"}
+          value={String(result.average_satisfaction)}
           accent="text-cyan-300"
         />
       </div>
@@ -230,56 +232,46 @@ export function IncidentSummary({ result, onDownload, isDownloading }: Props) {
       <div className="grid gap-6 lg:grid-cols-2">
         {/* ── Category ── */}
         <SectionCard title="Breakdown by category" isEmpty={!hasData}>
-          {hasData
-            ? categoryItems.map((item) => (
-                <BreakdownRow
-                  key={item.key}
-                  label={item.label}
-                  count={item.count}
-                  total={valid}
-                  color={item.color}
-                />
-              ))
-            : Object.values(CATEGORY_LABELS).map((label) => (
-                <EmptyRow key={label} label={label} />
-              ))}
+          {categoryItems.map((item) => (
+            <BreakdownRow
+              key={item.key}
+              label={item.label}
+              count={item.count}
+              total={valid}
+              color={item.color}
+            />
+          ))}
         </SectionCard>
 
         {/* ── Status ── */}
         <SectionCard title="Breakdown by status" isEmpty={!hasData}>
-          {hasData
-            ? statusItems.map((item) => (
-                <BreakdownRow
-                  key={item.key}
-                  label={item.label}
-                  count={item.count}
-                  total={valid}
-                  color={item.color}
-                />
-              ))
-            : Object.values(STATUS_LABELS).map((label) => (
-                <EmptyRow key={label} label={label} />
-              ))}
+          {statusItems.map((item) => (
+            <BreakdownRow
+              key={item.key}
+              label={item.label}
+              count={item.count}
+              total={valid}
+              color={item.color}
+            />
+          ))}
         </SectionCard>
 
         {/* ── Country ── */}
         <SectionCard title="Breakdown by country" isEmpty={!hasData}>
-          {hasData
-            ? countryItems.map((item) => (
-                <BreakdownRow
-                  key={item.key}
-                  label={item.label}
-                  count={item.count}
-                  total={valid}
-                  color={item.color}
-                />
-              ))
-            : COUNTRY_ORDER.map((co) => <EmptyRow key={co} label={co} />)}
+          {countryItems.map((item) => (
+            <BreakdownRow
+              key={item.key}
+              label={item.label}
+              count={item.count}
+              total={valid}
+              color={item.color}
+            />
+          ))}
         </SectionCard>
 
         {/* ── Invalid breakdown ── */}
         <SectionCard title="Invalid records breakdown" isEmpty={!hasData}>
-          {hasData && invalidEntries.length > 0
+          {invalidEntries.length > 0
             ? invalidEntries.map(([code, count]) => (
                 <SimpleRow
                   key={code}
@@ -287,40 +279,27 @@ export function IncidentSummary({ result, onDownload, isDownloading }: Props) {
                   value={count}
                 />
               ))
-            : [<EmptyRow key="placeholder" label="Error detail" />]}
+            : <EmptyRow label="Error detail" />}
         </SectionCard>
 
         {/* ── Satisfaction distribution ── */}
         <SectionCard title="Satisfaction distribution" isEmpty={!hasData}>
-          {hasData
-            ? scoreKeys.map((score) => (
-                <SimpleRow
-                  key={score}
-                  label={SCORE_LABELS[score]}
-                  value={result.score_distribution[String(score)] ?? 0}
-                />
-              ))
-            : scoreKeys.map((score) => (
-                <EmptyRow key={score} label={SCORE_LABELS[score]} />
-              ))}
+          {scoreKeys.map((score) => (
+            <SimpleRow
+              key={score}
+              label={SCORE_LABELS[score]}
+              value={result.score_distribution[String(score)] ?? 0}
+            />
+          ))}
         </SectionCard>
 
         {/* ── Satisfaction footer (closed_scored + average) ── */}
         <SectionCard title="Satisfaction summary" isEmpty={!hasData}>
-          {hasData ? (
-            <>
-              <SimpleRow label="Closed & scored" value={result.closed_scored} />
-              <SimpleRow
-                label="Average"
-                value={`${result.average_satisfaction} / 5.00`}
-              />
-            </>
-          ) : (
-            <>
-              <EmptyRow label="Closed & scored" />
-              <EmptyRow label="Average" />
-            </>
-          )}
+          <SimpleRow label="Closed & scored" value={result.closed_scored} />
+          <SimpleRow
+            label="Average"
+            value={`${result.average_satisfaction} / 5.00`}
+          />
         </SectionCard>
       </div>
 
