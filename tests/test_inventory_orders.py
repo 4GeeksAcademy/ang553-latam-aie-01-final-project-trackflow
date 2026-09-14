@@ -36,6 +36,8 @@ from services.api.inventory_service import (
     create_stock_entry,
     list_orders,
 )
+from services.api.cache import TTLCache, orders_cache, inventory_cache_key, products_cache
+from services.api.routes import inventory as inventory_routes
 from services.api.routes.inventory import list_orders_endpoint
 
 
@@ -362,12 +364,46 @@ class TestOrdersCache:
         sku = _create_sku(db_session)
         _add_entry(db_session, sku.id)
         first = list_orders_endpoint(session=db_session)
+        cached = orders_cache.get(inventory_cache_key("orders", db_session))
+        assert all(isinstance(item, InventoryOrderListItem) for item in cached)
 
         def fail_query(*args, **kwargs):
             raise AssertionError("cached order projection should be used")
 
         monkeypatch.setattr(db_session, "exec", fail_query)
         assert list_orders_endpoint(session=db_session) == first
+
+    def test_cache_expires_after_15_seconds_and_requeries(
+        self, db_session: Session, monkeypatch
+    ) -> None:
+        """ORDERS-CACHE-03: an order projection expires at its 15s TTL."""
+        class FakeClock:
+            now = 0.0
+
+            def __call__(self) -> float:
+                return self.now
+
+        clock = FakeClock()
+        cache = TTLCache[list](ttl_seconds=15, clock=clock)
+        monkeypatch.setattr(inventory_routes, "orders_cache", cache)
+        sku = _create_sku(db_session)
+        _add_entry(db_session, sku.id)
+
+        first = list_orders_endpoint(session=db_session)
+        calls = 0
+        original_exec = db_session.exec
+
+        def counted_exec(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return original_exec(*args, **kwargs)
+
+        monkeypatch.setattr(db_session, "exec", counted_exec)
+        assert list_orders_endpoint(session=db_session) == first
+        assert calls == 0
+        clock.now = 15
+        assert list_orders_endpoint(session=db_session) == first
+        assert calls > 0
 
     def test_movement_invalidates_orders_projection(self, db_session: Session) -> None:
         sku = _create_sku(db_session)
@@ -386,6 +422,41 @@ class TestOrdersCache:
         refreshed = list_orders_endpoint(session=db_session)
         assert len(refreshed) == 1
         assert refreshed[0].movement_type == "inbound"
+
+    def test_inbound_invalidates_products_and_orders(
+        self, db_session: Session
+    ) -> None:
+        """ORDERS-CACHE-04: inbound invalidates both projections."""
+        sku = _create_sku(db_session)
+        products_cache.set(inventory_cache_key("products", db_session), [])
+        orders_cache.set(inventory_cache_key("orders", db_session), [])
+
+        create_stock_entry(
+            db_session,
+            StockEntryCreate(
+                sku_id=sku.id,
+                quantity=10,
+                reference="PO-INBOUND-CACHE",
+                warehouse=Warehouse.LA,
+            ),
+            user_uuid="cache-test-user",
+        )
+
+        assert products_cache.get(inventory_cache_key("products", db_session)) is None
+        assert orders_cache.get(inventory_cache_key("orders", db_session)) is None
+
+    def test_order_hit_preserves_critical_response_fields(self, db_session: Session) -> None:
+        sku = _create_sku(db_session, sku_code="SKU-CONTRACT", name="Contract SKU")
+        _add_entry(db_session, sku.id, user_uuid="contract-user")
+        first = list_orders_endpoint(session=db_session)
+        second = list_orders_endpoint(session=db_session)
+
+        assert second == first
+        assert second[0].user_uuid == "contract-user"
+        assert second[0].sku_name == "Contract SKU"
+        assert second[0].sku_code == "SKU-CONTRACT"
+        assert second[0].movement_type == "inbound"
+        assert second[0].created_at is not None
 
 
 # ═════════════════════════════════════════════════════════════════════════════

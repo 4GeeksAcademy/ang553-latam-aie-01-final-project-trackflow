@@ -75,16 +75,19 @@ class TTLCache(Generic[T]):
             return len(self._entries)
 
 
-INVENTORY_CACHE_TTL_SECONDS = float(
-    os.getenv("TRACKFLOW_INVENTORY_CACHE_TTL_SECONDS", "5")
+PRODUCTS_CACHE_TTL_SECONDS = float(
+    os.getenv("TRACKFLOW_PRODUCTS_CACHE_TTL_SECONDS", "30")
+)
+ORDERS_CACHE_TTL_SECONDS = float(
+    os.getenv("TRACKFLOW_ORDERS_CACHE_TTL_SECONDS", "15")
 )
 
 # Product/order projections use separate namespaces so a write can invalidate
 # only the projections affected by it. The database identity is part of each
 # key because tests and embedded deployments may use more than one engine in
 # the same Python process.
-products_cache: TTLCache[list] = TTLCache(INVENTORY_CACHE_TTL_SECONDS)
-orders_cache: TTLCache[list] = TTLCache(INVENTORY_CACHE_TTL_SECONDS)
+products_cache: TTLCache[list] = TTLCache(PRODUCTS_CACHE_TTL_SECONDS)
+orders_cache: TTLCache[list] = TTLCache(ORDERS_CACHE_TTL_SECONDS)
 
 
 def inventory_cache_key(kind: str, session: object) -> str:
@@ -93,7 +96,17 @@ def inventory_cache_key(kind: str, session: object) -> str:
     return f"{kind}:{id(bind)}"
 
 
-def invalidate_inventory_cache(session: object) -> None:
-    """Invalidate product and order projections after an inventory write."""
+def invalidate_products_cache(session: object) -> None:
+    """Invalidate the products projection for a database session."""
     products_cache.delete(inventory_cache_key("products", session))
+
+
+def invalidate_orders_cache(session: object) -> None:
+    """Invalidate the orders projection for a database session."""
     orders_cache.delete(inventory_cache_key("orders", session))
+
+
+def invalidate_inventory_cache(session: object) -> None:
+    """Invalidate both inventory projections after a movement write."""
+    invalidate_products_cache(session)
+    invalidate_orders_cache(session)

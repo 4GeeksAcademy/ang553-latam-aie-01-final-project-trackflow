@@ -72,6 +72,31 @@
 - Los endpoints POST de inventory mantienen su dependencia explícita de
   `current_user` y no fueron modificados por esta corrección.
 
+### Inventory caching
+
+- La caché de inventory es in-process y process-local.
+- La primitiva es thread-safe.
+- La expiración es lazy y usa un monotonic clock.
+- Products usa TTL de 30 s.
+- Orders usa TTL de 15 s.
+- Las keys son process-local y se distinguen por recurso y database bind.
+- La autenticación se ejecuta antes del lookup en caché.
+- La caché no contiene bearer tokens.
+- Los datasets cacheados no están personalizados por usuario.
+- Products almacena `list[SKUResponse]`.
+- Orders almacena `list[InventoryOrderListItem]`.
+- La creación de producto invalida products.
+- Inbound y outbound invalidan products + orders.
+- La invalidación ocurre después de persistencia exitosa.
+
+### Limitación de inventory caching
+
+- Múltiples workers o replicas tienen caches independientes.
+- No existe invalidación distribuida.
+- Redis queda fuera del alcance actual.
+- El caching de orders no resuelve el payload grande ni la falta de
+  paginación.
+
 - El repo sigue una organizacion de monorepo por responsabilidades:
   - interfaces en `uis/`
   - servicios en `services/`

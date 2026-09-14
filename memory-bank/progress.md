@@ -82,30 +82,29 @@
 - Baseline pequeño de candidatos ejecutado antes del seed.
 - Harness reproducible aislado creado para perfiles `base`, `medium` y `large`.
 - Suite completa continúa pasando con 173 tests.
-- Fase 2.1 de caching — primitiva TTL process-local implementada con reloj
-	inyectable, invalidación explícita y tests unitarios de expiración.
-- Fases 2.2–2.5 de caching — proyecciones autenticadas de productos y órdenes
-	cacheadas con TTL, invalidación tras creación de SKU y movimientos, y QA de
-	cache hit/invalidation.
-- Fase 2.6 — integración de seguridad verificada: las lecturas de inventario
-	siguen requiriendo Bearer token; 60 tests focalizados pasan.
-- Fase 2.7 — benchmark post-cache base ejecutado: `products` ~2.13 ms y
-	`orders` ~2.16 ms de wall average en lecturas calientes.
-- Evidencia principal: `orders` crece de ~2.32 ms a ~104.36 ms (44.98x) y
-	~1.44 MB de payload en `large`; `products` de ~2.73 ms a ~12.51 ms
-	(4.58x); `suppliers` de ~1.72 ms a ~10.60 ms (6.16x).
-- `product detail` permanece prácticamente estable (~2.5 ms) y tiene bajo valor
-	actual para caching.
+- Primitive TTL in-process completada con reloj monotónico inyectable,
+	thread-safety, expiración lazy e invalidación explícita.
+- Products cache completada con TTL de 30 s.
+- Orders cache completada con TTL de 15 s y proyecciones serializables.
+- Invalidación selectiva completada: creación de producto invalida products;
+	inbound y outbound invalidan products + orders.
+- Mutaciones fallidas conservan las cachés calientes.
+- La autenticación continúa ejecutándose antes del cache hit.
+- La suite completa actual: 193 tests passing.
+- Benchmark post-cache base y large completado.
+- Freshness validada después de mutaciones.
+- Evidencia large: products pre ~12.51 ms, warm post-cache ~1.84 ms,
+	~85% de reducción; orders pre ~104.36 ms, warm post-cache ~9.6 ms,
+	~91% de reducción.
 
 ## Pendiente
 
-- Selección final de endpoints.
-- Estrategia de TTL/invalidation.
-- Implementación de cache.
-- Benchmark post-cache.
+- Frontend Lazy Loading de IncidentSummary.
+- Decisión final respecto a useMemo.
 - `CACHING_REPORT.md`.
-- Frontend Lazy Loading aprobado.
+- Auditoría final del ticket.
+- PR.
 
 ## Siguiente paso
 
-- Decidir qué endpoints cachear usando coste × frecuencia × estabilidad.
+- Completar optimización frontend.

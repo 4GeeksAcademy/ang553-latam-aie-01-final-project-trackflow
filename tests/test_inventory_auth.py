@@ -73,6 +73,10 @@ def test_authenticated_inventory_gets_preserve_contract(isolated_auth_db) -> Non
 
         products = _request("GET", "/inventory/products", headers=headers)
         assert products.status_code == 200
+        assert products.json()[0]["current_stock"] == 0
+        assert products.json()[0]["sku"] == "AUTH-001"
+        unauthenticated_products = _request("GET", "/inventory/products")
+        assert unauthenticated_products.status_code == 401
         detail = _request("GET", f"/inventory/products/{product_id}", headers=headers)
         assert detail.status_code == 200
         orders = _request("GET", "/inventory/orders", headers=headers)
@@ -98,6 +102,8 @@ def test_authenticated_inventory_gets_preserve_contract(isolated_auth_db) -> Non
         )
         assert "user_uuid" in item
         assert item["user_uuid"]
+        unauthenticated_orders = _request("GET", "/inventory/orders")
+        assert unauthenticated_orders.status_code == 401
     finally:
         app.dependency_overrides.pop(database.get_db, None)
         engine.dispose()

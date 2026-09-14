@@ -22,7 +22,7 @@ from sqlmodel import Session, select
 from services.api.auth_models import UserInDB
 from services.api.auth_security import get_current_user
 from services.api.cache import (
-    invalidate_inventory_cache,
+    invalidate_products_cache,
     inventory_cache_key,
     orders_cache,
     products_cache,
@@ -63,6 +63,26 @@ def _sku_to_response(sku: SKU, stock_map: dict[tuple[int, str], int]) -> SKUResp
         warehouse=sku.warehouse,
         current_stock=stock_map.get((sku.id, sku.warehouse), 0),
     )
+
+
+def _order_items_to_response(raw: list[dict]) -> list[InventoryOrderListItem]:
+    """Convert service rows into session-independent HTTP projections."""
+    return [
+        InventoryOrderListItem(
+            id=item["id"],
+            movement_type=item["movement_type"],
+            quantity=item["quantity"],
+            warehouse=item["warehouse"],
+            created_at=item["created_at"],
+            user_uuid=item["user_uuid"],
+            sku_name=item["sku"].name,
+            sku_code=item["sku"].sku,
+            reference=item["reference"],
+            exit_type=item["exit_type"],
+            tracking_number=item["tracking_number"],
+        )
+        for item in raw
+    ]
 
 
 # ── GET /inventory/products ─────────────────────────────────────────────────
@@ -159,7 +179,7 @@ def create_product(
     session.add(sku)
     session.commit()
     session.refresh(sku)
-    invalidate_inventory_cache(session)
+    invalidate_products_cache(session)
 
     # New SKUs have zero stock — no movements recorded yet.
     return SKUResponse(
@@ -244,33 +264,21 @@ def list_orders_endpoint(
     This endpoint avoids N+1 lookups by bulk-loading all SKU records
     in a single query and mapping them in Python.
 
-    No authentication required (public, like GET products).
+    Inventory reads require authentication.
     """
     cache_key = inventory_cache_key("orders", session)
-    raw = orders_cache.get(cache_key)
-    if raw is None:
-        try:
-            raw = list_orders(session=session)
-        except InventoryDataIntegrityError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Inventory data integrity error.",
-            ) from exc
-        orders_cache.set(cache_key, raw)
+    cached = orders_cache.get(cache_key)
+    if cached is not None:
+        return cached
 
-    return [
-        InventoryOrderListItem(
-            id=item["id"],
-            movement_type=item["movement_type"],
-            quantity=item["quantity"],
-            warehouse=item["warehouse"],
-            created_at=item["created_at"],
-            user_uuid=item["user_uuid"],
-            sku_name=item["sku"].name,
-            sku_code=item["sku"].sku,
-            reference=item["reference"],
-            exit_type=item["exit_type"],
-            tracking_number=item["tracking_number"],
-        )
-        for item in raw
-    ]
+    try:
+        raw = list_orders(session=session)
+    except InventoryDataIntegrityError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Inventory data integrity error.",
+        ) from exc
+
+    result = _order_items_to_response(raw)
+    orders_cache.set(cache_key, result)
+    return result
