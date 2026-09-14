@@ -1,12 +1,27 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useState, useCallback } from "react";
 import { AuthGuard } from "@/components/layout/AuthGuard";
 import { BackofficeHeader } from "@/components/layout/BackofficeHeader";
 import { IncidentUploadCard } from "@/components/incidents/IncidentUploadCard";
-import { IncidentSummary } from "@/components/incidents/IncidentSummary";
+import { IncidentSummaryPlaceholder } from "@/components/incidents/IncidentSummaryPlaceholder";
 import { analyzeIncidents, downloadResultsCsv, ApiError } from "@/lib/incidentsApi";
 import type { IncidentAnalysisResult } from "@/types/incidents";
+
+const IncidentSummary = dynamic(
+  () =>
+    import("@/components/incidents/IncidentSummary").then(
+      (module) => module.IncidentSummary,
+    ),
+  {
+    loading: () => (
+      <p className="text-sm text-slate-400" role="status" aria-live="polite">
+        Loading analysis summary…
+      </p>
+    ),
+  },
+);
 
 export default function IncidentsPage() {
   const [result, setResult] = useState<IncidentAnalysisResult | null>(null);
@@ -107,11 +122,15 @@ export default function IncidentsPage() {
 
         {/* ── Summary / placeholders ── */}
         <div className="mt-10">
-          <IncidentSummary
-            result={result}
-            onDownload={handleDownload}
-            isDownloading={isDownloading}
-          />
+          {result ? (
+            <IncidentSummary
+              result={result}
+              onDownload={handleDownload}
+              isDownloading={isDownloading}
+            />
+          ) : (
+            <IncidentSummaryPlaceholder />
+          )}
 
         {/* ── Download error ── */}
         {downloadError && (

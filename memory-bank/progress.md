@@ -57,6 +57,12 @@
 - No se usan serializers JSON artificiales para 204 o CSV.
 - Auditoría actual: 33 compliant, 0 optimize, 0 missing.
 - Fase 3.1 — verificación global HTTP completada.
+- Lazy Loading real de IncidentSummary mediante `next/dynamic` completado.
+- Placeholder ligero compartido mantiene la UI inicial.
+- IncidentSummary completo solo se carga cuando existe `result`.
+- ESLint específico pasa.
+- Build de backoffice pasa.
+- QA manual completado.
 - Manifest runtime global verifica exactamente 33 registrations.
 - Las 29 respuestas JSON usan contratos Pydantic nominales.
 - Los 4 contratos especiales son 3 respuestas 204 No Content y 1 respuesta text/csv.
@@ -99,12 +105,11 @@
 
 ## Pendiente
 
-- Frontend Lazy Loading de IncidentSummary.
-- Decisión final respecto a useMemo.
+- Decisión final sobre useMemo.
 - `CACHING_REPORT.md`.
 - Auditoría final del ticket.
 - PR.
 
 ## Siguiente paso
 
-- Completar optimización frontend.
+- Cerrar decisión sobre useMemo y preparar `CACHING_REPORT.md`.
