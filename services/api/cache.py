@@ -7,6 +7,7 @@ it is not a distributed cache and does not replace database consistency.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from threading import RLock
 from time import monotonic
@@ -74,6 +75,25 @@ class TTLCache(Generic[T]):
             return len(self._entries)
 
 
-# Product/order projections will share this process-local cache in the next
-# milestones. Keeping the primitive independent makes the TTL contract
-# testable before endpoint integration.
+INVENTORY_CACHE_TTL_SECONDS = float(
+    os.getenv("TRACKFLOW_INVENTORY_CACHE_TTL_SECONDS", "5")
+)
+
+# Product/order projections use separate namespaces so a write can invalidate
+# only the projections affected by it. The database identity is part of each
+# key because tests and embedded deployments may use more than one engine in
+# the same Python process.
+products_cache: TTLCache[list] = TTLCache(INVENTORY_CACHE_TTL_SECONDS)
+orders_cache: TTLCache[list] = TTLCache(INVENTORY_CACHE_TTL_SECONDS)
+
+
+def inventory_cache_key(kind: str, session: object) -> str:
+    """Build a process-local key scoped to the session's database engine."""
+    bind = getattr(session, "bind", None)
+    return f"{kind}:{id(bind)}"
+
+
+def invalidate_inventory_cache(session: object) -> None:
+    """Invalidate product and order projections after an inventory write."""
+    products_cache.delete(inventory_cache_key("products", session))
+    orders_cache.delete(inventory_cache_key("orders", session))

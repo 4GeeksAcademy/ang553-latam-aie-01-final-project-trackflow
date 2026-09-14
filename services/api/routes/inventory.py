@@ -21,6 +21,12 @@ from sqlmodel import Session, select
 
 from services.api.auth_models import UserInDB
 from services.api.auth_security import get_current_user
+from services.api.cache import (
+    invalidate_inventory_cache,
+    inventory_cache_key,
+    orders_cache,
+    products_cache,
+)
 from services.api.database import get_db
 from services.api.inventory_models import SKU
 from services.api.inventory_schemas import (
@@ -76,9 +82,16 @@ def list_products(
     grouped by (sku_id, warehouse) — this avoids N+1 behaviour while
     maintaining per-warehouse accuracy.
     """
+    cache_key = inventory_cache_key("products", session)
+    cached = products_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     skus = session.exec(select(SKU)).all()
     stock_map = get_current_stocks(session)
-    return [_sku_to_response(sku, stock_map) for sku in skus]
+    result = [_sku_to_response(sku, stock_map) for sku in skus]
+    products_cache.set(cache_key, result)
+    return result
 
 
 # ── GET /inventory/products/{id} ─────────────────────────────────────────────
@@ -146,6 +159,7 @@ def create_product(
     session.add(sku)
     session.commit()
     session.refresh(sku)
+    invalidate_inventory_cache(session)
 
     # New SKUs have zero stock — no movements recorded yet.
     return SKUResponse(
@@ -232,13 +246,17 @@ def list_orders_endpoint(
 
     No authentication required (public, like GET products).
     """
-    try:
-        raw = list_orders(session=session)
-    except InventoryDataIntegrityError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Inventory data integrity error.",
-        ) from exc
+    cache_key = inventory_cache_key("orders", session)
+    raw = orders_cache.get(cache_key)
+    if raw is None:
+        try:
+            raw = list_orders(session=session)
+        except InventoryDataIntegrityError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Inventory data integrity error.",
+            ) from exc
+        orders_cache.set(cache_key, raw)
 
     return [
         InventoryOrderListItem(

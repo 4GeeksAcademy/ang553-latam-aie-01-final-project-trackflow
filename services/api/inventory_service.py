@@ -228,6 +228,10 @@ def create_stock_entry(
     session.commit()
     session.refresh(entry)
 
+    from services.api.cache import invalidate_inventory_cache
+
+    invalidate_inventory_cache(session)
+
     return entry
 
 
@@ -311,6 +315,10 @@ def create_stock_exit(
     session.add(exit_record)
     session.commit()
     session.refresh(exit_record)
+
+    from services.api.cache import invalidate_inventory_cache
+
+    invalidate_inventory_cache(session)
 
     return exit_record
 

@@ -23,6 +23,7 @@ from services.api.inventory_service import (
     get_current_stock,
     get_current_stocks,
 )
+from services.api.cache import products_cache
 from services.api.routes.inventory import create_product, get_product, list_products
 
 
@@ -208,6 +209,27 @@ class TestListProducts:
 
         result = list_products(session=db_session)
         assert hasattr(result[0], "current_stock")
+
+    def test_second_read_uses_cached_projection(self, db_session: Session, monkeypatch) -> None:
+        """PROD-CACHE-01: repeated reads do not re-query the product table."""
+        _create_sku(db_session, sku_code="SKU-CACHE")
+        first = list_products(session=db_session)
+
+        def fail_query(*args, **kwargs):
+            raise AssertionError("cached product projection should be used")
+
+        monkeypatch.setattr(db_session, "exec", fail_query)
+        second = list_products(session=db_session)
+
+        assert second == first
+
+    def test_movement_invalidates_cached_projection(self, db_session: Session) -> None:
+        """PROD-CACHE-02: stock movement makes the next read fresh."""
+        sku = _create_sku(db_session, sku_code="SKU-INVALIDATE")
+        assert list_products(session=db_session)[0].current_stock == 0
+        _add_entry(db_session, sku.id, quantity=7)
+
+        assert list_products(session=db_session)[0].current_stock == 7
 
 
 # ═════════════════════════════════════════════════════════════════════════════

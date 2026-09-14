@@ -84,6 +84,9 @@
 - Suite completa continúa pasando con 173 tests.
 - Fase 2.1 de caching — primitiva TTL process-local implementada con reloj
 	inyectable, invalidación explícita y tests unitarios de expiración.
+- Fases 2.2–2.5 de caching — proyecciones autenticadas de productos y órdenes
+	cacheadas con TTL, invalidación tras creación de SKU y movimientos, y QA de
+	cache hit/invalidation.
 - Evidencia principal: `orders` crece de ~2.32 ms a ~104.36 ms (44.98x) y
 	~1.44 MB de payload en `large`; `products` de ~2.73 ms a ~12.51 ms
 	(4.58x); `suppliers` de ~1.72 ms a ~10.60 ms (6.16x).

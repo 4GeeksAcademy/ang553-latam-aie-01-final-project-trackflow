@@ -28,9 +28,15 @@ from services.api.inventory_models import SKU, StockEntry, StockExit
 from services.api.inventory_schemas import (
     Category,
     InventoryOrderListItem,
+    StockEntryCreate,
     Warehouse,
 )
-from services.api.inventory_service import InventoryDataIntegrityError, list_orders
+from services.api.inventory_service import (
+    InventoryDataIntegrityError,
+    create_stock_entry,
+    list_orders,
+)
+from services.api.routes.inventory import list_orders_endpoint
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -347,6 +353,39 @@ class TestListOrdersService:
             list_orders(db_session)
 
         assert exc_info.value.missing_sku_ids == frozenset({99901, 99902})
+
+
+class TestOrdersCache:
+    """Verify endpoint projection caching and write invalidation."""
+
+    def test_cached_orders_projection_is_reused(self, db_session: Session, monkeypatch) -> None:
+        sku = _create_sku(db_session)
+        _add_entry(db_session, sku.id)
+        first = list_orders_endpoint(session=db_session)
+
+        def fail_query(*args, **kwargs):
+            raise AssertionError("cached order projection should be used")
+
+        monkeypatch.setattr(db_session, "exec", fail_query)
+        assert list_orders_endpoint(session=db_session) == first
+
+    def test_movement_invalidates_orders_projection(self, db_session: Session) -> None:
+        sku = _create_sku(db_session)
+        assert list_orders_endpoint(session=db_session) == []
+        create_stock_entry(
+            db_session,
+            StockEntryCreate(
+                sku_id=sku.id,
+                quantity=10,
+                reference="PO-CACHE",
+                warehouse=Warehouse.LA,
+            ),
+            user_uuid="cache-test-user",
+        )
+
+        refreshed = list_orders_endpoint(session=db_session)
+        assert len(refreshed) == 1
+        assert refreshed[0].movement_type == "inbound"
 
 
 # ═════════════════════════════════════════════════════════════════════════════
