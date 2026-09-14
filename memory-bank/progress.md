@@ -79,16 +79,24 @@
 - Fase 1.3A — middleware HTTP de timing implementado con logger dedicado
 	`api.timing`, logging seguro de método/path/status/duración y test focalizado.
 - Suite completa: 173 tests passing.
+- Baseline pequeño de candidatos ejecutado antes del seed.
+- Harness reproducible aislado creado para perfiles `base`, `medium` y `large`.
+- Suite completa continúa pasando con 173 tests.
+- Evidencia principal: `orders` crece de ~2.32 ms a ~104.36 ms (44.98x) y
+	~1.44 MB de payload en `large`; `products` de ~2.73 ms a ~12.51 ms
+	(4.58x); `suppliers` de ~1.72 ms a ~10.60 ms (6.16x).
+- `product detail` permanece prácticamente estable (~2.5 ms) y tiene bajo valor
+	actual para caching.
 
 ## Pendiente
 
-- Baseline con endpoints candidatos.
-- Evaluación del volumen actual.
-- Seed/carga realista si hace falta.
-- Selección definitiva de endpoints para caching.
-- Implementación de caching.
-- Reporte técnico.
+- Selección final de endpoints.
+- Estrategia de TTL/invalidation.
+- Implementación de cache.
+- Benchmark post-cache.
+- `CACHING_REPORT.md`.
+- Frontend Lazy Loading aprobado.
 
 ## Siguiente paso
 
-- Establecer baseline de rendimiento de los endpoints candidatos.
+- Decidir qué endpoints cachear usando coste × frecuencia × estabilidad.
