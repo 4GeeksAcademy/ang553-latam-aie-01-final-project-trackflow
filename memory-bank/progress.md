@@ -76,11 +76,19 @@
 - Suite actual tras la corrección: 172 tests passing.
 - QA específico de 1.2D completado; no se implementó caching ni middleware de
 	timing.
+- Fase 1.3A — middleware HTTP de timing implementado con logger dedicado
+	`api.timing`, logging seguro de método/path/status/duración y test focalizado.
+- Suite completa: 173 tests passing.
 
 ## Pendiente
 
-- Revisión Git final y commit posterior.
+- Baseline con endpoints candidatos.
+- Evaluación del volumen actual.
+- Seed/carga realista si hace falta.
+- Selección definitiva de endpoints para caching.
+- Implementación de caching.
+- Reporte técnico.
 
 ## Siguiente paso
 
-- Ejecutar verificación final y revisar el diff antes del commit.
+- Establecer baseline de rendimiento de los endpoints candidatos.

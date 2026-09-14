@@ -11,10 +11,11 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, HTTPException, Response, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -29,6 +30,7 @@ from services.api.routes.suppliers import router as suppliers_router
 from services.api.routes.users import router as users_router
 
 logger = logging.getLogger(__name__)
+timing_logger = logging.getLogger("api.timing")
 
 
 class HealthResponse(BaseModel):
@@ -135,6 +137,22 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def log_request_timing(request: Request, call_next):
+    """Log the total duration and status of each HTTP request."""
+    start = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = (time.perf_counter() - start) * 1000
+    timing_logger.info(
+        "%s %s → %s | %.1fms",
+        request.method,
+        request.url.path,
+        response.status_code,
+        duration_ms,
+    )
+    return response
 
 _last_result: dict | None = None
 

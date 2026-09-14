@@ -141,6 +141,7 @@ def test_openapi_visible_success_responses_are_nominal_or_special() -> None:
 
 def test_application_decorators_explicitly_declare_response_models() -> None:
     files = [ROOT / "services/api/main.py", *((ROOT / "services/api/routes").glob("*.py"))]
+    http_decorators = {"get", "post", "put", "patch", "delete", "options", "head"}
     source_decorators: list[tuple[Path, str, set[str]]] = []
     inferred_only: list[str] = []
     for file in files:
@@ -153,7 +154,7 @@ def test_application_decorators_explicitly_declare_response_models() -> None:
                 if call is None or not isinstance(call.func, ast.Attribute):
                     continue
                 owner = call.func.value.id if isinstance(call.func.value, ast.Name) else None
-                if owner not in {"router", "app"}:
+                if owner not in {"router", "app"} or call.func.attr not in http_decorators:
                     continue
                 names = {keyword.arg for keyword in call.keywords if keyword.arg}
                 source_decorators.append((file, node.name, names))
