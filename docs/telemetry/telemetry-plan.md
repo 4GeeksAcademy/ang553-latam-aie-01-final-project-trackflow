@@ -644,6 +644,161 @@ These two stages are the complete v1 abandonment vocabulary; no additional stage
 
 No unresolved taxonomy may be emitted as arbitrary free text. It must be closed from an authoritative producer/source before instrumentation.
 
+## Delivery strategy
+
+### Stream vs batch
+
+The strategy below describes downstream processing, not the moment at which an
+event is emitted. All events may be captured at the instrumentation point
+described in the catalog. A `batch` decision means that periodic processing is
+adequate for the current operational or business decision; it does not require
+the producer to wait before recording the event. A `stream` decision means that
+the event's primary value depends on making it available for an operational
+decision within seconds to minutes. Where an event has both uses, the table
+identifies the primary strategy and names the secondary use explicitly.
+
+| event_type | strategy | latency requirement | rationale | consumer/use case |
+| --- | --- | --- | --- | --- |
+| `inbound_order_created` | batch | weekly / periodic | The current hypothesis is about inbound volume by client and warehouse for capacity and staffing planning. There is no explicit need to react within seconds to each receipt; the event can be emitted immediately and aggregated later. | Primary: future weekly reporting pipeline for capacity planning; secondary: future analytical job for inbound trends. |
+| `outbound_order_created` | batch | periodic / weekly | Throughput and bottleneck analysis do not have a specified seconds-level SLA in the approved hypothesis. Frequent operational aggregation is sufficient until a concrete rapid-response requirement is established. | Future analytical job for throughput and bottleneck trends; future weekly reporting pipeline. |
+| `stock_threshold_triggered` | stream | seconds to minutes | A low-stock condition loses operational value if notification and intervention are delayed until a periodic report. Rapid availability supports action before a stockout. | Future warehouse operations monitoring and future low-stock operational monitor; secondary consumption by the weekly reporting pipeline. |
+| `direct_stock_edit_rejected` | stream | seconds to minutes | An individual rejected attempt may indicate an immediate governance or permission concern. The individual event should be available promptly for investigation, while frequency by warehouse is a separate analytical aggregation. | Future security/governance monitoring for individual attempts; secondary future batch analysis of frequency by warehouse. |
+| `inventory_discrepancy_detected` | batch | periodic / weekly | The event comes from a discrete audit or physical-count process. The current decision is to prioritize audits by discrepancy frequency or rate, so seconds-level delivery is not established as necessary. | Future inventory reconciliation analytical job and weekly reporting pipeline for discrepancy trends. |
+| `auth_login_succeeded` | batch | periodic / daily | Successful login is primarily an adoption and access-pattern signal. No decision in the current hypothesis loses material value when processed after the login event. | Account support analytics and future daily usage/adoption analytical job. |
+| `auth_login_failed` | stream | seconds to minutes | A single failure is useful for support, but the security value comes from detecting a concentration while it is still actionable. Prompt availability supports conceptual security/governance monitoring; later aggregation remains useful for support. | Future security/governance monitoring for suspicious concentrations; secondary account support analytics. |
+| `auth_password_reset_requested` | batch | periodic / daily | Reset demand is used to understand recovery friction and support volume. The current hypothesis does not identify a decision that loses value if processed after the request. | Account support analytics and future daily recovery-demand analytical job. |
+| `auth_password_reset_completed` | batch | periodic / daily | Completion rates and recovery friction are historical funnel measures. They can be compared with requests in a periodic job without requiring immediate operational reaction. | Account support analytics and future daily recovery-funnel job. |
+| `inventory_validation_failed` | batch | periodic / daily | The approved use is to analyze validation friction and data quality by failure class. Individual failures should be captured immediately, but downstream aggregation does not require seconds-level processing. | Product/workflow analytics and future daily validation-quality job. |
+| `inventory_stock_insufficient` | stream | seconds to minutes | A rejected outbound operation can affect fulfillment immediately. Prompt visibility supports replenishment, reconciliation, or operational intervention before additional outbound work is affected. | Warehouse operations monitoring and future stock-availability operational monitor; secondary periodic fulfillment analysis. |
+| `inventory_product_created` | batch | periodic / daily | Product creation is master-data activity used for onboarding load and data-quality analysis, not an event requiring immediate operational reaction under the current hypothesis. | Product/workflow analytics and future daily master-data analytical job. |
+| `api_request_slow` | stream | seconds to minutes | The event is valuable for detecting technical degradation while it can still affect operators. A historical performance report alone would delay operational investigation, although the same events may later feed trend reporting. | Future technical reliability monitoring for degraded routes; secondary performance reporting. |
+| `api_request_failed` | stream | seconds to minutes | Technical 5xx failures can represent an active service problem. Prompt detection supports operational reliability investigation; periodic reporting remains a secondary use, not the primary delivery strategy. | Future technical reliability monitoring for server failures; secondary reliability trend reporting. |
+| `backoffice_section_entered` | batch | periodic / daily | Section entry measures navigation and feature usage. Capturing the event immediately is compatible with processing it later because no approved decision requires intervention during the session. | Product/workflow analytics and future daily navigation-usage job. |
+| `inventory_workflow_started` | batch | periodic / daily | Starts are used to compare demand for inbound and outbound workflows and to guide usability or staffing analysis. The current hypothesis does not require immediate reaction to an individual start. | Product/workflow analytics and future daily workflow-funnel job. |
+| `inventory_workflow_abandoned` | batch | periodic / daily | Abandonment is a funnel and friction signal. Immediate capture preserves the event, while daily aggregation is sufficient to identify affected forms and guidance needs. | Product/workflow analytics and future daily workflow-funnel job. |
+
+The four events used by the future weekly pipeline remain identifiable even when
+their primary delivery strategy differs: `inbound_order_created`,
+`outbound_order_created`, `stock_threshold_triggered`, and
+`inventory_discrepancy_detected`. In particular, a stream-delivered
+`stock_threshold_triggered` event can be consumed promptly by an operational
+monitor and also retained for a later weekly aggregation. Delivery strategy and
+downstream consumption strategy are separate decisions; the weekly pipeline
+does not require every contributing event to have `batch` as its primary
+strategy.
+
+### Volume controls
+
+Volume controls apply to emission or downstream processing policy; they do not
+change the semantic definition of an event. The default for TrackFlow business,
+security, audit, and workflow facts is `none`: every valid occurrence is
+preserved. A retry of one logical event is handled by `eventId`-based downstream
+deduplication, not by throttle, debounce, or sampling.
+
+| event_type | control | policy | rationale |
+| --- | --- | --- | --- |
+| `inbound_order_created` | none | Preserve every valid inbound order/movement occurrence. Do not sample. | Exact inbound volume is needed for capacity and staffing analysis; losing occurrences would distort counts and rates. |
+| `outbound_order_created` | none | Preserve every completed outbound order occurrence. Do not sample. | Exact completed throughput is needed to analyze rates and bottlenecks. |
+| `stock_threshold_triggered` | none | The producer must emit only the transition into the below-threshold state (edge-triggering). A later recovery above the threshold followed by another fall is a new valid occurrence. | Throttle must not hide an incorrectly repetitive producer. Each legitimate threshold transition is operationally meaningful and should be retained. |
+| `direct_stock_edit_rejected` | none | Preserve every rejected direct-edit attempt. Do not sample; any future alert grouping is separate from the event record. | Individual attempts may be evidence for governance or security investigation, even when repeated attempts create higher volume. |
+| `inventory_discrepancy_detected` | none | Preserve every confirmed discrepancy from an audit or physical count. Do not sample. | Exact discrepancy counts and traceability are needed for reconciliation and audit prioritization. |
+| `auth_login_succeeded` | none | Preserve every successful login occurrence. Do not sample. | Adoption, access, and session-volume measures require real counts rather than estimates. |
+| `auth_login_failed` | none | Preserve every failed login occurrence. Future alerts may group or rate-limit notifications, but not the underlying event record. | Individual failures support security investigation and support; retention of the base event must not be confused with alert throttling. |
+| `auth_password_reset_requested` | none | Preserve every reset request occurrence. Do not sample. | Each request contributes to the recovery funnel and support-volume analysis. |
+| `auth_password_reset_completed` | none | Preserve every completed reset occurrence. Do not sample. | Exact completions are needed to measure recovery conversion and friction. |
+| `inventory_validation_failed` | none | Preserve every validation failure with its bounded failure class. Do not sample. | Sampling could distort which validation classes block warehouse work most frequently. |
+| `inventory_stock_insufficient` | none | Preserve every insufficient-stock rejection. Do not sample. | Exact rejection counts are needed for fulfillment rates and replenishment or reconciliation analysis. |
+| `inventory_product_created` | none | Preserve every successful product-creation occurrence. Do not sample. | Each product creation is a business/master-data fact used for onboarding and data-quality analysis. |
+| `api_request_slow` | throttle | For each bounded `method + path_template` key, emit at most one degradation signal per configured operational window while the condition continues. The window is configuration for future instrumentation; do not use debounce. Complete latency metrics belong to a separate future measurement system. | A sustained degradation can generate high volume, while one signal per route and operational window preserves evidence that it continues. Throttle limits signal volume without delaying the initial detection. |
+| `api_request_failed` | none | Preserve every HTTP 5xx event. Do not sample or throttle because this event supports exact error-rate analysis; any future alert grouping is separate. | Every server failure may contribute to failure rates and reliability investigation, so reducing occurrences would weaken the technical-health signal. |
+| `backoffice_section_entered` | none | Preserve every supported section-entry occurrence. Do not add debounce or throttle without evidence of accidental duplicate navigation. | Current hypotheses require usage counts, and the frontend does not establish a demonstrated repetition problem that justifies losing entries. |
+| `inventory_workflow_started` | none | Preserve every valid workflow start. Do not sample. | Each start is a funnel denominator for started-to-completed or abandoned analysis. |
+| `inventory_workflow_abandoned` | none | Preserve every finalized abandonment occurrence. Do not debounce; the event already represents the terminal outcome rather than intermediate interaction. | Each abandonment contributes to the workflow funnel and friction analysis. |
+
+No v1 event uses `sampling`. The catalog contains events for exact business
+counts, rates, audit/governance evidence, security signals, or workflow funnels;
+sampling would either lose meaningful occurrences or distort the approved
+hypotheses. No v1 event uses `debounce`: none is defined as a repeated signal
+whose intermediate occurrences have no value, and debouncing would delay or
+erase facts such as failures, threshold transitions, or workflow outcomes.
+
+### Deduplication versus volume control
+
+These concepts address different situations:
+
+- **Duplicate delivery:** a retry or redelivery of the same logical event keeps
+	the same `eventId` and must be deduplicated downstream. This is not throttle,
+	debounce, or sampling.
+- **Repeated legitimate event:** two valid occurrences have different
+	`eventId` values and must both be retained, even when their properties are
+	identical. For example, two distinct rejected attempts are not duplicates.
+- **Volume control:** throttle, debounce, or sampling changes which signals are
+	emitted or processed according to a policy. It must not be used to conceal a
+	producer that emits the same logical event repeatedly or to replace
+	`eventId`-based deduplication.
+
+For `stock_threshold_triggered`, edge detection belongs to the producer: the
+producer must establish the transition into the below-threshold state. This is
+semantic correctness, not a volume-control mechanism. For `api_request_slow`,
+the throttle is intentionally limited to the bounded route key and configured
+operational window; it is not a claim that the underlying latency measurements
+are sampled or that every slow request is counted by this event.
+
+### Risks and exclusions
+
+#### Design risks
+
+| Risk | Impact | Mitigation / design decision |
+| --- | --- | --- |
+| Duplicate delivery | Retries or redelivery can cause double counts, incorrect rates, and inaccurate weekly metrics. | `eventId` identifies one logical event instance; retries reuse the same `eventId`; downstream consumers must deduplicate. This does not remove legitimate distinct events with different `eventId` values. |
+| Event loss | A failure between a business operation and event capture can produce a confirmed business action with missing telemetry, causing undercounting and incomplete, non-reconcilable decisions. | Future instrumentation must address atomicity and reliability between the business commit and event capture. This phase does not design a transactional outbox or other implementation. |
+| Semantic producer mismatch | Emitting `outbound_order_created` at `StockExit` persistence when picking and dispatch are not complete could inflate throughput. | During instrumentation, validate that the producer represents completed picking and dispatch before emitting. The current event contract is unchanged. |
+| Missing authoritative `client_id` | Using unstable client values can create inconsistent joins, cardinality, and incorrect client aggregations. | Do not emit mandatory inventory events until `client_id` can be resolved from a stable authoritative source. Do not invent IDs or silently substitute `client_name`. |
+| Warehouse normalization | `LA`, `ZGZ`, `Los Angeles`, and `Zaragoza` can fragment metrics when telemetry requires `los_angeles` and `zaragoza`. | Normalize warehouse values to the canonical telemetry values before emission. |
+| High-cardinality dimensions | Raw paths, exception messages, full URLs, query strings, free-form referrers, and error text make analysis expensive and difficult. | Use `path_template`, bounded failure reasons, and bounded section/workflow values. Do not emit raw exception or error messages. |
+| Schema drift | Independently evolving producers and consumers can cause rejected events, incorrect interpretation, and inconsistent reporting. | Use `schemaVersion`, treat `event-schemas.json` as the contract, apply the defined major/minor policy, and validate changes before instrumentation. No schema registry is designed here. |
+| Cross-field semantic rules | A structurally valid payload can still be inconsistent, such as invalid quantity/threshold, discrepancy, stock, or duration relationships. | Validate domain relationships in the producer/domain before emission. Do not add custom JSON Schema keywords in this phase. |
+| Missing session/request correlation | Without centralized `sessionId` and `requestId`, frontend, backend, and logs are harder to correlate, funnels may be incomplete, and technical diagnosis is harder. | Future instrumentation must establish and propagate correlation according to the approved Event Envelope. |
+| Volume spikes | Sustained degradation can generate a large volume of `api_request_slow` signals. | Use the approved throttle keyed by `method + path_template` during a configured operational window. Other events remain unlimited unless later evidence justifies a change. |
+| Sampling bias | Sampling can alter counts, rates, security evidence, auditability, and funnel measures. | v1 uses no sampling. |
+| Privacy leakage | Accidental capture of passwords, JWTs/access tokens, reset tokens, analytical email values, API keys/secrets, consumer PII, recipient data, carrier information, or raw request bodies can expose sensitive data. | Enforce the closed property allowlist with `additionalProperties: false` and the documented exclusions. |
+
+#### Exclusions
+
+The following are explicitly outside the TrackFlow telemetry plan v1. Some may
+be addressed in future projects, but they are not part of the current contract:
+
+- final-consumer personal data;
+- recipient or shipping-destination information;
+- carrier and last-mile tracking;
+- passwords, tokens, and secrets;
+- raw request or response bodies;
+- raw stack traces and exception messages;
+- a concrete transport infrastructure;
+- Kafka, SQS, Redis, or an event bus;
+- retention periods;
+- data warehouse implementation;
+- alert implementation;
+- dashboard implementation;
+- weekly reporting pipeline implementation;
+- producer implementation;
+- reconciliation or audit workflow implementation.
+
+#### Considered but not included in v1
+
+These signals or events were considered but are deliberately not catalog events
+in v1:
+
+| Considered signal/event | Decision and reason |
+| --- | --- |
+| `generic button_clicked` | Excluded because it adds cardinality and noise with weak semantics. The existing navigation and workflow events answer the relevant questions more directly. |
+| `generic page_viewed` | Excluded because `backoffice_section_entered` provides a bounded semantic dimension; instrumenting every URL is unnecessary. |
+| `generic error_occurred` | Excluded because it mixes technical and business errors. Specific events already cover `inventory_validation_failed`, `inventory_stock_insufficient`, `api_request_failed`, and `auth_login_failed`. |
+| `stock_updated` | Excluded as a generic event because direct stock editing is prohibited. Legitimate changes are represented by `inbound_order_created` and `outbound_order_created`, preserving traceability. |
+| outbound loss event | Not added merely because the current code has `exit_type=loss`. It was not required by the approved context, is not part of `outbound_order_created`, and lacks an approved hypothesis and decision. |
+| `raw request event` | Excluded because of high cardinality and privacy risk. Technical middleware events use bounded dimensions instead. |
+| every slow request | Not retained as an unlimited individual `api_request_slow` event. The approved signal uses throttle by `method + path_template`; complete latency metrics remain outside this plan. |
+
 ## 9. Known implementation gaps
 
 The mandatory contract is intentionally ahead of the current implementation in several areas:
