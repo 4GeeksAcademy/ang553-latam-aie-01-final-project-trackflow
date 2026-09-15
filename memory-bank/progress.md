@@ -13,6 +13,7 @@
 - Fase 3 completada.
 - Fase 3.1 completada.
 - Fase 3.2 completada.
+- Proyecto de diseño de telemetría TrackFlow en progreso; Fase 1 completada y validada.
 
 ## Completado relevante
 
@@ -102,6 +103,13 @@
 - Evidencia large: products pre ~12.51 ms, warm post-cache ~1.84 ms,
 	~85% de reducción; orders pre ~104.36 ms, warm post-cache ~9.6 ms,
 	~91% de reducción.
+- Auditoría inicial del repositorio y definición del núcleo obligatorio de
+	telemetría TrackFlow completadas.
+- Cinco eventos obligatorios validados y catálogo ampliado con 12 oportunidades
+	adicionales: 17 eventos en total.
+- Cobertura de inventario/negocio, autenticación, validaciones/errores,
+	rendimiento técnico y navegación/workflows.
+- QA pre-commit de Fase 1 completado.
 
 ## Pendiente
 
@@ -109,7 +117,17 @@
 - `CACHING_REPORT.md`.
 - Auditoría final del ticket.
 - PR.
+- Diseño completo del Event Envelope.
+- Definición de properties y taxonomías bounded.
+- Creación de `event-schemas.json`.
+- Estrategia stream vs batch.
+- Throttle/debounce donde corresponda.
+- Análisis de riesgos/exclusiones.
+- QA final contra criterios del proyecto.
+- Resolver `client_id` como identificador estable y validar la equivalencia
+	entre persistencia de `StockExit` y dispatch completado durante la
+	instrumentación.
 
 ## Siguiente paso
 
-- Cerrar decisión sobre useMemo y preparar `CACHING_REPORT.md`.
+- Fase 2: diseño del Event Envelope y contrato de eventos.

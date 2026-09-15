@@ -1,0 +1,1293 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TrackFlow Telemetry Event",
+  "oneOf": [
+    {
+      "$ref": "#/definitions/inbound_order_created"
+    },
+    {
+      "$ref": "#/definitions/outbound_order_created"
+    },
+    {
+      "$ref": "#/definitions/stock_threshold_triggered"
+    },
+    {
+      "$ref": "#/definitions/direct_stock_edit_rejected"
+    },
+    {
+      "$ref": "#/definitions/inventory_discrepancy_detected"
+    },
+    {
+      "$ref": "#/definitions/auth_login_succeeded"
+    },
+    {
+      "$ref": "#/definitions/auth_login_failed"
+    },
+    {
+      "$ref": "#/definitions/auth_password_reset_requested"
+    },
+    {
+      "$ref": "#/definitions/auth_password_reset_completed"
+    },
+    {
+      "$ref": "#/definitions/inventory_validation_failed"
+    },
+    {
+      "$ref": "#/definitions/inventory_stock_insufficient"
+    },
+    {
+      "$ref": "#/definitions/api_request_slow"
+    },
+    {
+      "$ref": "#/definitions/api_request_failed"
+    },
+    {
+      "$ref": "#/definitions/backoffice_section_entered"
+    },
+    {
+      "$ref": "#/definitions/inventory_workflow_started"
+    },
+    {
+      "$ref": "#/definitions/inventory_workflow_abandoned"
+    },
+    {
+      "$ref": "#/definitions/inventory_product_created"
+    }
+  ],
+  "definitions": {
+    "eventId": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$"
+    },
+    "sessionId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "userId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "schemaVersion": {
+      "type": "string",
+      "enum": [
+        "1.0"
+      ]
+    },
+    "requestId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "warehouse": {
+      "type": "string",
+      "enum": [
+        "los_angeles",
+        "zaragoza"
+      ]
+    },
+    "client_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "product_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "product_category": {
+      "type": "string",
+      "enum": [
+        "fashion",
+        "electronics",
+        "cosmetics"
+      ]
+    },
+    "positive_quantity": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "nonnegative_quantity": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "duration_ms": {
+      "type": "number",
+      "minimum": 0
+    },
+    "status_code": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 599
+    },
+    "path_template": {
+      "type": "string",
+      "minLength": 1
+    },
+    "role": {
+      "type": "string",
+      "enum": [
+        "admin",
+        "manager",
+        "user"
+      ]
+    },
+    "workflow": {
+      "type": "string",
+      "enum": [
+        "inbound",
+        "outbound"
+      ]
+    },
+    "movement_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "threshold_quantity": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "discrepancy_delta": {
+      "type": "integer",
+      "not": {
+        "const": 0
+      }
+    },
+    "method": {
+      "type": "string",
+      "pattern": "^[A-Z]+$"
+    },
+    "abandonment_stage": {
+      "type": "string",
+      "enum": [
+        "before_submit",
+        "after_submit"
+      ]
+    },
+    "section": {
+      "type": "string",
+      "enum": [
+        "inventory_products",
+        "inventory_orders",
+        "suppliers",
+        "incidents"
+      ]
+    },
+    "operation": {
+      "type": "string",
+      "enum": [
+        "inbound",
+        "outbound",
+        "product_create"
+      ]
+    },
+    "validation_failure_reason": {
+      "type": "string",
+      "enum": [
+        "unknown_product",
+        "warehouse_mismatch",
+        "invalid_payload"
+      ]
+    },
+    "auth_failure_reason": {
+      "type": "string",
+      "enum": [
+        "account_not_found",
+        "invalid_password",
+        "inactive_account"
+      ]
+    },
+    "request_outcome_class": {
+      "type": "string",
+      "enum": [
+        "account_not_found",
+        "reset_email_sent",
+        "delivery_failed"
+      ]
+    },
+    "inbound_order_created": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "$ref": "#/definitions/eventId"
+        },
+        "timestamp": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/sessionId"
+        },
+        "userId": {
+          "$ref": "#/definitions/userId"
+        },
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "inbound_order_created"
+          ]
+        },
+        "schemaVersion": {
+          "$ref": "#/definitions/schemaVersion"
+        },
+        "requestId": {
+          "$ref": "#/definitions/requestId"
+        },
+        "properties": {
+          "type": "object",
+          "properties": {
+            "warehouse": {
+              "$ref": "#/definitions/warehouse"
+            },
+            "client_id": {
+              "$ref": "#/definitions/client_id"
+            },
+            "product_id": {
+              "$ref": "#/definitions/product_id"
+            },
+            "product_category": {
+              "$ref": "#/definitions/product_category"
+            },
+            "quantity": {
+              "$ref": "#/definitions/positive_quantity"
+            },
+            "movement_id": {
+              "$ref": "#/definitions/movement_id"
+            }
+          },
+          "required": [
+            "warehouse",
+            "client_id",
+            "product_id",
+            "product_category",
+            "quantity"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "eventId",
+        "timestamp",
+        "sessionId",
+        "userId",
+        "event_type",
+        "schemaVersion",
+        "requestId",
+        "properties"
+      ],
+      "additionalProperties": false
+    },
+    "outbound_order_created": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "$ref": "#/definitions/eventId"
+        },
+        "timestamp": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/sessionId"
+        },
+        "userId": {
+          "$ref": "#/definitions/userId"
+        },
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "outbound_order_created"
+          ]
+        },
+        "schemaVersion": {
+          "$ref": "#/definitions/schemaVersion"
+        },
+        "requestId": {
+          "$ref": "#/definitions/requestId"
+        },
+        "properties": {
+          "type": "object",
+          "properties": {
+            "warehouse": {
+              "$ref": "#/definitions/warehouse"
+            },
+            "client_id": {
+              "$ref": "#/definitions/client_id"
+            },
+            "product_id": {
+              "$ref": "#/definitions/product_id"
+            },
+            "product_category": {
+              "$ref": "#/definitions/product_category"
+            },
+            "quantity": {
+              "$ref": "#/definitions/positive_quantity"
+            },
+            "movement_id": {
+              "$ref": "#/definitions/movement_id"
+            }
+          },
+          "required": [
+            "warehouse",
+            "client_id",
+            "product_id",
+            "product_category",
+            "quantity"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "eventId",
+        "timestamp",
+        "sessionId",
+        "userId",
+        "event_type",
+        "schemaVersion",
+        "requestId",
+        "properties"
+      ],
+      "additionalProperties": false
+    },
+    "stock_threshold_triggered": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "$ref": "#/definitions/eventId"
+        },
+        "timestamp": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/sessionId"
+        },
+        "userId": {
+          "$ref": "#/definitions/userId"
+        },
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "stock_threshold_triggered"
+          ]
+        },
+        "schemaVersion": {
+          "$ref": "#/definitions/schemaVersion"
+        },
+        "requestId": {
+          "$ref": "#/definitions/requestId"
+        },
+        "properties": {
+          "type": "object",
+          "properties": {
+            "warehouse": {
+              "$ref": "#/definitions/warehouse"
+            },
+            "client_id": {
+              "$ref": "#/definitions/client_id"
+            },
+            "product_id": {
+              "$ref": "#/definitions/product_id"
+            },
+            "product_category": {
+              "$ref": "#/definitions/product_category"
+            },
+            "quantity": {
+              "$ref": "#/definitions/nonnegative_quantity"
+            },
+            "threshold_quantity": {
+              "$ref": "#/definitions/threshold_quantity"
+            }
+          },
+          "required": [
+            "warehouse",
+            "client_id",
+            "product_id",
+            "product_category",
+            "quantity",
+            "threshold_quantity"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "eventId",
+        "timestamp",
+        "sessionId",
+        "userId",
+        "event_type",
+        "schemaVersion",
+        "requestId",
+        "properties"
+      ],
+      "additionalProperties": false
+    },
+    "direct_stock_edit_rejected": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "$ref": "#/definitions/eventId"
+        },
+        "timestamp": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/sessionId"
+        },
+        "userId": {
+          "$ref": "#/definitions/userId"
+        },
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "direct_stock_edit_rejected"
+          ]
+        },
+        "schemaVersion": {
+          "$ref": "#/definitions/schemaVersion"
+        },
+        "requestId": {
+          "$ref": "#/definitions/requestId"
+        },
+        "properties": {
+          "type": "object",
+          "properties": {
+            "warehouse": {
+              "$ref": "#/definitions/warehouse"
+            },
+            "client_id": {
+              "$ref": "#/definitions/client_id"
+            },
+            "product_id": {
+              "$ref": "#/definitions/product_id"
+            },
+            "product_category": {
+              "$ref": "#/definitions/product_category"
+            },
+            "quantity": {
+              "$ref": "#/definitions/positive_quantity"
+            }
+          },
+          "required": [
+            "warehouse",
+            "client_id",
+            "product_id",
+            "product_category",
+            "quantity"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "eventId",
+        "timestamp",
+        "sessionId",
+        "userId",
+        "event_type",
+        "schemaVersion",
+        "requestId",
+        "properties"
+      ],
+      "additionalProperties": false
+    },
+    "inventory_discrepancy_detected": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "$ref": "#/definitions/eventId"
+        },
+        "timestamp": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/sessionId"
+        },
+        "userId": {
+          "$ref": "#/definitions/userId"
+        },
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "inventory_discrepancy_detected"
+          ]
+        },
+        "schemaVersion": {
+          "$ref": "#/definitions/schemaVersion"
+        },
+        "requestId": {
+          "$ref": "#/definitions/requestId"
+        },
+        "properties": {
+          "type": "object",
+          "properties": {
+            "warehouse": {
+              "$ref": "#/definitions/warehouse"
+            },
+            "client_id": {
+              "$ref": "#/definitions/client_id"
+            },
+            "product_id": {
+              "$ref": "#/definitions/product_id"
+            },
+            "product_category": {
+              "$ref": "#/definitions/product_category"
+            },
+            "quantity": {
+              "$ref": "#/definitions/positive_quantity"
+            },
+            "system_quantity": {
+              "$ref": "#/definitions/nonnegative_quantity"
+            },
+            "counted_quantity": {
+              "$ref": "#/definitions/nonnegative_quantity"
+            },
+            "discrepancy_delta": {
+              "$ref": "#/definitions/discrepancy_delta"
+            }
+          },
+          "required": [
+            "warehouse",
+            "client_id",
+            "product_id",
+            "product_category",
+            "quantity",
+            "system_quantity",
+            "counted_quantity",
+            "discrepancy_delta"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "eventId",
+        "timestamp",
+        "sessionId",
+        "userId",
+        "event_type",
+        "schemaVersion",
+        "requestId",
+        "properties"
+      ],
+      "additionalProperties": false
+    },
+    "auth_login_succeeded": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "$ref": "#/definitions/eventId"
+        },
+        "timestamp": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/sessionId"
+        },
+        "userId": {
+          "$ref": "#/definitions/userId"
+        },
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "auth_login_succeeded"
+          ]
+        },
+        "schemaVersion": {
+          "$ref": "#/definitions/schemaVersion"
+        },
+        "requestId": {
+          "$ref": "#/definitions/requestId"
+        },
+        "properties": {
+          "type": "object",
+          "properties": {
+            "role": {
+              "$ref": "#/definitions/role"
+            }
+          },
+          "required": [
+            "role"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "eventId",
+        "timestamp",
+        "sessionId",
+        "userId",
+        "event_type",
+        "schemaVersion",
+        "requestId",
+        "properties"
+      ],
+      "additionalProperties": false
+    },
+    "auth_login_failed": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "$ref": "#/definitions/eventId"
+        },
+        "timestamp": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/sessionId"
+        },
+        "userId": {
+          "$ref": "#/definitions/userId"
+        },
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "auth_login_failed"
+          ]
+        },
+        "schemaVersion": {
+          "$ref": "#/definitions/schemaVersion"
+        },
+        "requestId": {
+          "$ref": "#/definitions/requestId"
+        },
+        "properties": {
+          "type": "object",
+          "properties": {
+            "failure_reason": {
+              "$ref": "#/definitions/auth_failure_reason"
+            },
+            "role_if_known": {
+              "$ref": "#/definitions/role"
+            }
+          },
+          "required": [
+            "failure_reason"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "eventId",
+        "timestamp",
+        "sessionId",
+        "userId",
+        "event_type",
+        "schemaVersion",
+        "requestId",
+        "properties"
+      ],
+      "additionalProperties": false
+    },
+    "auth_password_reset_requested": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "$ref": "#/definitions/eventId"
+        },
+        "timestamp": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/sessionId"
+        },
+        "userId": {
+          "$ref": "#/definitions/userId"
+        },
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "auth_password_reset_requested"
+          ]
+        },
+        "schemaVersion": {
+          "$ref": "#/definitions/schemaVersion"
+        },
+        "requestId": {
+          "$ref": "#/definitions/requestId"
+        },
+        "properties": {
+          "type": "object",
+          "properties": {
+            "request_outcome_class": {
+              "$ref": "#/definitions/request_outcome_class"
+            }
+          },
+          "required": [
+            "request_outcome_class"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "eventId",
+        "timestamp",
+        "sessionId",
+        "userId",
+        "event_type",
+        "schemaVersion",
+        "requestId",
+        "properties"
+      ],
+      "additionalProperties": false
+    },
+    "auth_password_reset_completed": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "$ref": "#/definitions/eventId"
+        },
+        "timestamp": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/sessionId"
+        },
+        "userId": {
+          "$ref": "#/definitions/userId"
+        },
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "auth_password_reset_completed"
+          ]
+        },
+        "schemaVersion": {
+          "$ref": "#/definitions/schemaVersion"
+        },
+        "requestId": {
+          "$ref": "#/definitions/requestId"
+        },
+        "properties": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "eventId",
+        "timestamp",
+        "sessionId",
+        "userId",
+        "event_type",
+        "schemaVersion",
+        "requestId",
+        "properties"
+      ],
+      "additionalProperties": false
+    },
+    "inventory_validation_failed": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "$ref": "#/definitions/eventId"
+        },
+        "timestamp": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/sessionId"
+        },
+        "userId": {
+          "$ref": "#/definitions/userId"
+        },
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "inventory_validation_failed"
+          ]
+        },
+        "schemaVersion": {
+          "$ref": "#/definitions/schemaVersion"
+        },
+        "requestId": {
+          "$ref": "#/definitions/requestId"
+        },
+        "properties": {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "$ref": "#/definitions/operation"
+            },
+            "failure_reason": {
+              "$ref": "#/definitions/validation_failure_reason"
+            },
+            "warehouse": {
+              "$ref": "#/definitions/warehouse"
+            },
+            "product_id": {
+              "$ref": "#/definitions/product_id"
+            },
+            "status_code": {
+              "type": "integer",
+              "minimum": 400,
+              "maximum": 499
+            }
+          },
+          "required": [
+            "operation",
+            "failure_reason"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "eventId",
+        "timestamp",
+        "sessionId",
+        "userId",
+        "event_type",
+        "schemaVersion",
+        "requestId",
+        "properties"
+      ],
+      "additionalProperties": false
+    },
+    "inventory_stock_insufficient": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "$ref": "#/definitions/eventId"
+        },
+        "timestamp": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/sessionId"
+        },
+        "userId": {
+          "$ref": "#/definitions/userId"
+        },
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "inventory_stock_insufficient"
+          ]
+        },
+        "schemaVersion": {
+          "$ref": "#/definitions/schemaVersion"
+        },
+        "requestId": {
+          "$ref": "#/definitions/requestId"
+        },
+        "properties": {
+          "type": "object",
+          "properties": {
+            "warehouse": {
+              "$ref": "#/definitions/warehouse"
+            },
+            "client_id": {
+              "$ref": "#/definitions/client_id"
+            },
+            "product_id": {
+              "$ref": "#/definitions/product_id"
+            },
+            "product_category": {
+              "$ref": "#/definitions/product_category"
+            },
+            "requested_quantity": {
+              "$ref": "#/definitions/positive_quantity"
+            },
+            "available_quantity": {
+              "$ref": "#/definitions/nonnegative_quantity"
+            }
+          },
+          "required": [
+            "warehouse",
+            "client_id",
+            "product_id",
+            "product_category",
+            "requested_quantity",
+            "available_quantity"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "eventId",
+        "timestamp",
+        "sessionId",
+        "userId",
+        "event_type",
+        "schemaVersion",
+        "requestId",
+        "properties"
+      ],
+      "additionalProperties": false
+    },
+    "api_request_slow": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "$ref": "#/definitions/eventId"
+        },
+        "timestamp": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/sessionId"
+        },
+        "userId": {
+          "$ref": "#/definitions/userId"
+        },
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "api_request_slow"
+          ]
+        },
+        "schemaVersion": {
+          "$ref": "#/definitions/schemaVersion"
+        },
+        "requestId": {
+          "$ref": "#/definitions/requestId"
+        },
+        "properties": {
+          "type": "object",
+          "properties": {
+            "method": {
+              "$ref": "#/definitions/method"
+            },
+            "path_template": {
+              "$ref": "#/definitions/path_template"
+            },
+            "status_code": {
+              "$ref": "#/definitions/status_code"
+            },
+            "duration_ms": {
+              "$ref": "#/definitions/duration_ms"
+            },
+            "threshold_ms": {
+              "$ref": "#/definitions/duration_ms"
+            }
+          },
+          "required": [
+            "method",
+            "path_template",
+            "status_code",
+            "duration_ms",
+            "threshold_ms"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "eventId",
+        "timestamp",
+        "sessionId",
+        "userId",
+        "event_type",
+        "schemaVersion",
+        "requestId",
+        "properties"
+      ],
+      "additionalProperties": false
+    },
+    "api_request_failed": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "$ref": "#/definitions/eventId"
+        },
+        "timestamp": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/sessionId"
+        },
+        "userId": {
+          "$ref": "#/definitions/userId"
+        },
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "api_request_failed"
+          ]
+        },
+        "schemaVersion": {
+          "$ref": "#/definitions/schemaVersion"
+        },
+        "requestId": {
+          "$ref": "#/definitions/requestId"
+        },
+        "properties": {
+          "type": "object",
+          "properties": {
+            "method": {
+              "$ref": "#/definitions/method"
+            },
+            "path_template": {
+              "$ref": "#/definitions/path_template"
+            },
+            "status_code": {
+              "type": "integer",
+              "minimum": 500,
+              "maximum": 599
+            },
+            "duration_ms": {
+              "$ref": "#/definitions/duration_ms"
+            }
+          },
+          "required": [
+            "method",
+            "path_template",
+            "status_code",
+            "duration_ms"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "eventId",
+        "timestamp",
+        "sessionId",
+        "userId",
+        "event_type",
+        "schemaVersion",
+        "requestId",
+        "properties"
+      ],
+      "additionalProperties": false
+    },
+    "backoffice_section_entered": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "$ref": "#/definitions/eventId"
+        },
+        "timestamp": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/sessionId"
+        },
+        "userId": {
+          "$ref": "#/definitions/userId"
+        },
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "backoffice_section_entered"
+          ]
+        },
+        "schemaVersion": {
+          "$ref": "#/definitions/schemaVersion"
+        },
+        "requestId": {
+          "$ref": "#/definitions/requestId"
+        },
+        "properties": {
+          "type": "object",
+          "properties": {
+            "section": {
+              "$ref": "#/definitions/section"
+            }
+          },
+          "required": [
+            "section"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "eventId",
+        "timestamp",
+        "sessionId",
+        "userId",
+        "event_type",
+        "schemaVersion",
+        "requestId",
+        "properties"
+      ],
+      "additionalProperties": false
+    },
+    "inventory_workflow_started": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "$ref": "#/definitions/eventId"
+        },
+        "timestamp": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/sessionId"
+        },
+        "userId": {
+          "$ref": "#/definitions/userId"
+        },
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "inventory_workflow_started"
+          ]
+        },
+        "schemaVersion": {
+          "$ref": "#/definitions/schemaVersion"
+        },
+        "requestId": {
+          "$ref": "#/definitions/requestId"
+        },
+        "properties": {
+          "type": "object",
+          "properties": {
+            "workflow": {
+              "$ref": "#/definitions/workflow"
+            }
+          },
+          "required": [
+            "workflow"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "eventId",
+        "timestamp",
+        "sessionId",
+        "userId",
+        "event_type",
+        "schemaVersion",
+        "requestId",
+        "properties"
+      ],
+      "additionalProperties": false
+    },
+    "inventory_workflow_abandoned": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "$ref": "#/definitions/eventId"
+        },
+        "timestamp": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/sessionId"
+        },
+        "userId": {
+          "$ref": "#/definitions/userId"
+        },
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "inventory_workflow_abandoned"
+          ]
+        },
+        "schemaVersion": {
+          "$ref": "#/definitions/schemaVersion"
+        },
+        "requestId": {
+          "$ref": "#/definitions/requestId"
+        },
+        "properties": {
+          "type": "object",
+          "properties": {
+            "workflow": {
+              "$ref": "#/definitions/workflow"
+            },
+            "abandonment_stage": {
+              "$ref": "#/definitions/abandonment_stage"
+            },
+            "had_validation_error": {
+              "type": "boolean"
+            },
+            "duration_ms": {
+              "$ref": "#/definitions/duration_ms"
+            }
+          },
+          "required": [
+            "workflow",
+            "abandonment_stage",
+            "had_validation_error",
+            "duration_ms"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "eventId",
+        "timestamp",
+        "sessionId",
+        "userId",
+        "event_type",
+        "schemaVersion",
+        "requestId",
+        "properties"
+      ],
+      "additionalProperties": false
+    },
+    "inventory_product_created": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "$ref": "#/definitions/eventId"
+        },
+        "timestamp": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/sessionId"
+        },
+        "userId": {
+          "$ref": "#/definitions/userId"
+        },
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "inventory_product_created"
+          ]
+        },
+        "schemaVersion": {
+          "$ref": "#/definitions/schemaVersion"
+        },
+        "requestId": {
+          "$ref": "#/definitions/requestId"
+        },
+        "properties": {
+          "type": "object",
+          "properties": {
+            "warehouse": {
+              "$ref": "#/definitions/warehouse"
+            },
+            "client_id": {
+              "$ref": "#/definitions/client_id"
+            },
+            "product_id": {
+              "$ref": "#/definitions/product_id"
+            },
+            "product_category": {
+              "$ref": "#/definitions/product_category"
+            }
+          },
+          "required": [
+            "warehouse",
+            "client_id",
+            "product_id",
+            "product_category"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "eventId",
+        "timestamp",
+        "sessionId",
+        "userId",
+        "event_type",
+        "schemaVersion",
+        "requestId",
+        "properties"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
