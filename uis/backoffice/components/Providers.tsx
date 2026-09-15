@@ -10,11 +10,17 @@
 "use client";
 
 import { AuthProvider } from "@/lib/AuthContext";
+import { BackofficeSectionTracker } from "@/components/telemetry/BackofficeSectionTracker";
 
 export function Providers({
   children,
 }: {
   children: React.ReactNode;
 }): React.ReactElement {
-  return <AuthProvider>{children}</AuthProvider>;
+  return (
+    <AuthProvider>
+      <BackofficeSectionTracker />
+      {children}
+    </AuthProvider>
+  );
 }
