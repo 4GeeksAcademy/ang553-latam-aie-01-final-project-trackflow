@@ -14,6 +14,7 @@ import tempfile
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,6 +33,12 @@ from services.api.routes.users import router as users_router
 
 logger = logging.getLogger(__name__)
 timing_logger = logging.getLogger("api.timing")
+timing_logger.setLevel(logging.INFO)
+if not timing_logger.handlers:
+    timing_handler = logging.StreamHandler()
+    timing_handler.setFormatter(logging.Formatter("%(message)s"))
+    timing_logger.addHandler(timing_handler)
+timing_logger.propagate = False
 
 # Reserved for the later forwarding integration.  The local route remains the
 # receiver for now; reading this value establishes the backend configuration
@@ -145,21 +152,36 @@ app.add_middleware(
     allow_origins=_DEV_ORIGINS,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
 )
 
 
 @app.middleware("http")
 async def log_request_timing(request: Request, call_next):
-    """Log the total duration and status of each HTTP request."""
+    """Correlate and log the total duration and status of each HTTP request."""
+    incoming_request_id = request.headers.get("X-Request-ID")
+    try:
+        parsed_request_id = UUID(incoming_request_id or "")
+        request_id = (
+            str(parsed_request_id)
+            if parsed_request_id.version == 4
+            else str(uuid4())
+        )
+    except (ValueError, AttributeError, TypeError):
+        request_id = str(uuid4())
+
+    request.state.request_id = request_id
     start = time.perf_counter()
     response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
     duration_ms = (time.perf_counter() - start) * 1000
     timing_logger.info(
-        "%s %s → %s | %.1fms",
+        "%s %s → %s | %.1fms | requestId=%s",
         request.method,
         request.url.path,
         response.status_code,
         duration_ms,
+        request_id,
     )
     return response
 

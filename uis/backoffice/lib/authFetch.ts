@@ -19,6 +19,41 @@
 
 import { getToken, removeToken } from "@/lib/auth";
 
+function createRequestId(): string | null {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    try {
+      return globalThis.crypto.randomUUID();
+    } catch {
+      // Fall through to the cryptographic getRandomValues fallback.
+    }
+  }
+
+  try {
+    if (typeof globalThis.crypto?.getRandomValues !== "function") {
+      return null;
+    }
+
+    const bytes = new Uint8Array(16);
+    globalThis.crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+    const hexadecimal = Array.from(bytes, (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+
+    return `${hexadecimal.slice(0, 8)}-${hexadecimal.slice(
+      8,
+      12,
+    )}-${hexadecimal.slice(12, 16)}-${hexadecimal.slice(
+      16,
+      20,
+    )}-${hexadecimal.slice(20)}`;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Extended ``fetch`` that injects the current JWT as a ``Bearer`` token.
  *
@@ -44,12 +79,18 @@ export async function authFetch(
   init?: RequestInit,
 ): Promise<Response> {
   const token = getToken();
+  const requestId = createRequestId();
 
   // ── Build headers — preserve caller headers, then add Bearer token ──
   const headers = new Headers(init?.headers);
+  headers.delete("X-Request-ID");
 
   if (token) {
     headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  if (requestId !== null) {
+    headers.set("X-Request-ID", requestId);
   }
 
   // ── Perform the request ───────────────────────────────────────────
