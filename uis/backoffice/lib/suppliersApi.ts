@@ -65,7 +65,11 @@ async function getErrorMessage(response: Response): Promise<string> {
   return `Request failed with status ${response.status}`;
 }
 
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+async function requestJson<T>(
+  path: string,
+  pathTemplate: string,
+  init?: RequestInit,
+): Promise<T> {
   let response: Response;
 
   try {
@@ -75,7 +79,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
         "Content-Type": "application/json",
         ...(init?.headers ?? {}),
       },
-    });
+    }, { pathTemplate });
   } catch {
     throw new ApiError("Could not reach the suppliers API. Make sure backend is running.");
   }
@@ -93,28 +97,28 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export async function getSuppliers(filters?: SupplierFilters): Promise<Supplier[]> {
-  return requestJson<Supplier[]>(buildSuppliersPath(filters), {
+  return requestJson<Supplier[]>(buildSuppliersPath(filters), "/api/suppliers", {
     method: "GET",
     cache: "no-store",
   });
 }
 
 export async function createSupplier(payload: SupplierCreate): Promise<SupplierCreatedResponse> {
-  return requestJson<SupplierCreatedResponse>("/api/suppliers", {
+  return requestJson<SupplierCreatedResponse>("/api/suppliers", "/api/suppliers", {
     method: "POST",
     body: JSON.stringify(payload),
   });
 }
 
 export async function updateSupplierRate(id: number, payload: SupplierRateUpdate): Promise<SupplierMutationResponse> {
-  return requestJson<SupplierMutationResponse>(`/api/suppliers/${id}/rate`, {
+  return requestJson<SupplierMutationResponse>(`/api/suppliers/${id}/rate`, "/api/suppliers/{supplier_id}/rate", {
     method: "PATCH",
     body: JSON.stringify(payload),
   });
 }
 
 export async function updateSupplierStatus(id: number, payload: SupplierStatusUpdate): Promise<SupplierMutationResponse> {
-  return requestJson<SupplierMutationResponse>(`/api/suppliers/${id}/status`, {
+  return requestJson<SupplierMutationResponse>(`/api/suppliers/${id}/status`, "/api/suppliers/{supplier_id}/status", {
     method: "PATCH",
     body: JSON.stringify(payload),
   });

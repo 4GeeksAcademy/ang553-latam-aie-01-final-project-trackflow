@@ -28,6 +28,7 @@
 import { useState, useCallback, useRef } from "react";
 import { createStockEntry, ApiError } from "@/lib/inventoryApi";
 import type { SKUResponse } from "@/types/inventory";
+import { useInventoryWorkflowLifecycle } from "@/components/telemetry/InventoryWorkflowLifecycle";
 
 /* ── Props ──────────────────────────────────────────────────────────────── */
 
@@ -106,6 +107,12 @@ export function InboundStockForm({
   errorMessage,
   initialSkuId,
 }: InboundStockFormProps) {
+  const {
+    markValidationError,
+    markCreateAttempt,
+    markCompletedSuccessfully,
+  } = useInventoryWorkflowLifecycle();
+
   /* ── User-interaction state ─────────────────────────────────────── */
 
   const [manualSkuId, setManualSkuId] = useState<number | null>(null);
@@ -175,6 +182,7 @@ export function InboundStockForm({
     setErrors(validationErrors);
 
     if (Object.keys(validationErrors).length > 0) {
+      markValidationError();
       return;
     }
 
@@ -197,7 +205,9 @@ export function InboundStockForm({
     submitInFlightRef.current = true;
 
     try {
+      markCreateAttempt();
       const entry = await createStockEntry(payload);
+      markCompletedSuccessfully();
 
       // ── Success ───────────────────────────────────────────
       const skuLabel = selectedProduct.name;

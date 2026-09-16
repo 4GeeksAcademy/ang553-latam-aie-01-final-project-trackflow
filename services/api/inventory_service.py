@@ -202,7 +202,11 @@ def create_stock_entry(
     # 1. Check SKU exists
     sku = get_sku_or_none(session, data.sku_id)
     if sku is None:
-        raise HTTPException(status_code=404, detail="SKU not found.")
+        raise HTTPException(
+            status_code=404,
+            detail="SKU not found.",
+            headers={"X-TrackFlow-Error-Code": "unknown_product"},
+        )
 
     # 2. Check warehouse matches SKU
     movement_warehouse = data.warehouse.value
@@ -214,6 +218,7 @@ def create_stock_entry(
                 f"SKU warehouse: {sku.warehouse}, "
                 f"movement warehouse: {movement_warehouse}."
             ),
+            headers={"X-TrackFlow-Error-Code": "warehouse_mismatch"},
         )
 
     # 3. Build and persist
@@ -278,7 +283,11 @@ def create_stock_exit(
     # 1. Check SKU exists
     sku = get_sku_or_none(session, data.sku_id)
     if sku is None:
-        raise HTTPException(status_code=404, detail="SKU not found.")
+        raise HTTPException(
+            status_code=404,
+            detail="SKU not found.",
+            headers={"X-TrackFlow-Error-Code": "unknown_product"},
+        )
 
     # 2. Check warehouse matches SKU
     movement_warehouse = data.warehouse.value
@@ -290,6 +299,7 @@ def create_stock_exit(
                 f"SKU warehouse: {sku.warehouse}, "
                 f"movement warehouse: {movement_warehouse}."
             ),
+            headers={"X-TrackFlow-Error-Code": "warehouse_mismatch"},
         )
 
     # 3. Calculate available stock and validate sufficiency
@@ -301,6 +311,7 @@ def create_stock_exit(
                 f"Insufficient stock for SKU '{sku.sku}'. "
                 f"Available: {available}, requested: {data.quantity}."
             ),
+            headers={"X-TrackFlow-Error-Code": "insufficient_stock"},
         )
 
     # 4. Build and persist

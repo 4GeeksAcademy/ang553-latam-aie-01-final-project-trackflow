@@ -152,7 +152,7 @@ app.add_middleware(
     allow_origins=_DEV_ORIGINS,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
-    expose_headers=["X-Request-ID"],
+    expose_headers=["X-Request-ID", "X-TrackFlow-Error-Code"],
 )
 
 

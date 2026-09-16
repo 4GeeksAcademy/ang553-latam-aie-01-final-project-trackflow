@@ -140,6 +140,7 @@ class TestCreateStockEntry:
 
         assert exc_info.value.status_code == 404
         assert exc_info.value.detail == "SKU not found."
+        assert exc_info.value.headers == {"X-TrackFlow-Error-Code": "unknown_product"}
 
     # ── 5. Warehouse mismatch → 400 ─────────────────────────────────────
 
@@ -160,6 +161,7 @@ class TestCreateStockEntry:
         assert "Warehouse mismatch" in exc_info.value.detail
         assert "LA" in exc_info.value.detail
         assert "ZGZ" in exc_info.value.detail
+        assert exc_info.value.headers == {"X-TrackFlow-Error-Code": "warehouse_mismatch"}
 
     # ── 6. Rejected movement is not persisted ───────────────────────────
 
@@ -338,6 +340,7 @@ class TestCreateStockExit:
             )
 
         assert exc_info.value.status_code == 400
+        assert exc_info.value.headers == {"X-TrackFlow-Error-Code": "insufficient_stock"}
 
     # ── 6. Insufficient stock uses status 400 ───────────────────────────
 
@@ -490,6 +493,7 @@ class TestCreateStockExit:
 
         assert exc_info.value.status_code == 400
         assert "Warehouse mismatch" in exc_info.value.detail
+        assert exc_info.value.headers == {"X-TrackFlow-Error-Code": "warehouse_mismatch"}
 
     # ── 11. SKU inexistente → 404 ────────────────────────────────────────
 
@@ -510,6 +514,7 @@ class TestCreateStockExit:
 
         assert exc_info.value.status_code == 404
         assert exc_info.value.detail == "SKU not found."
+        assert exc_info.value.headers == {"X-TrackFlow-Error-Code": "unknown_product"}
 
     # ── 12. LA stock cannot use ZGZ stock ────────────────────────────────
 
@@ -562,6 +567,7 @@ class TestCreateStockExit:
             f"Available: 3, requested: 5."
         )
         assert exc_info.value.detail == expected
+        assert exc_info.value.headers == {"X-TrackFlow-Error-Code": "insufficient_stock"}
 
         # Verify ZGZ stock remains untouched
         zgz_stock = get_current_stock(db_session, sku_id=sku_zgz.id, warehouse="ZGZ")

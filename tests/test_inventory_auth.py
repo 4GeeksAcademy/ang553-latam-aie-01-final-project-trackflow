@@ -27,6 +27,23 @@ def test_inventory_gets_require_authentication() -> None:
         assert response.status_code == 401, (path, response.text)
 
 
+def test_cors_exposes_inventory_error_code_header() -> None:
+    response = _request(
+        "OPTIONS",
+        "/inventory/orders/inbound",
+        headers={
+            "Origin": "http://localhost:3001",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        },
+    )
+
+    assert response.status_code == 200
+    exposed_headers = response.headers["Access-Control-Expose-Headers"]
+    assert "X-Request-ID" in exposed_headers
+    assert "X-TrackFlow-Error-Code" in exposed_headers
+
+
 def test_authenticated_inventory_gets_preserve_contract(isolated_auth_db) -> None:
     from services.api import database
 

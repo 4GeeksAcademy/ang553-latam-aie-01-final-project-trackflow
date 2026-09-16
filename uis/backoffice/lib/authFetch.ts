@@ -18,6 +18,11 @@
  */
 
 import { getToken, removeToken } from "@/lib/auth";
+import { telemetryService } from "@/lib/telemetry";
+
+export interface AuthFetchTelemetryMetadata {
+  pathTemplate: string;
+}
 
 function createRequestId(): string | null {
   if (typeof globalThis.crypto?.randomUUID === "function") {
@@ -54,6 +59,14 @@ function createRequestId(): string | null {
   }
 }
 
+function getNowMs(): number {
+  if (typeof performance !== "undefined") {
+    return performance.now();
+  }
+
+  return Date.now();
+}
+
 /**
  * Extended ``fetch`` that injects the current JWT as a ``Bearer`` token.
  *
@@ -77,9 +90,11 @@ function createRequestId(): string | null {
 export async function authFetch(
   url: string,
   init?: RequestInit,
+  telemetryMetadata?: AuthFetchTelemetryMetadata,
 ): Promise<Response> {
   const token = getToken();
   const requestId = createRequestId();
+  const method = (init?.method ?? "GET").toUpperCase();
 
   // ── Build headers — preserve caller headers, then add Bearer token ──
   const headers = new Headers(init?.headers);
@@ -93,11 +108,15 @@ export async function authFetch(
     headers.set("X-Request-ID", requestId);
   }
 
+  const startedAtMs = getNowMs();
+
   // ── Perform the request ───────────────────────────────────────────
   const response = await fetch(url, {
     ...init,
     headers,
   });
+
+  const durationMs = Math.max(0, getNowMs() - startedAtMs);
 
   // ── Handle 401 — remove stale token, redirect to login ──────────
   if (response.status === 401) {
@@ -106,6 +125,23 @@ export async function authFetch(
     if (typeof window !== "undefined") {
       window.location.replace("/login");
     }
+  }
+
+  if (
+    telemetryMetadata !== undefined &&
+    response.status >= 500 &&
+    response.status <= 599
+  ) {
+    const responseRequestId = response.headers.get("X-Request-ID");
+
+    telemetryService.withRequestId(responseRequestId, () => {
+      telemetryService.track("api_request_failed", {
+        method,
+        path_template: telemetryMetadata.pathTemplate,
+        status_code: response.status,
+        duration_ms: durationMs,
+      });
+    });
   }
 
   return response;

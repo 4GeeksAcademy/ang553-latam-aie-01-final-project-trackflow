@@ -44,7 +44,7 @@ export async function analyzeIncidents(
     response = await authFetch(`${BASE_URL}/api/incidents/analyze`, {
       method: "POST",
       body: formData,
-    });
+    }, { pathTemplate: "/api/incidents/analyze" });
   } catch {
     throw new ApiError(
       "Could not reach the analysis server. Make sure the backend is running.",
@@ -90,7 +90,11 @@ export async function downloadResultsCsv(): Promise<Blob> {
   let response: Response;
 
   try {
-    response = await authFetch(`${BASE_URL}/api/incidents/results/export`);
+    response = await authFetch(
+      `${BASE_URL}/api/incidents/results/export`,
+      undefined,
+      { pathTemplate: "/api/incidents/results/export" },
+    );
   } catch {
     throw new ApiError(
       "Could not reach the analysis server. Make sure the backend is running.",

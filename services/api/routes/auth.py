@@ -6,9 +6,12 @@ All routes live under ``/auth``.
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated
+from datetime import datetime, timezone
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 
 from services.api.auth_models import (
@@ -33,12 +36,17 @@ from services.api.auth_services import (
     reset_password,
 )
 from services.api.email_service import send_password_reset_email
+from services.api.telemetry_capture import capture_telemetry_events
+from services.api.telemetry_schemas import TelemetryEvent
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
 
 @router.post("/login", response_model=TokenResponse)
 async def login(
+    request: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
 ) -> TokenResponse:
     """OAuth2-compatible login.
@@ -74,6 +82,21 @@ async def login(
 
     # 4. Generate JWT
     access_token = create_access_token(sub=user.id)
+
+    try:
+        login_event = TelemetryEvent(
+            eventId=uuid4(),
+            timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            sessionId=None,
+            userId=user.id,
+            event_type="auth_login_succeeded",
+            schemaVersion="1.0",
+            requestId=getattr(request.state, "request_id", None),
+            properties={"role": user.role.value},
+        )
+        capture_telemetry_events([login_event])
+    except Exception:
+        logger.warning("Telemetry capture failed for successful login")
 
     return {"access_token": access_token, "token_type": "bearer"}
 

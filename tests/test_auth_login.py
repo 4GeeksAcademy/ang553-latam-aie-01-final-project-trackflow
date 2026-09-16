@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
+import httpx
 import pytest
 from fastapi import HTTPException
 from fastapi.security import OAuth2PasswordRequestForm
@@ -14,6 +16,7 @@ from services.api.auth_security import get_current_user
 from services.api.auth_services import create_user, update_user
 from services.api.auth_settings import JWT_ALGORITHM, JWT_SECRET_KEY
 from services.api.routes import auth as auth_route
+from services.api.main import app
 
 
 def _run(coro):
@@ -25,13 +28,85 @@ def _form(email: str, password: str) -> OAuth2PasswordRequestForm:
     return OAuth2PasswordRequestForm(username=email, password=password, scope="")
 
 
+def _request(request_id: str):
+    return SimpleNamespace(state=SimpleNamespace(request_id=request_id))
+
+
+async def _http_login(email: str, password: str, request_id: str) -> httpx.Response:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        return await client.post(
+            "/auth/login",
+            data={"username": email, "password": password},
+            headers={"X-Request-ID": request_id},
+        )
+
+
+def test_http_login_captures_one_success_event_with_contract_fields(monkeypatch) -> None:
+    created = create_user(
+        UserCreate(email="telemetry.login@example.com", password="StrongPass123")
+    )
+    captured = []
+    monkeypatch.setattr(
+        auth_route,
+        "capture_telemetry_events",
+        lambda events: captured.extend(events),
+    )
+    request_id = "550e8400-e29b-41d4-a716-446655440010"
+
+    response = asyncio.run(
+        _http_login("telemetry.login@example.com", "StrongPass123", request_id)
+    )
+
+    assert response.status_code == 200
+    assert set(response.json()) == {"access_token", "token_type"}
+    assert response.headers["X-Request-ID"] == request_id
+    assert len(captured) == 1
+    event = captured[0]
+    assert event.event_type == "auth_login_succeeded"
+    assert event.eventId.version == 4
+    assert event.timestamp.tzinfo is not None
+    assert event.sessionId is None
+    assert event.userId == created.id
+    assert event.requestId == request_id
+    assert event.schemaVersion == "1.0"
+    assert event.properties == {"role": "user"}
+
+
+def test_login_succeeds_when_telemetry_capture_fails(monkeypatch) -> None:
+    create_user(UserCreate(email="telemetry.failure@example.com", password="StrongPass123"))
+    monkeypatch.setattr(
+        auth_route,
+        "capture_telemetry_events",
+        lambda events: (_ for _ in ()).throw(RuntimeError("capture failed")),
+    )
+
+    response = asyncio.run(
+        _http_login(
+            "telemetry.failure@example.com",
+            "StrongPass123",
+            "550e8400-e29b-41d4-a716-446655440011",
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.json()["token_type"] == "bearer"
+    assert isinstance(response.json()["access_token"], str)
+    assert response.json()["access_token"]
+
+
 def test_login_with_valid_active_credentials_returns_decodable_access_token() -> None:
     """AUTH-LOGIN-HP-01: active user + correct password produces access token."""
     created = create_user(
         UserCreate(email="active.user@example.com", password="StrongPass123")
     )
 
-    result = _run(auth_route.login(_form("active.user@example.com", "StrongPass123")))
+    result = _run(
+        auth_route.login(
+            _request("550e8400-e29b-41d4-a716-446655440000"),
+            _form("active.user@example.com", "StrongPass123"),
+        )
+    )
 
     assert result["token_type"] == "bearer"
     assert isinstance(result["access_token"], str)
@@ -56,39 +131,87 @@ def test_login_normalizes_email_with_spaces_and_case_differences() -> None:
         UserCreate(email="case.user@example.com", password="StrongPass123")
     )
 
-    result = _run(auth_route.login(_form("  CASE.USER@EXAMPLE.COM  ", "StrongPass123")))
+    result = _run(
+        auth_route.login(
+            _request("550e8400-e29b-41d4-a716-446655440001"),
+            _form("  CASE.USER@EXAMPLE.COM  ", "StrongPass123"),
+        )
+    )
 
     current_user = get_current_user(result["access_token"])
     assert current_user.id == created.id
 
 
-def test_login_rejects_incorrect_password_with_generic_credentials_error() -> None:
+def test_login_rejects_incorrect_password_with_generic_credentials_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """AUTH-LOGIN-FAIL-01: wrong password is rejected."""
     create_user(UserCreate(email="wrong.password@example.com", password="StrongPass123"))
+    captured = []
+    monkeypatch.setattr(
+        auth_route,
+        "capture_telemetry_events",
+        lambda events: captured.extend(events),
+    )
 
     with pytest.raises(HTTPException) as exc_info:
-        _run(auth_route.login(_form("wrong.password@example.com", "BadPass999")))
+        _run(
+            auth_route.login(
+                _request("550e8400-e29b-41d4-a716-446655440002"),
+                _form("wrong.password@example.com", "BadPass999"),
+            )
+        )
 
     assert exc_info.value.status_code == 401
     assert exc_info.value.detail == "Incorrect email or password"
+    assert captured == []
 
 
-def test_login_rejects_non_existent_user_with_generic_credentials_error() -> None:
+def test_login_rejects_non_existent_user_with_generic_credentials_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """AUTH-LOGIN-FAIL-02: unknown user is rejected generically."""
+    captured = []
+    monkeypatch.setattr(
+        auth_route,
+        "capture_telemetry_events",
+        lambda events: captured.extend(events),
+    )
+
     with pytest.raises(HTTPException) as exc_info:
-        _run(auth_route.login(_form("not.found@example.com", "StrongPass123")))
+        _run(
+            auth_route.login(
+                _request("550e8400-e29b-41d4-a716-446655440003"),
+                _form("not.found@example.com", "StrongPass123"),
+            )
+        )
 
     assert exc_info.value.status_code == 401
     assert exc_info.value.detail == "Incorrect email or password"
+    assert captured == []
 
 
-def test_login_rejects_inactive_user_even_with_correct_password() -> None:
+def test_login_rejects_inactive_user_even_with_correct_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """AUTH-LOGIN-FAIL-03: inactive users cannot log in."""
     created = create_user(UserCreate(email="inactive@example.com", password="StrongPass123"))
     update_user(created.id, UserUpdate(is_active=False))
+    captured = []
+    monkeypatch.setattr(
+        auth_route,
+        "capture_telemetry_events",
+        lambda events: captured.extend(events),
+    )
 
     with pytest.raises(HTTPException) as exc_info:
-        _run(auth_route.login(_form("inactive@example.com", "StrongPass123")))
+        _run(
+            auth_route.login(
+                _request("550e8400-e29b-41d4-a716-446655440004"),
+                _form("inactive@example.com", "StrongPass123"),
+            )
+        )
 
     assert exc_info.value.status_code == 401
     assert exc_info.value.detail == "Account is inactive"
+    assert captured == []

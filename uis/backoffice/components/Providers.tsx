@@ -11,6 +11,8 @@
 
 import { AuthProvider } from "@/lib/AuthContext";
 import { BackofficeSectionTracker } from "@/components/telemetry/BackofficeSectionTracker";
+import { InventoryWorkflowLifecycleProvider } from "@/components/telemetry/InventoryWorkflowLifecycle";
+import { InventoryWorkflowTracker } from "@/components/telemetry/InventoryWorkflowTracker";
 
 export function Providers({
   children,
@@ -19,8 +21,11 @@ export function Providers({
 }): React.ReactElement {
   return (
     <AuthProvider>
-      <BackofficeSectionTracker />
-      {children}
+      <InventoryWorkflowLifecycleProvider>
+        <BackofficeSectionTracker />
+        <InventoryWorkflowTracker />
+        {children}
+      </InventoryWorkflowLifecycleProvider>
     </AuthProvider>
   );
 }
