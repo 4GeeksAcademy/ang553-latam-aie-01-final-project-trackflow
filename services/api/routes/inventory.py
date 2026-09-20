@@ -14,9 +14,12 @@ persisted as a column.
 
 from __future__ import annotations
 
+import logging
+from datetime import datetime, timezone
 from typing import Annotated
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import Session, select
 
 from services.api.auth_models import UserInDB
@@ -45,8 +48,12 @@ from services.api.inventory_service import (
     get_current_stocks,
     list_orders,
 )
+from services.api.telemetry_capture import capture_telemetry_events
+from services.api.telemetry_schemas import TelemetryEvent
+from services.api.telemetry_utils import canonical_telemetry_warehouse
 
 router = APIRouter(prefix="/inventory", tags=["Inventory"])
+logger = logging.getLogger(__name__)
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -58,6 +65,7 @@ def _sku_to_response(sku: SKU, stock_map: dict[tuple[int, str], int]) -> SKUResp
         id=sku.id,
         name=sku.name,
         sku=sku.sku,
+        client_id=sku.client_id,
         client_name=sku.client_name,
         category=sku.category,
         warehouse=sku.warehouse,
@@ -83,6 +91,8 @@ def _order_items_to_response(raw: list[dict]) -> list[InventoryOrderListItem]:
         )
         for item in raw
     ]
+
+
 
 
 # ── GET /inventory/products ─────────────────────────────────────────────────
@@ -148,6 +158,7 @@ def get_product(
         id=sku.id,
         name=sku.name,
         sku=sku.sku,
+        client_id=sku.client_id,
         client_name=sku.client_name,
         category=sku.category,
         warehouse=sku.warehouse,
@@ -160,6 +171,7 @@ def get_product(
 
 @router.post("/products", response_model=SKUResponse)
 def create_product(
+    request: Request,
     payload: SKUCreate,
     session: Annotated[Session, Depends(get_db)],
     current_user: Annotated[UserInDB, Depends(get_current_user)],
@@ -172,6 +184,7 @@ def create_product(
     sku = SKU(
         name=payload.name,
         sku=payload.sku,
+        client_id=payload.client_id,
         client_name=payload.client_name,
         category=payload.category,
         warehouse=payload.warehouse,
@@ -179,6 +192,36 @@ def create_product(
     session.add(sku)
     session.commit()
     session.refresh(sku)
+
+    if sku.client_id is None:
+        logger.warning("Telemetry skipped for inventory product creation")
+    else:
+        try:
+            warehouse = canonical_telemetry_warehouse(sku.warehouse)
+            if warehouse is None:
+                logger.warning("Telemetry skipped for inventory product creation")
+            else:
+                event = TelemetryEvent(
+                    eventId=uuid4(),
+                    timestamp=datetime.now(timezone.utc).isoformat().replace(
+                        "+00:00", "Z"
+                    ),
+                    sessionId=None,
+                    userId=current_user.id,
+                    event_type="inventory_product_created",
+                    schemaVersion="1.0",
+                    requestId=getattr(request.state, "request_id", None),
+                    properties={
+                        "warehouse": warehouse,
+                        "client_id": sku.client_id,
+                        "product_id": str(sku.id),
+                        "product_category": sku.category,
+                    },
+                )
+                capture_telemetry_events([event])
+        except Exception:
+            logger.warning("Telemetry capture failed for inventory product creation")
+
     invalidate_products_cache(session)
 
     # New SKUs have zero stock — no movements recorded yet.
@@ -186,6 +229,7 @@ def create_product(
         id=sku.id,
         name=sku.name,
         sku=sku.sku,
+        client_id=sku.client_id,
         client_name=sku.client_name,
         category=sku.category,
         warehouse=sku.warehouse,
@@ -198,6 +242,7 @@ def create_product(
 
 @router.post("/orders/inbound", response_model=MovementCreatedResponse, status_code=status.HTTP_201_CREATED)
 def create_inbound_order(
+    request: Request,
     payload: StockEntryCreate,
     session: Annotated[Session, Depends(get_db)],
     current_user: Annotated[UserInDB, Depends(get_current_user)],
@@ -215,6 +260,7 @@ def create_inbound_order(
         session=session,
         data=payload,
         user_uuid=current_user.id,
+        request_id=getattr(request.state, "request_id", None),
     )
     return MovementCreatedResponse(id=entry.id)
 
@@ -224,6 +270,7 @@ def create_inbound_order(
 
 @router.post("/orders/outbound", response_model=MovementCreatedResponse, status_code=status.HTTP_201_CREATED)
 def create_outbound_order(
+    request: Request,
     payload: StockExitCreate,
     session: Annotated[Session, Depends(get_db)],
     current_user: Annotated[UserInDB, Depends(get_current_user)],
@@ -241,6 +288,7 @@ def create_outbound_order(
         session=session,
         data=payload,
         user_uuid=current_user.id,
+        request_id=getattr(request.state, "request_id", None),
     )
     return MovementCreatedResponse(id=exit_record.id)
 

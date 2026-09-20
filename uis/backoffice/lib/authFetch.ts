@@ -18,6 +18,54 @@
  */
 
 import { getToken, removeToken } from "@/lib/auth";
+import { telemetryService } from "@/lib/telemetry";
+
+export interface AuthFetchTelemetryMetadata {
+  pathTemplate: string;
+}
+
+function createRequestId(): string | null {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    try {
+      return globalThis.crypto.randomUUID();
+    } catch {
+      // Fall through to the cryptographic getRandomValues fallback.
+    }
+  }
+
+  try {
+    if (typeof globalThis.crypto?.getRandomValues !== "function") {
+      return null;
+    }
+
+    const bytes = new Uint8Array(16);
+    globalThis.crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+    const hexadecimal = Array.from(bytes, (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+
+    return `${hexadecimal.slice(0, 8)}-${hexadecimal.slice(
+      8,
+      12,
+    )}-${hexadecimal.slice(12, 16)}-${hexadecimal.slice(
+      16,
+      20,
+    )}-${hexadecimal.slice(20)}`;
+  } catch {
+    return null;
+  }
+}
+
+function getNowMs(): number {
+  if (typeof performance !== "undefined") {
+    return performance.now();
+  }
+
+  return Date.now();
+}
 
 /**
  * Extended ``fetch`` that injects the current JWT as a ``Bearer`` token.
@@ -42,21 +90,33 @@ import { getToken, removeToken } from "@/lib/auth";
 export async function authFetch(
   url: string,
   init?: RequestInit,
+  telemetryMetadata?: AuthFetchTelemetryMetadata,
 ): Promise<Response> {
   const token = getToken();
+  const requestId = createRequestId();
+  const method = (init?.method ?? "GET").toUpperCase();
 
   // ── Build headers — preserve caller headers, then add Bearer token ──
   const headers = new Headers(init?.headers);
+  headers.delete("X-Request-ID");
 
   if (token) {
     headers.set("Authorization", `Bearer ${token}`);
   }
+
+  if (requestId !== null) {
+    headers.set("X-Request-ID", requestId);
+  }
+
+  const startedAtMs = getNowMs();
 
   // ── Perform the request ───────────────────────────────────────────
   const response = await fetch(url, {
     ...init,
     headers,
   });
+
+  const durationMs = Math.max(0, getNowMs() - startedAtMs);
 
   // ── Handle 401 — remove stale token, redirect to login ──────────
   if (response.status === 401) {
@@ -65,6 +125,23 @@ export async function authFetch(
     if (typeof window !== "undefined") {
       window.location.replace("/login");
     }
+  }
+
+  if (
+    telemetryMetadata !== undefined &&
+    response.status >= 500 &&
+    response.status <= 599
+  ) {
+    const responseRequestId = response.headers.get("X-Request-ID");
+
+    telemetryService.withRequestId(responseRequestId, () => {
+      telemetryService.track("api_request_failed", {
+        method,
+        path_template: telemetryMetadata.pathTemplate,
+        status_code: response.status,
+        duration_ms: durationMs,
+      });
+    });
   }
 
   return response;

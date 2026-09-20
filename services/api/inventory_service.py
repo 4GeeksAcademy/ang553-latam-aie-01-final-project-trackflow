@@ -14,10 +14,19 @@ Movement operations enforce:
 
 from __future__ import annotations
 
+import logging
+from datetime import datetime, timezone
+from uuid import uuid4
+
 from fastapi import HTTPException
 from sqlmodel import Session, func, select
 
 from services.api.inventory_schemas import StockEntryCreate, StockExitCreate
+from services.api.telemetry_capture import capture_telemetry_events
+from services.api.telemetry_schemas import TelemetryEvent
+from services.api.telemetry_utils import canonical_telemetry_warehouse
+
+logger = logging.getLogger(__name__)
 
 
 class InventoryDataIntegrityError(RuntimeError):
@@ -172,6 +181,7 @@ def create_stock_entry(
     session: Session,
     data: StockEntryCreate,
     user_uuid: str,
+    request_id: str | None = None,
 ):
     """Register an inbound stock movement (StockEntry).
 
@@ -202,7 +212,11 @@ def create_stock_entry(
     # 1. Check SKU exists
     sku = get_sku_or_none(session, data.sku_id)
     if sku is None:
-        raise HTTPException(status_code=404, detail="SKU not found.")
+        raise HTTPException(
+            status_code=404,
+            detail="SKU not found.",
+            headers={"X-TrackFlow-Error-Code": "unknown_product"},
+        )
 
     # 2. Check warehouse matches SKU
     movement_warehouse = data.warehouse.value
@@ -214,6 +228,7 @@ def create_stock_entry(
                 f"SKU warehouse: {sku.warehouse}, "
                 f"movement warehouse: {movement_warehouse}."
             ),
+            headers={"X-TrackFlow-Error-Code": "warehouse_mismatch"},
         )
 
     # 3. Build and persist
@@ -227,6 +242,37 @@ def create_stock_entry(
     session.add(entry)
     session.commit()
     session.refresh(entry)
+
+    if sku.client_id is None:
+        logger.warning("Telemetry skipped for inbound stock creation")
+    else:
+        try:
+            warehouse = canonical_telemetry_warehouse(entry.warehouse)
+            if warehouse is None:
+                logger.warning("Telemetry skipped for inbound stock creation")
+            else:
+                event = TelemetryEvent(
+                    eventId=uuid4(),
+                    timestamp=datetime.now(timezone.utc).isoformat().replace(
+                        "+00:00", "Z"
+                    ),
+                    sessionId=None,
+                    userId=user_uuid,
+                    event_type="inbound_order_created",
+                    schemaVersion="1.0",
+                    requestId=request_id,
+                    properties={
+                        "warehouse": warehouse,
+                        "client_id": sku.client_id,
+                        "product_id": str(sku.id),
+                        "product_category": sku.category,
+                        "quantity": entry.quantity,
+                        "movement_id": str(entry.id),
+                    },
+                )
+                capture_telemetry_events([event])
+        except Exception:
+            logger.warning("Telemetry capture failed for inbound stock creation")
 
     from services.api.cache import invalidate_inventory_cache
 
@@ -244,6 +290,7 @@ def create_stock_exit(
     session: Session,
     data: StockExitCreate,
     user_uuid: str,
+    request_id: str | None = None,
 ):
     """Register an outbound stock movement (StockExit).
 
@@ -278,7 +325,11 @@ def create_stock_exit(
     # 1. Check SKU exists
     sku = get_sku_or_none(session, data.sku_id)
     if sku is None:
-        raise HTTPException(status_code=404, detail="SKU not found.")
+        raise HTTPException(
+            status_code=404,
+            detail="SKU not found.",
+            headers={"X-TrackFlow-Error-Code": "unknown_product"},
+        )
 
     # 2. Check warehouse matches SKU
     movement_warehouse = data.warehouse.value
@@ -290,17 +341,50 @@ def create_stock_exit(
                 f"SKU warehouse: {sku.warehouse}, "
                 f"movement warehouse: {movement_warehouse}."
             ),
+            headers={"X-TrackFlow-Error-Code": "warehouse_mismatch"},
         )
 
     # 3. Calculate available stock and validate sufficiency
     available = get_current_stock(session, sku_id=sku.id, warehouse=movement_warehouse)
     if data.quantity > available:
+        if sku.client_id is None:
+            logger.warning("Telemetry skipped for insufficient stock")
+        else:
+            try:
+                warehouse = canonical_telemetry_warehouse(movement_warehouse)
+                if warehouse is None:
+                    logger.warning("Telemetry skipped for insufficient stock")
+                else:
+                    event = TelemetryEvent(
+                        eventId=uuid4(),
+                        timestamp=datetime.now(timezone.utc).isoformat().replace(
+                            "+00:00", "Z"
+                        ),
+                        sessionId=None,
+                        userId=user_uuid,
+                        event_type="inventory_stock_insufficient",
+                        schemaVersion="1.0",
+                        requestId=request_id,
+                        properties={
+                            "warehouse": warehouse,
+                            "client_id": sku.client_id,
+                            "product_id": str(sku.id),
+                            "product_category": sku.category,
+                            "requested_quantity": data.quantity,
+                            "available_quantity": available,
+                        },
+                    )
+                    capture_telemetry_events([event])
+            except Exception:
+                logger.warning("Telemetry capture failed for insufficient stock")
+
         raise HTTPException(
             status_code=400,
             detail=(
                 f"Insufficient stock for SKU '{sku.sku}'. "
                 f"Available: {available}, requested: {data.quantity}."
             ),
+            headers={"X-TrackFlow-Error-Code": "insufficient_stock"},
         )
 
     # 4. Build and persist

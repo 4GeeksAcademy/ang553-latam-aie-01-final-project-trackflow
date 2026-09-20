@@ -10,11 +10,22 @@
 "use client";
 
 import { AuthProvider } from "@/lib/AuthContext";
+import { BackofficeSectionTracker } from "@/components/telemetry/BackofficeSectionTracker";
+import { InventoryWorkflowLifecycleProvider } from "@/components/telemetry/InventoryWorkflowLifecycle";
+import { InventoryWorkflowTracker } from "@/components/telemetry/InventoryWorkflowTracker";
 
 export function Providers({
   children,
 }: {
   children: React.ReactNode;
 }): React.ReactElement {
-  return <AuthProvider>{children}</AuthProvider>;
+  return (
+    <AuthProvider>
+      <InventoryWorkflowLifecycleProvider>
+        <BackofficeSectionTracker />
+        <InventoryWorkflowTracker />
+        {children}
+      </InventoryWorkflowLifecycleProvider>
+    </AuthProvider>
+  );
 }

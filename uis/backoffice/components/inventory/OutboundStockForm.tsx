@@ -27,6 +27,7 @@
 import { useState, useCallback, useRef } from "react";
 import { ApiError, createStockExit, getInventoryProduct } from "@/lib/inventoryApi";
 import type { SKUResponse, ExitType, StockExitCreate } from "@/types/inventory";
+import { useInventoryWorkflowLifecycle } from "@/components/telemetry/InventoryWorkflowLifecycle";
 
 /* ── Stock classification (same thresholds as ProductList) ─────────── */
 
@@ -158,6 +159,12 @@ export function OutboundStockForm({
   errorMessage,
   initialSkuId,
 }: OutboundStockFormProps) {
+  const {
+    markValidationError,
+    markCreateAttempt,
+    markCompletedSuccessfully,
+  } = useInventoryWorkflowLifecycle();
+
   /* User-interaction state */
   const [manualSkuId, setManualSkuId] = useState<number | null>(null);
   const [userInteracted, setUserInteracted] = useState(false);
@@ -229,11 +236,15 @@ export function OutboundStockForm({
     clearFeedback();
     const validationErrors = runValidation();
     setErrors(validationErrors);
-    if (Object.keys(validationErrors).length > 0) return;
+    if (Object.keys(validationErrors).length > 0) {
+      markValidationError();
+      return;
+    }
 
     const stockWarning = getStockWarning(quantity, currentStock);
     if (stockWarning) {
       setErrors((prev) => ({ ...prev, quantity: stockWarning }));
+      markValidationError();
       return;
     }
 
@@ -254,7 +265,9 @@ export function OutboundStockForm({
     submitInFlightRef.current = true;
 
     try {
+      markCreateAttempt();
       await createStockExit(payload);
+      markCompletedSuccessfully();
 
       setSubmitSuccess(
         `Outbound ${payload.exit_type} recorded: ${payload.quantity} units of ${selectedProduct.name} from ${payload.warehouse}.`,

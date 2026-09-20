@@ -13,6 +13,7 @@
  */
 
 import { authFetch } from "@/lib/authFetch";
+import { telemetryService } from "@/lib/telemetry";
 import type {
   SKUResponse,
   StockEntryCreate,
@@ -22,6 +23,16 @@ import type {
 } from "@/types/inventory";
 
 const BASE_URL: string = process.env.NEXT_PUBLIC_INVENTORY_API_URL ?? "";
+
+type InventoryValidationOperation = "inbound" | "outbound" | "product_create";
+type InventoryValidationFailureReason =
+  | "unknown_product"
+  | "warehouse_mismatch"
+  | "invalid_payload";
+
+interface InventoryRequestMetadata {
+  operation?: InventoryValidationOperation;
+}
 
 /**
  * Error thrown by inventory API functions.
@@ -90,7 +101,12 @@ async function getErrorMessage(response: Response): Promise<string> {
  * - Serialises ``body`` when present.
  * - Parses the response and throws a readable ``ApiError`` on failure.
  */
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+async function requestJson<T>(
+  path: string,
+  pathTemplate: string,
+  init?: RequestInit,
+  metadata?: InventoryRequestMetadata,
+): Promise<T> {
   let response: Response;
 
   try {
@@ -100,7 +116,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
         "Content-Type": "application/json",
         ...(init?.headers ?? {}),
       },
-    });
+    }, { pathTemplate });
   } catch {
     throw new ApiError(
       "Could not reach the inventory API. Make sure the backend is running.",
@@ -108,6 +124,18 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!response.ok) {
+    const failureReason = getInventoryValidationFailureReason(response, metadata?.operation);
+    if (failureReason !== null && metadata?.operation !== undefined) {
+      const requestId = response.headers.get("X-Request-ID");
+      telemetryService.withRequestId(requestId, () => {
+        telemetryService.track("inventory_validation_failed", {
+          operation: metadata.operation,
+          failure_reason: failureReason,
+          status_code: response.status,
+        });
+      });
+    }
+
     const message = await getErrorMessage(response);
     throw new ApiError(message, response.status);
   }
@@ -122,6 +150,28 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   }
 }
 
+function getInventoryValidationFailureReason(
+  response: Response,
+  operation: InventoryValidationOperation | undefined,
+): InventoryValidationFailureReason | null {
+  if (operation === undefined) return null;
+
+  const errorCode = response.headers.get("X-TrackFlow-Error-Code");
+  if (response.status === 422 && errorCode === null) {
+    return "invalid_payload";
+  }
+
+  if (errorCode === "unknown_product" && response.status === 404) {
+    return "unknown_product";
+  }
+
+  if (errorCode === "warehouse_mismatch" && response.status === 400) {
+    return "warehouse_mismatch";
+  }
+
+  return null;
+}
+
 /* ── Products ────────────────────────────────────────────────────────────── */
 
 /**
@@ -133,7 +183,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
  * @throws {@link ApiError} on failure.
  */
 export async function getInventoryProducts(): Promise<SKUResponse[]> {
-  return requestJson<SKUResponse[]>("/inventory/products", {
+  return requestJson<SKUResponse[]>("/inventory/products", "/inventory/products", {
     method: "GET",
     cache: "no-store",
   });
@@ -150,7 +200,7 @@ export async function getInventoryProducts(): Promise<SKUResponse[]> {
  *         is not found.
  */
 export async function getInventoryProduct(id: number): Promise<SKUResponse> {
-  return requestJson<SKUResponse>(`/inventory/products/${id}`, {
+  return requestJson<SKUResponse>(`/inventory/products/${id}`, "/inventory/products/{id}", {
     method: "GET",
   });
 }
@@ -170,10 +220,10 @@ export async function getInventoryProduct(id: number): Promise<SKUResponse> {
 export async function createStockEntry(
   data: StockEntryCreate,
 ): Promise<MovementCreatedResponse> {
-  return requestJson<MovementCreatedResponse>("/inventory/orders/inbound", {
+  return requestJson<MovementCreatedResponse>("/inventory/orders/inbound", "/inventory/orders/inbound", {
     method: "POST",
     body: JSON.stringify(data),
-  });
+  }, { operation: "inbound" });
 }
 
 /* ── Stock exits (outbound) ──────────────────────────────────────────────── */
@@ -192,10 +242,10 @@ export async function createStockEntry(
 export async function createStockExit(
   data: StockExitCreate,
 ): Promise<MovementCreatedResponse> {
-  return requestJson<MovementCreatedResponse>("/inventory/orders/outbound", {
+  return requestJson<MovementCreatedResponse>("/inventory/orders/outbound", "/inventory/orders/outbound", {
     method: "POST",
     body: JSON.stringify(data),
-  });
+  }, { operation: "outbound" });
 }
 
 /* ── Orders (history) ───────────────────────────────────────────────────── */
@@ -212,7 +262,7 @@ export async function createStockExit(
  * @throws {@link ApiError} on failure.
  */
 export async function getInventoryOrders(): Promise<InventoryOrderListItem[]> {
-  return requestJson<InventoryOrderListItem[]>("/inventory/orders", {
+  return requestJson<InventoryOrderListItem[]>("/inventory/orders", "/inventory/orders", {
     method: "GET",
     cache: "no-store",
   });

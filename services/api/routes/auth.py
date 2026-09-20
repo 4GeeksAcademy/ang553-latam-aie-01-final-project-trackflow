@@ -6,9 +6,12 @@ All routes live under ``/auth``.
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated
+from datetime import datetime, timezone
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 
 from services.api.auth_models import (
@@ -33,12 +36,65 @@ from services.api.auth_services import (
     reset_password,
 )
 from services.api.email_service import send_password_reset_email
+from services.api.telemetry_capture import capture_telemetry_events
+from services.api.telemetry_schemas import TelemetryEvent
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
 
+def _capture_login_failed(
+    request: Request,
+    failure_reason: str,
+    user: UserInDB | None = None,
+) -> None:
+    """Capture a failed login without affecting the authentication response."""
+    try:
+        properties = {"failure_reason": failure_reason}
+        if failure_reason == "inactive_account" and user is not None:
+            properties["role_if_known"] = user.role.value
+
+        login_event = TelemetryEvent(
+            eventId=uuid4(),
+            timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            sessionId=None,
+            userId=user.id if user is not None else None,
+            event_type="auth_login_failed",
+            schemaVersion="1.0",
+            requestId=getattr(request.state, "request_id", None),
+            properties=properties,
+        )
+        capture_telemetry_events([login_event])
+    except Exception:
+        logger.warning("Telemetry capture failed for failed login")
+
+
+def _capture_password_reset_requested(
+    request: Request,
+    outcome_class: str,
+    user: UserInDB | None = None,
+) -> None:
+    """Capture a password-reset request without affecting its response."""
+    try:
+        reset_event = TelemetryEvent(
+            eventId=uuid4(),
+            timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            sessionId=None,
+            userId=user.id if user is not None else None,
+            event_type="auth_password_reset_requested",
+            schemaVersion="1.0",
+            requestId=getattr(request.state, "request_id", None),
+            properties={"request_outcome_class": outcome_class},
+        )
+        capture_telemetry_events([reset_event])
+    except Exception:
+        logger.warning("Telemetry capture failed for password reset request")
+
+
 @router.post("/login", response_model=TokenResponse)
 async def login(
+    request: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
 ) -> TokenResponse:
     """OAuth2-compatible login.
@@ -50,6 +106,10 @@ async def login(
     # 1. Look up user by email
     user = get_user_in_db_by_email(form_data.username)
     if user is None:
+        _capture_login_failed(
+            request,
+            failure_reason="account_not_found",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -58,6 +118,11 @@ async def login(
 
     # 2. Verify password
     if not verify_password(form_data.password, user.hashed_password):
+        _capture_login_failed(
+            request,
+            failure_reason="invalid_password",
+            user=user,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -66,6 +131,11 @@ async def login(
 
     # 3. Reject inactive users
     if not user.is_active:
+        _capture_login_failed(
+            request,
+            failure_reason="inactive_account",
+            user=user,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Account is inactive",
@@ -74,6 +144,21 @@ async def login(
 
     # 4. Generate JWT
     access_token = create_access_token(sub=user.id)
+
+    try:
+        login_event = TelemetryEvent(
+            eventId=uuid4(),
+            timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            sessionId=None,
+            userId=user.id,
+            event_type="auth_login_succeeded",
+            schemaVersion="1.0",
+            requestId=getattr(request.state, "request_id", None),
+            properties={"role": user.role.value},
+        )
+        capture_telemetry_events([login_event])
+    except Exception:
+        logger.warning("Telemetry capture failed for successful login")
 
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -96,6 +181,7 @@ async def read_users_me(
 
 @router.post("/forgot-password", response_model=MessageResponse)
 async def forgot_password(
+    request: Request,
     payload: ForgotPasswordRequest,
 ) -> MessageResponse:
     """Request a password-reset email.
@@ -123,6 +209,10 @@ async def forgot_password(
     user = get_user_in_db_by_email(payload.email)
 
     if user is None:
+        _capture_password_reset_requested(
+            request,
+            outcome_class="account_not_found",
+        )
         return MessageResponse(message=generic_message)
 
     # User exists — generate token, persist, and send email.
@@ -143,10 +233,20 @@ async def forgot_password(
         try:
             invalidate_password_reset_token(token)
         except Exception as inv_exc:
+            _capture_password_reset_requested(
+                request,
+                outcome_class="delivery_failed",
+                user=user,
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Could not send password reset email. Please try again later.",
             ) from inv_exc
+        _capture_password_reset_requested(
+            request,
+            outcome_class="delivery_failed",
+            user=user,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not send password reset email. Please try again later.",
@@ -157,15 +257,30 @@ async def forgot_password(
         try:
             invalidate_password_reset_token(token)
         except Exception as inv_exc:
+            _capture_password_reset_requested(
+                request,
+                outcome_class="delivery_failed",
+                user=user,
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Could not send password reset email. Please try again later.",
             ) from inv_exc
+        _capture_password_reset_requested(
+            request,
+            outcome_class="delivery_failed",
+            user=user,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not send password reset email. Please try again later.",
         )
 
+    _capture_password_reset_requested(
+        request,
+        outcome_class="reset_email_sent",
+        user=user,
+    )
     return MessageResponse(message=generic_message)
 
 

@@ -28,6 +28,106 @@ import {
 import { getToken, removeToken, setToken } from "@/lib/auth";
 import { getCurrentUser } from "@/lib/authApi";
 import type { AuthUser } from "@/types/auth";
+import { telemetryService } from "@/lib/telemetry";
+
+const TELEMETRY_SESSION_STORAGE_KEY = "trackflow_telemetry_session_id";
+
+function createTelemetrySessionId(): string | null {
+  try {
+    if (typeof globalThis.crypto?.randomUUID === "function") {
+      return globalThis.crypto.randomUUID();
+    }
+
+    if (typeof globalThis.crypto?.getRandomValues !== "function") {
+      return null;
+    }
+
+    const bytes = new Uint8Array(16);
+    globalThis.crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+    const hexadecimal = Array.from(bytes, (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+
+    return `${hexadecimal.slice(0, 8)}-${hexadecimal.slice(
+      8,
+      12,
+    )}-${hexadecimal.slice(12, 16)}-${hexadecimal.slice(
+      16,
+      20,
+    )}-${hexadecimal.slice(20)}`;
+  } catch {
+    return null;
+  }
+}
+
+function readTelemetrySessionId(): string | null {
+  try {
+    if (typeof window === "undefined") {
+      return null;
+    }
+
+    const sessionId = window.sessionStorage.getItem(
+      TELEMETRY_SESSION_STORAGE_KEY,
+    );
+    return sessionId && sessionId.trim() !== "" ? sessionId : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeTelemetrySessionId(sessionId: string): void {
+  try {
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem(
+        TELEMETRY_SESSION_STORAGE_KEY,
+        sessionId,
+      );
+    }
+  } catch {
+    // Telemetry session persistence is best-effort.
+  }
+}
+
+function removeTelemetrySessionId(): void {
+  try {
+    if (typeof window !== "undefined") {
+      window.sessionStorage.removeItem(TELEMETRY_SESSION_STORAGE_KEY);
+    }
+  } catch {
+    // Telemetry session cleanup is best-effort.
+  }
+}
+
+function syncTelemetryIdentity(userId: string, sessionId: string | null): void {
+  try {
+    telemetryService.setIdentity(userId, sessionId);
+  } catch {
+    // Telemetry must never affect authentication.
+  }
+}
+
+function clearTelemetryIdentity(): void {
+  try {
+    telemetryService.setIdentity(null, null);
+  } catch {
+    // Telemetry must never affect authentication.
+  }
+  removeTelemetrySessionId();
+}
+
+function establishHydratedTelemetryIdentity(userId: string): void {
+  const existingSessionId = readTelemetrySessionId();
+  const sessionId = existingSessionId ?? createTelemetrySessionId();
+
+  if (sessionId !== null && existingSessionId === null) {
+    writeTelemetrySessionId(sessionId);
+  }
+
+  syncTelemetryIdentity(userId, sessionId);
+}
 
 // ── Context value shape ───────────────────────────────────────────────
 
@@ -100,6 +200,7 @@ export function AuthProvider({
     const token = getToken();
 
     if (!token) {
+      clearTelemetryIdentity();
       setIsLoading(false);
       return;
     }
@@ -107,10 +208,12 @@ export function AuthProvider({
     getCurrentUser()
       .then((fetchedUser) => {
         setUser(fetchedUser);
+        establishHydratedTelemetryIdentity(fetchedUser.id);
       })
       .catch(() => {
         // `authFetch` already removed the token on 401; just clear state.
         setUser(null);
+        clearTelemetryIdentity();
       })
       .finally(() => {
         setIsLoading(false);
@@ -126,10 +229,18 @@ export function AuthProvider({
       try {
         const fetchedUser = await getCurrentUser();
         setUser(fetchedUser);
+        const sessionId = createTelemetrySessionId();
+        if (sessionId !== null) {
+          writeTelemetrySessionId(sessionId);
+        } else {
+          removeTelemetrySessionId();
+        }
+        syncTelemetryIdentity(fetchedUser.id, sessionId);
         return fetchedUser;
       } catch (error) {
         removeToken();
         setUser(null);
+        clearTelemetryIdentity();
         throw error;
       } finally {
         setIsLoading(false);
@@ -143,6 +254,7 @@ export function AuthProvider({
     try {
       const fetchedUser = await getCurrentUser();
       setUser(fetchedUser);
+      establishHydratedTelemetryIdentity(fetchedUser.id);
     } catch {
       // Only clear the user if the token was actually removed (401).
       // On transient errors (network, 5xx) the JWT may still be valid,
@@ -150,12 +262,14 @@ export function AuthProvider({
       // user because of a temporary server issue.
       if (!getToken()) {
         setUser(null);
+        clearTelemetryIdentity();
       }
     }
   }, []);
 
   // ── logout ────────────────────────────────────────────────────────
   const logout = useCallback((): void => {
+    clearTelemetryIdentity();
     removeToken();
     setUser(null);
   }, []);

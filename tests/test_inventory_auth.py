@@ -10,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 from services.api.main import app
+from services.api.inventory_clients import CLIENT_IDS_BY_NAME
 
 
 def _request(method: str, path: str, **kwargs: Any) -> httpx.Response:
@@ -25,6 +26,23 @@ def test_inventory_gets_require_authentication() -> None:
     for path in ("/inventory/products", "/inventory/products/999999", "/inventory/orders"):
         response = _request("GET", path)
         assert response.status_code == 401, (path, response.text)
+
+
+def test_cors_exposes_inventory_error_code_header() -> None:
+    response = _request(
+        "OPTIONS",
+        "/inventory/orders/inbound",
+        headers={
+            "Origin": "http://localhost:3001",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        },
+    )
+
+    assert response.status_code == 200
+    exposed_headers = response.headers["Access-Control-Expose-Headers"]
+    assert "X-Request-ID" in exposed_headers
+    assert "X-TrackFlow-Error-Code" in exposed_headers
 
 
 def test_authenticated_inventory_gets_preserve_contract(isolated_auth_db) -> None:
@@ -60,13 +78,14 @@ def test_authenticated_inventory_gets_preserve_contract(isolated_auth_db) -> Non
             "POST",
             "/inventory/products",
             headers=headers,
-            json={
-                "name": "Auth SKU",
-                "sku": "AUTH-001",
-                "client_name": "Auth Client",
-                "category": "electronics",
-                "warehouse": "LA",
-            },
+                json={
+                    "name": "Auth SKU",
+                    "sku": "AUTH-001",
+                    "client_id": CLIENT_IDS_BY_NAME["UrbanThread"],
+                    "client_name": "UrbanThread",
+                    "category": "electronics",
+                    "warehouse": "LA",
+                },
         )
         assert product.status_code == 200
         product_id = product.json()["id"]

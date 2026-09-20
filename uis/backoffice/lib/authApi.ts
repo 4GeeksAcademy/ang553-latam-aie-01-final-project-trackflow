@@ -13,6 +13,7 @@
  */
 
 import { authFetch } from "@/lib/authFetch";
+import { telemetryService } from "@/lib/telemetry";
 import type {
   AuthUser,
   LoginCredentials,
@@ -59,7 +60,7 @@ export async function getCurrentUser(): Promise<AuthUser> {
   try {
     response = await authFetch(`${BASE_URL}/auth/me`, {
       method: "GET",
-    });
+    }, { pathTemplate: "/auth/me" });
   } catch {
     throw new ApiError("Could not reach the authentication server. Make sure the backend is running.");
   }
@@ -181,7 +182,7 @@ export async function getMyProfile(): Promise<UserProfile> {
   try {
     response = await authFetch(`${BASE_URL}/profiles/me`, {
       method: "GET",
-    });
+    }, { pathTemplate: "/profiles/me" });
   } catch {
     throw new ApiError(
       "Could not reach the authentication server. Make sure the backend is running.",
@@ -228,7 +229,7 @@ export async function updateMyProfile(
         "Content-Type": "application/json",
       },
       body: JSON.stringify(payload),
-    });
+    }, { pathTemplate: "/profiles/me" });
   } catch {
     throw new ApiError(
       "Could not reach the authentication server. Make sure the backend is running.",
@@ -277,7 +278,7 @@ export async function changePassword(
         "Content-Type": "application/json",
       },
       body: JSON.stringify(payload),
-    });
+    }, { pathTemplate: "/auth/change-password" });
   } catch {
     throw new ApiError("Could not reach the authentication server. Make sure the backend is running.");
   }
@@ -380,6 +381,15 @@ export async function resetPassword(
     const message = await extractErrorMessage(response);
     throw new ApiError(message, response.status);
   }
+
+  const requestId = response.headers.get("X-Request-ID");
+
+  telemetryService.withRequestId(requestId, () => {
+    telemetryService.track(
+      "auth_password_reset_completed",
+      {},
+    );
+  });
 
   try {
     return (await response.json()) as ResetPasswordResponse;
