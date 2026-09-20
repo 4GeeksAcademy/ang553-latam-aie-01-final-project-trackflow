@@ -71,6 +71,7 @@ def test_http_login_captures_one_success_event_with_contract_fields(monkeypatch)
     assert event.requestId == request_id
     assert event.schemaVersion == "1.0"
     assert event.properties == {"role": "user"}
+    assert all(item.event_type != "auth_login_failed" for item in captured)
 
 
 def test_login_succeeds_when_telemetry_capture_fails(monkeypatch) -> None:
@@ -146,7 +147,9 @@ def test_login_rejects_incorrect_password_with_generic_credentials_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """AUTH-LOGIN-FAIL-01: wrong password is rejected."""
-    create_user(UserCreate(email="wrong.password@example.com", password="StrongPass123"))
+    created = create_user(
+        UserCreate(email="wrong.password@example.com", password="StrongPass123")
+    )
     captured = []
     monkeypatch.setattr(
         auth_route,
@@ -164,7 +167,15 @@ def test_login_rejects_incorrect_password_with_generic_credentials_error(
 
     assert exc_info.value.status_code == 401
     assert exc_info.value.detail == "Incorrect email or password"
-    assert captured == []
+    assert len(captured) == 1
+    event = captured[0]
+    assert event.event_type == "auth_login_failed"
+    assert event.userId == created.id
+    assert event.requestId == "550e8400-e29b-41d4-a716-446655440002"
+    assert event.sessionId is None
+    assert event.schemaVersion == "1.0"
+    assert event.eventId.version == 4
+    assert event.properties == {"failure_reason": "invalid_password"}
 
 
 def test_login_rejects_non_existent_user_with_generic_credentials_error(
@@ -188,7 +199,15 @@ def test_login_rejects_non_existent_user_with_generic_credentials_error(
 
     assert exc_info.value.status_code == 401
     assert exc_info.value.detail == "Incorrect email or password"
-    assert captured == []
+    assert len(captured) == 1
+    event = captured[0]
+    assert event.event_type == "auth_login_failed"
+    assert event.userId is None
+    assert event.requestId == "550e8400-e29b-41d4-a716-446655440003"
+    assert event.sessionId is None
+    assert event.schemaVersion == "1.0"
+    assert event.eventId.version == 4
+    assert event.properties == {"failure_reason": "account_not_found"}
 
 
 def test_login_rejects_inactive_user_even_with_correct_password(
@@ -214,4 +233,38 @@ def test_login_rejects_inactive_user_even_with_correct_password(
 
     assert exc_info.value.status_code == 401
     assert exc_info.value.detail == "Account is inactive"
-    assert captured == []
+    assert len(captured) == 1
+    event = captured[0]
+    assert event.event_type == "auth_login_failed"
+    assert event.userId == created.id
+    assert event.requestId == "550e8400-e29b-41d4-a716-446655440004"
+    assert event.sessionId is None
+    assert event.schemaVersion == "1.0"
+    assert event.eventId.version == 4
+    assert event.properties == {
+        "failure_reason": "inactive_account",
+        "role_if_known": "user",
+    }
+
+
+def test_failed_login_preserves_401_when_telemetry_capture_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    create_user(UserCreate(email="telemetry.failed.login@example.com", password="StrongPass123"))
+    monkeypatch.setattr(
+        auth_route,
+        "capture_telemetry_events",
+        lambda events: (_ for _ in ()).throw(RuntimeError("capture failed")),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        _run(
+            auth_route.login(
+                _request("550e8400-e29b-41d4-a716-446655440005"),
+                _form("telemetry.failed.login@example.com", "BadPass999"),
+            )
+        )
+
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "Incorrect email or password"
+    assert exc_info.value.headers == {"WWW-Authenticate": "Bearer"}

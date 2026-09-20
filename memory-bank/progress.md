@@ -10,10 +10,14 @@
 - Fase 2.3 completada.
 - Fase 2.4 completada.
 - Fase 2.5 completada.
-- Fase 3 completada.
-- Fase 3.1 completada.
-- Fase 3.2 completada.
-- Proyecto de diseño de telemetría TrackFlow en progreso; Fase 1 completada y validada.
+- Fase 3 implementada y auditada.
+- Eventos implementados: `backoffice_section_entered`,
+	`inventory_workflow_started`, `inventory_workflow_abandoned`,
+	`auth_login_succeeded`, `auth_login_failed`,
+	`auth_password_reset_requested`, `auth_password_reset_completed`,
+	`inventory_validation_failed` y `api_request_failed`.
+- QA de Fase 3: compileall PASS; pytest bloqueado por `tinydb` ausente;
+	runtime frontend no disponible; diagnósticos estáticos limpios.
 
 ## Completado relevante
 
@@ -111,23 +115,30 @@
 	rendimiento técnico y navegación/workflows.
 - QA pre-commit de Fase 1 completado.
 
-## Pendiente
+## Bloqueado
 
-- Decisión final sobre useMemo.
-- `CACHING_REPORT.md`.
-- Auditoría final del ticket.
-- PR.
-- Diseño completo del Event Envelope.
-- Definición de properties y taxonomías bounded.
-- Creación de `event-schemas.json`.
-- Estrategia stream vs batch.
-- Throttle/debounce donde corresponda.
-- Análisis de riesgos/exclusiones.
-- QA final contra criterios del proyecto.
-- Resolver `client_id` como identificador estable y validar la equivalencia
-	entre persistencia de `StockExit` y dispatch completado durante la
-	instrumentación.
+- `inbound_order_created`: falta de `client_id` estable.
+- Otros eventos obligatorios de inventory que requieren `client_id`.
+- Ambigüedad semántica de `outbound_order_created`.
+- Falta de policy/modelo para `stock_threshold_triggered`.
+- Flujo de edición directa de stock ausente.
+- Workflow de discrepancias ausente.
+- Falta de policy de threshold para `api_request_slow`.
+- Falta event type para errores uncaught del frontend.
+- Fallo de emisión del token de password reset sin `request_outcome_class`
+	válido.
+- Timeout por inactividad de `inventory_workflow_abandoned` sin resolver.
+
+## Estado de QA
+
+- `BACKEND_COMPILEALL = PASS`.
+- `BACKEND_TEST_EXECUTION = BLOCKED` por `ModuleNotFoundError: tinydb`.
+- `FRONTEND_RUNTIME_UNAVAILABLE`: `uis/backoffice/node_modules` ausente.
+- `FRONTEND_STATIC_DIAGNOSTICS = NO_ERRORS_REPORTED`.
 
 ## Siguiente paso
 
-- Fase 2: diseño del Event Envelope y contrato de eventos.
+- Realizar QA final del ticket completo contra README y criterios de entrega.
+- Documentar y elevar los blockers contractuales, de dominio y policy pendientes.
+- Preparar la entrega/PR cuando los blockers requeridos por evaluación estén
+	resueltos o formalmente aceptados.
