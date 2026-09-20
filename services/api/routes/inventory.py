@@ -50,6 +50,7 @@ from services.api.inventory_service import (
 )
 from services.api.telemetry_capture import capture_telemetry_events
 from services.api.telemetry_schemas import TelemetryEvent
+from services.api.telemetry_utils import canonical_telemetry_warehouse
 
 router = APIRouter(prefix="/inventory", tags=["Inventory"])
 logger = logging.getLogger(__name__)
@@ -92,14 +93,6 @@ def _order_items_to_response(raw: list[dict]) -> list[InventoryOrderListItem]:
     ]
 
 
-def _canonical_telemetry_warehouse(warehouse: str) -> str | None:
-    """Map domain warehouse values to the telemetry vocabulary."""
-    return {
-        "LA": "los_angeles",
-        "ZGZ": "zaragoza",
-        "Los Angeles": "los_angeles",
-        "Zaragoza": "zaragoza",
-    }.get(warehouse)
 
 
 # ── GET /inventory/products ─────────────────────────────────────────────────
@@ -204,7 +197,7 @@ def create_product(
         logger.warning("Telemetry skipped for inventory product creation")
     else:
         try:
-            warehouse = _canonical_telemetry_warehouse(sku.warehouse)
+            warehouse = canonical_telemetry_warehouse(sku.warehouse)
             if warehouse is None:
                 logger.warning("Telemetry skipped for inventory product creation")
             else:
@@ -249,6 +242,7 @@ def create_product(
 
 @router.post("/orders/inbound", response_model=MovementCreatedResponse, status_code=status.HTTP_201_CREATED)
 def create_inbound_order(
+    request: Request,
     payload: StockEntryCreate,
     session: Annotated[Session, Depends(get_db)],
     current_user: Annotated[UserInDB, Depends(get_current_user)],
@@ -266,6 +260,7 @@ def create_inbound_order(
         session=session,
         data=payload,
         user_uuid=current_user.id,
+        request_id=getattr(request.state, "request_id", None),
     )
     return MovementCreatedResponse(id=entry.id)
 

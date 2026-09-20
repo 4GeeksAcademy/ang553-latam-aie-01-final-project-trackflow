@@ -27,6 +27,7 @@ from services.api.inventory_service import (
 from services.api.cache import TTLCache, inventory_cache_key, orders_cache, products_cache
 from services.api.routes import inventory as inventory_routes
 from services.api.routes.inventory import create_product, get_product, list_products
+from services.api.telemetry_utils import canonical_telemetry_warehouse
 
 
 def _request(request_id: str = "550e8400-e29b-41d4-a716-446655440099"):
@@ -458,7 +459,7 @@ class TestCreateProduct:
         expected: str,
     ) -> None:
         """Domain warehouse values map to the canonical telemetry values."""
-        assert inventory_routes._canonical_telemetry_warehouse(warehouse) == expected
+        assert canonical_telemetry_warehouse(warehouse) == expected
 
     def test_sink_failure_does_not_break_creation(
         self,
