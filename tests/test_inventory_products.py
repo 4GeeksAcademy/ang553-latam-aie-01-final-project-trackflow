@@ -29,6 +29,13 @@ from services.api.routes import inventory as inventory_routes
 from services.api.routes.inventory import create_product, get_product, list_products
 
 
+def _request(request_id: str = "550e8400-e29b-41d4-a716-446655440099"):
+    """Minimal request context used by direct route-handler tests."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(state=SimpleNamespace(request_id=request_id))
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # Fixtures
 # ═════════════════════════════════════════════════════════════════════════════
@@ -268,6 +275,7 @@ class TestListProducts:
         assert products_cache.get(products_key) == products
 
         create_product(
+            request=_request(),
             payload=SKUCreate(
                 name="Created SKU",
                 sku="SKU-CREATE-CACHE",
@@ -391,6 +399,211 @@ class TestGetProduct:
 class TestCreateProduct:
     """Suite for ``create_product`` (POST /inventory/products)."""
 
+    def test_captures_exact_inventory_product_created_event(
+        self,
+        db_session: Session,
+        auth_user: UserInDB,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Successful creation emits one event with the exact contract fields."""
+        captured = []
+        request_id = "550e8400-e29b-41d4-a716-446655440099"
+        monkeypatch.setattr(
+            inventory_routes, "capture_telemetry_events", captured.extend
+        )
+        payload = SKUCreate(
+            name="Telemetry Product",
+            sku="SKU-TELEMETRY-001",
+            client_id=CLIENT_IDS_BY_NAME["PureStep Footwear"],
+            client_name="PureStep Footwear",
+            category="fashion",
+            warehouse="LA",
+        )
+
+        result = create_product(
+            request=_request(request_id),
+            payload=payload,
+            session=db_session,
+            current_user=auth_user,
+        )
+
+        assert len(captured) == 1
+        event = captured[0]
+        assert event.event_type == "inventory_product_created"
+        assert event.properties == {
+            "warehouse": "los_angeles",
+            "client_id": CLIENT_IDS_BY_NAME["PureStep Footwear"],
+            "product_id": str(result.id),
+            "product_category": "fashion",
+        }
+        assert event.eventId.version == 4
+        assert event.timestamp.endswith("Z")
+        assert event.schemaVersion == "1.0"
+        assert event.requestId == request_id
+        assert event.userId == auth_user.id
+        assert event.sessionId is None
+
+    @pytest.mark.parametrize(
+        ("warehouse", "expected"),
+        [
+            ("LA", "los_angeles"),
+            ("ZGZ", "zaragoza"),
+            ("Los Angeles", "los_angeles"),
+            ("Zaragoza", "zaragoza"),
+        ],
+    )
+    def test_canonicalizes_telemetry_warehouse(
+        self,
+        warehouse: str,
+        expected: str,
+    ) -> None:
+        """Domain warehouse values map to the canonical telemetry values."""
+        assert inventory_routes._canonical_telemetry_warehouse(warehouse) == expected
+
+    def test_sink_failure_does_not_break_creation(
+        self,
+        db_session: Session,
+        auth_user: UserInDB,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Telemetry failure preserves the functional product creation."""
+        def fail_capture(_events) -> None:
+            raise RuntimeError("sink failure")
+
+        monkeypatch.setattr(inventory_routes, "capture_telemetry_events", fail_capture)
+        payload = SKUCreate(
+            name="Sink Failure Product",
+            sku="SKU-SINK-FAIL",
+            client_id=CLIENT_IDS_BY_NAME["PureStep Footwear"],
+            client_name="PureStep Footwear",
+            category="electronics",
+            warehouse="ZGZ",
+        )
+
+        result = create_product(
+            request=_request(),
+            payload=payload,
+            session=db_session,
+            current_user=auth_user,
+        )
+
+        assert result.id is not None
+        assert db_session.get(SKU, result.id) is not None
+
+    def test_persisted_creation_event_survives_cache_invalidation_failure(
+        self,
+        db_session: Session,
+        auth_user: UserInDB,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The creation fact is captured before a later cache failure."""
+        captured = []
+        monkeypatch.setattr(
+            inventory_routes, "capture_telemetry_events", captured.extend
+        )
+        monkeypatch.setattr(
+            inventory_routes,
+            "invalidate_products_cache",
+            lambda _session: (_ for _ in ()).throw(
+                RuntimeError("cache invalidation failure")
+            ),
+        )
+        payload = SKUCreate(
+            name="Cache Failure Product",
+            sku="SKU-CACHE-FAIL",
+            client_id=CLIENT_IDS_BY_NAME["PureStep Footwear"],
+            client_name="PureStep Footwear",
+            category="fashion",
+            warehouse="LA",
+        )
+
+        with pytest.raises(RuntimeError, match="cache invalidation failure"):
+            create_product(
+                request=_request(),
+                payload=payload,
+                session=db_session,
+                current_user=auth_user,
+            )
+
+        persisted_sku = db_session.exec(
+            select(SKU).where(SKU.sku == "SKU-CACHE-FAIL")
+        ).one()
+        assert persisted_sku.id is not None
+        assert db_session.get(SKU, persisted_sku.id) is not None
+        assert len(captured) == 1
+        assert captured[0].event_type == "inventory_product_created"
+        assert captured[0].properties["product_id"] == str(persisted_sku.id)
+
+    def test_commit_failure_emits_no_event(
+        self,
+        db_session: Session,
+        auth_user: UserInDB,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A commit failure occurs before telemetry construction."""
+        captured = []
+        monkeypatch.setattr(
+            inventory_routes, "capture_telemetry_events", captured.extend
+        )
+        monkeypatch.setattr(
+            db_session,
+            "commit",
+            lambda: (_ for _ in ()).throw(RuntimeError("commit failure")),
+        )
+        payload = SKUCreate(
+            name="Commit Failure Product",
+            sku="SKU-COMMIT-FAIL",
+            client_id=CLIENT_IDS_BY_NAME["PureStep Footwear"],
+            client_name="PureStep Footwear",
+            category="cosmetics",
+            warehouse="LA",
+        )
+
+        with pytest.raises(RuntimeError, match="commit failure"):
+            create_product(
+                request=_request(),
+                payload=payload,
+                session=db_session,
+                current_user=auth_user,
+            )
+
+        assert captured == []
+
+    def test_refresh_failure_emits_no_event(
+        self,
+        db_session: Session,
+        auth_user: UserInDB,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A refresh failure occurs before telemetry construction."""
+        captured = []
+        monkeypatch.setattr(
+            inventory_routes, "capture_telemetry_events", captured.extend
+        )
+        monkeypatch.setattr(
+            db_session,
+            "refresh",
+            lambda _sku: (_ for _ in ()).throw(RuntimeError("refresh failure")),
+        )
+        payload = SKUCreate(
+            name="Refresh Failure Product",
+            sku="SKU-REFRESH-FAIL",
+            client_id=CLIENT_IDS_BY_NAME["PureStep Footwear"],
+            client_name="PureStep Footwear",
+            category="cosmetics",
+            warehouse="LA",
+        )
+
+        with pytest.raises(RuntimeError, match="refresh failure"):
+            create_product(
+                request=_request(),
+                payload=payload,
+                session=db_session,
+                current_user=auth_user,
+            )
+
+        assert captured == []
+
     # ── 1. Creates SKU correctly ────────────────────────────────────────
 
     def test_creates_sku(self, db_session: Session, auth_user: UserInDB) -> None:
@@ -405,6 +618,7 @@ class TestCreateProduct:
         )
 
         result = create_product(
+            request=_request(),
             payload=payload,
             session=db_session,
             current_user=auth_user,
@@ -440,6 +654,7 @@ class TestCreateProduct:
         )
 
         result = create_product(
+            request=_request(),
             payload=payload,
             session=db_session,
             current_user=auth_user,
@@ -466,6 +681,7 @@ class TestCreateProduct:
         )
 
         result = create_product(
+            request=_request(),
             payload=payload,
             session=db_session,
             current_user=auth_user,
@@ -501,6 +717,7 @@ class TestCreateProduct:
 
         with pytest.raises(TypeError):
             create_product(
+                request=_request(),
                 payload=payload,
                 session=db_session,
                 # no current_user provided

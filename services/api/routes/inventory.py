@@ -14,9 +14,12 @@ persisted as a column.
 
 from __future__ import annotations
 
+import logging
+from datetime import datetime, timezone
 from typing import Annotated
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import Session, select
 
 from services.api.auth_models import UserInDB
@@ -45,8 +48,11 @@ from services.api.inventory_service import (
     get_current_stocks,
     list_orders,
 )
+from services.api.telemetry_capture import capture_telemetry_events
+from services.api.telemetry_schemas import TelemetryEvent
 
 router = APIRouter(prefix="/inventory", tags=["Inventory"])
+logger = logging.getLogger(__name__)
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -84,6 +90,16 @@ def _order_items_to_response(raw: list[dict]) -> list[InventoryOrderListItem]:
         )
         for item in raw
     ]
+
+
+def _canonical_telemetry_warehouse(warehouse: str) -> str | None:
+    """Map domain warehouse values to the telemetry vocabulary."""
+    return {
+        "LA": "los_angeles",
+        "ZGZ": "zaragoza",
+        "Los Angeles": "los_angeles",
+        "Zaragoza": "zaragoza",
+    }.get(warehouse)
 
 
 # ── GET /inventory/products ─────────────────────────────────────────────────
@@ -162,6 +178,7 @@ def get_product(
 
 @router.post("/products", response_model=SKUResponse)
 def create_product(
+    request: Request,
     payload: SKUCreate,
     session: Annotated[Session, Depends(get_db)],
     current_user: Annotated[UserInDB, Depends(get_current_user)],
@@ -182,6 +199,36 @@ def create_product(
     session.add(sku)
     session.commit()
     session.refresh(sku)
+
+    if sku.client_id is None:
+        logger.warning("Telemetry skipped for inventory product creation")
+    else:
+        try:
+            warehouse = _canonical_telemetry_warehouse(sku.warehouse)
+            if warehouse is None:
+                logger.warning("Telemetry skipped for inventory product creation")
+            else:
+                event = TelemetryEvent(
+                    eventId=uuid4(),
+                    timestamp=datetime.now(timezone.utc).isoformat().replace(
+                        "+00:00", "Z"
+                    ),
+                    sessionId=None,
+                    userId=current_user.id,
+                    event_type="inventory_product_created",
+                    schemaVersion="1.0",
+                    requestId=getattr(request.state, "request_id", None),
+                    properties={
+                        "warehouse": warehouse,
+                        "client_id": sku.client_id,
+                        "product_id": str(sku.id),
+                        "product_category": sku.category,
+                    },
+                )
+                capture_telemetry_events([event])
+        except Exception:
+            logger.warning("Telemetry capture failed for inventory product creation")
+
     invalidate_products_cache(session)
 
     # New SKUs have zero stock — no movements recorded yet.
