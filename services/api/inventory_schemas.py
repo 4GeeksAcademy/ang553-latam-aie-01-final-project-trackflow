@@ -20,6 +20,8 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from services.api.inventory_clients import validate_client_pair
+
 
 # ── Domain enumerations ─────────────────────────────────────────────────────
 
@@ -60,9 +62,16 @@ class SKUCreate(BaseModel):
 
     name: str
     sku: str
+    client_id: str
     client_name: str
     category: Category
     warehouse: Warehouse
+
+    @model_validator(mode="after")
+    def _validate_client_identity(self) -> SKUCreate:
+        """Require a known, authoritative ID matching the display name."""
+        validate_client_pair(self.client_id, self.client_name)
+        return self
 
 
 class SKUResponse(BaseModel):
@@ -77,6 +86,7 @@ class SKUResponse(BaseModel):
     id: int
     name: str
     sku: str
+    client_id: str | None
     client_name: str
     category: Category
     warehouse: Warehouse

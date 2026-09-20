@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from services.api import main as api_main
 from services.api.main import IncidentAnalysisResponse, app
+from services.api.inventory_clients import CLIENT_IDS_BY_NAME
 from services.api.models import SupplierResponse
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -307,13 +308,99 @@ def test_http_inventory_contracts_use_isolated_sqlite(isolated_auth_db, monkeypa
             json={
                 "name": "HTTP SKU",
                 "sku": "HTTP-001",
-                "client_name": "HTTP Client",
+                "client_id": CLIENT_IDS_BY_NAME["PureStep Footwear"],
+                "client_name": "PureStep Footwear",
                 "category": "electronics",
                 "warehouse": "LA",
             },
         )
         assert product.status_code == 200, product.text
-        sku_id = product.json()["id"]
+        product_body = product.json()
+        assert product_body["client_id"] == CLIENT_IDS_BY_NAME["PureStep Footwear"]
+        assert product_body["client_name"] == "PureStep Footwear"
+        sku_id = product_body["id"]
+
+        listed = _request("GET", "/inventory/products", headers=headers)
+        assert listed.status_code == 200, listed.text
+        listed_product = next(item for item in listed.json() if item["id"] == sku_id)
+        assert listed_product["client_id"] == CLIENT_IDS_BY_NAME["PureStep Footwear"]
+        assert listed_product["client_name"] == "PureStep Footwear"
+
+        detail = _request(
+            "GET", f"/inventory/products/{sku_id}", headers=headers
+        )
+        assert detail.status_code == 200, detail.text
+        detail_body = detail.json()
+        assert detail_body["client_id"] == CLIENT_IDS_BY_NAME["PureStep Footwear"]
+        assert detail_body["client_name"] == "PureStep Footwear"
+
+        for invalid_payload in (
+            {
+                "name": "HTTP Missing Client",
+                "sku": "HTTP-MISSING-CLIENT",
+                "client_name": "PureStep Footwear",
+                "category": "electronics",
+                "warehouse": "LA",
+            },
+            {
+                "name": "HTTP Unknown Client",
+                "sku": "HTTP-UNKNOWN-CLIENT",
+                "client_id": "00000000-0000-4000-8000-000000000000",
+                "client_name": "PureStep Footwear",
+                "category": "electronics",
+                "warehouse": "LA",
+            },
+            {
+                "name": "HTTP Mismatched Client",
+                "sku": "HTTP-MISMATCHED-CLIENT",
+                "client_id": CLIENT_IDS_BY_NAME["PureStep Footwear"],
+                "client_name": "SoundWave Electronics",
+                "category": "electronics",
+                "warehouse": "LA",
+            },
+        ):
+            invalid = _request(
+                "POST",
+                "/inventory/products",
+                headers=headers,
+                json=invalid_payload,
+            )
+            assert invalid.status_code == 422, invalid.text
+
+        with Session(engine) as session:
+            assert session.exec(
+                select(SKU).where(SKU.sku == "HTTP-MISSING-CLIENT")
+            ).first() is None
+            assert session.exec(
+                select(SKU).where(SKU.sku == "HTTP-UNKNOWN-CLIENT")
+            ).first() is None
+            assert session.exec(
+                select(SKU).where(SKU.sku == "HTTP-MISMATCHED-CLIENT")
+            ).first() is None
+            assert session.exec(
+                select(SKU).where(SKU.sku == "HTTP-001")
+            ).first() is not None
+
+        legacy = SKU(
+            name="Legacy HTTP SKU",
+            sku="HTTP-LEGACY-001",
+            client_name="Legacy Client",
+            client_id=None,
+            category="electronics",
+            warehouse="LA",
+        )
+        with Session(engine) as session:
+            session.add(legacy)
+            session.commit()
+            session.refresh(legacy)
+
+        legacy_response = _request(
+            "GET", f"/inventory/products/{legacy.id}", headers=headers
+        )
+        assert legacy_response.status_code == 200, legacy_response.text
+        legacy_body = legacy_response.json()
+        assert legacy_body["client_id"] is None
+        assert legacy_body["client_name"] == "Legacy Client"
 
         inbound = _request(
             "POST",
@@ -341,3 +428,19 @@ def test_http_inventory_contracts_use_isolated_sqlite(isolated_auth_db, monkeypa
     finally:
         app.dependency_overrides.pop(database.get_db, None)
         engine.dispose()
+
+
+def test_inventory_openapi_client_id_contract() -> None:
+    schema = app.openapi()
+    schemas = schema["components"]["schemas"]
+
+    sku_create = schemas["SKUCreate"]
+    assert "client_id" in sku_create["required"]
+    assert "client_name" in sku_create["required"]
+
+    sku_response = schemas["SKUResponse"]
+    client_id_schema = sku_response["properties"]["client_id"]
+    assert client_id_schema.get("anyOf") == [
+        {"type": "string"},
+        {"type": "null"},
+    ]

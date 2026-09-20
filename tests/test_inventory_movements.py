@@ -52,6 +52,7 @@ def _create_sku(
         name=name,
         sku=sku_code,
         client_name="TestClient",
+        client_id=None,
         category="electronics",
         warehouse=warehouse,
     )

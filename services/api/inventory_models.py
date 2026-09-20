@@ -36,6 +36,9 @@ class SKU(SQLModel, table=True):
         Unique SKU code.
     client_name : str
         Client/brand that owns this SKU.
+    client_id : str | None
+        Stable internal identifier for the owning client. Nullable temporarily
+        while legacy rows are backfilled.
     category : str
         Product category (fashion, electronics, cosmetics).
     warehouse : str
@@ -59,6 +62,7 @@ class SKU(SQLModel, table=True):
     client_name: str
     category: str
     warehouse: str
+    client_id: str | None = None
 
     # (stock is calculated, not stored — see inventory_service)
 

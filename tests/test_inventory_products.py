@@ -17,6 +17,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from services.api.auth_models import UserInDB
 from services.api.inventory_models import SKU, StockEntry, StockExit
+from services.api.inventory_clients import CLIENT_IDS_BY_NAME
 from services.api.inventory_schemas import SKUCreate
 from services.api.inventory_service import (
     create_stock_entry,
@@ -64,12 +65,14 @@ def _create_sku(
     warehouse: str = "LA",
     category: str = "electronics",
     client_name: str = "TestClient",
+    client_id: str | None = None,
 ) -> SKU:
     """Helper — create a SKU record directly in the database."""
     sku = SKU(
         name=name,
         sku=sku_code,
         client_name=client_name,
+        client_id=client_id,
         category=category,
         warehouse=warehouse,
     )
@@ -268,7 +271,8 @@ class TestListProducts:
             payload=SKUCreate(
                 name="Created SKU",
                 sku="SKU-CREATE-CACHE",
-                client_name="ClientA",
+                client_id=CLIENT_IDS_BY_NAME["PureStep Footwear"],
+                client_name="PureStep Footwear",
                 category="electronics",
                 warehouse="LA",
             ),
@@ -394,7 +398,8 @@ class TestCreateProduct:
         payload = SKUCreate(
             name="New Product",
             sku="SKU-NEW-001",
-            client_name="ClientA",
+            client_id=CLIENT_IDS_BY_NAME["PureStep Footwear"],
+            client_name="PureStep Footwear",
             category="fashion",
             warehouse="LA",
         )
@@ -408,7 +413,7 @@ class TestCreateProduct:
         assert result.id is not None
         assert result.name == "New Product"
         assert result.sku == "SKU-NEW-001"
-        assert result.client_name == "ClientA"
+        assert result.client_name == "PureStep Footwear"
         assert result.category == "fashion"
         assert result.warehouse == "LA"
 
@@ -416,6 +421,8 @@ class TestCreateProduct:
         db_sku = db_session.get(SKU, result.id)
         assert db_sku is not None
         assert db_sku.name == "New Product"
+        assert db_sku.client_id == CLIENT_IDS_BY_NAME["PureStep Footwear"]
+        assert db_sku.client_name == "PureStep Footwear"
 
     # ── 2. Response contains current_stock=0 ────────────────────────────
 
@@ -426,7 +433,8 @@ class TestCreateProduct:
         payload = SKUCreate(
             name="Zero Stock",
             sku="SKU-ZERO-001",
-            client_name="ClientA",
+            client_id=CLIENT_IDS_BY_NAME["PureStep Footwear"],
+            client_name="PureStep Footwear",
             category="electronics",
             warehouse="ZGZ",
         )
@@ -438,6 +446,7 @@ class TestCreateProduct:
         )
 
         assert result.current_stock == 0
+        assert result.client_id == CLIENT_IDS_BY_NAME["PureStep Footwear"]
 
     # ── 3. current_stock is NOT persisted in ORM ─────────────────────────
 
@@ -450,7 +459,8 @@ class TestCreateProduct:
         payload = SKUCreate(
             name="No Persisted Stock",
             sku="SKU-NP-001",
-            client_name="ClientA",
+            client_id=CLIENT_IDS_BY_NAME["PureStep Footwear"],
+            client_name="PureStep Footwear",
             category="cosmetics",
             warehouse="LA",
         )
@@ -483,7 +493,8 @@ class TestCreateProduct:
         payload = SKUCreate(
             name="Auth Required",
             sku="SKU-AUTH-001",
-            client_name="ClientA",
+            client_id=CLIENT_IDS_BY_NAME["PureStep Footwear"],
+            client_name="PureStep Footwear",
             category="electronics",
             warehouse="LA",
         )
@@ -502,7 +513,8 @@ class TestCreateProduct:
         payload = SKUCreate(
             name="Test",
             sku="SKU-REJECT-CS",
-            client_name="ClientA",
+            client_id=CLIENT_IDS_BY_NAME["PureStep Footwear"],
+            client_name="PureStep Footwear",
             category="electronics",
             warehouse="LA",
         )
@@ -510,12 +522,49 @@ class TestCreateProduct:
         # SKUCreate does not have current_stock
         assert not hasattr(payload, "current_stock")
 
+    def test_unknown_client_id_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="Unknown client_id"):
+            SKUCreate(
+                name="Unknown client",
+                sku="SKU-UNKNOWN-CLIENT",
+                client_id="00000000-0000-4000-8000-000000000000",
+                client_name="PureStep Footwear",
+                category="electronics",
+                warehouse="LA",
+            )
+
+    def test_missing_client_id_is_rejected(self) -> None:
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            SKUCreate(
+                name="Missing client",
+                sku="SKU-MISSING-CLIENT",
+                client_name="PureStep Footwear",
+                category="electronics",
+                warehouse="LA",
+            )
+
+        assert any(error["loc"] == ("client_id",) for error in exc_info.value.errors())
+
+    def test_mismatched_client_identity_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="do not match"):
+            SKUCreate(
+                name="Mismatched client",
+                sku="SKU-MISMATCHED-CLIENT",
+                client_id=CLIENT_IDS_BY_NAME["PureStep Footwear"],
+                client_name="SoundWave Electronics",
+                category="electronics",
+                warehouse="LA",
+            )
+
         # Extra fields are forbidden by ConfigDict(extra="forbid")
         with pytest.raises(ValueError, match="Extra inputs are not permitted"):
             SKUCreate(
                 name="Bad",
                 sku="SKU-BAD",
-                client_name="ClientA",
+                client_id=CLIENT_IDS_BY_NAME["PureStep Footwear"],
+                client_name="PureStep Footwear",
                 category="electronics",
                 warehouse="LA",
                 current_stock=100,  # type: ignore[call-arg]
@@ -531,7 +580,8 @@ class TestCreateProduct:
             SKUCreate(
                 name="Bad Category",
                 sku="SKU-BAD-CAT",
-                client_name="ClientA",
+                client_id=CLIENT_IDS_BY_NAME["PureStep Footwear"],
+                client_name="PureStep Footwear",
                 category="invalid_category",  # not in enum
                 warehouse="LA",
             )
@@ -544,7 +594,8 @@ class TestCreateProduct:
             SKUCreate(
                 name="Bad Warehouse",
                 sku="SKU-BAD-WH",
-                client_name="ClientA",
+                client_id=CLIENT_IDS_BY_NAME["PureStep Footwear"],
+                client_name="PureStep Footwear",
                 category="electronics",
                 warehouse="INVALID",  # not in enum
             )

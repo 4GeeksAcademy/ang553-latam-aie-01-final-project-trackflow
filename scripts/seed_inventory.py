@@ -22,6 +22,7 @@ from sqlmodel import Session, select
 # engine can be created lazily — no DATABASE_URL needed at import time.
 from services.api.database import _get_engine
 from services.api.inventory_models import SKU, StockEntry, StockExit
+from services.api.inventory_clients import CLIENT_IDS_BY_NAME
 from services.api.inventory_service import get_current_stocks
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -74,6 +75,9 @@ SKUS = [
         "warehouse": "ZGZ",
     },
 ]
+
+for _sku_data in SKUS:
+    _sku_data["client_id"] = CLIENT_IDS_BY_NAME[_sku_data["client_name"]]
 
 # StockEntry data — references are keyed by a logical id for idempotency checks.
 # The 'sku_key' references the SKU code (resolved to id dynamically).

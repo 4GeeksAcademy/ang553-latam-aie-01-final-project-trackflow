@@ -83,12 +83,14 @@ def _create_sku(
     warehouse: str = "LA",
     category: str = "electronics",
     client_name: str = "TestClient",
+    client_id: str | None = None,
 ) -> SKU:
     """Helper — create a SKU record directly in the database."""
     sku = SKU(
         name=name,
         sku=sku_code,
         client_name=client_name,
+        client_id=client_id,
         category=category,
         warehouse=warehouse,
     )

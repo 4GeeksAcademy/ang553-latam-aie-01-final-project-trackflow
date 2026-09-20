@@ -33,6 +33,7 @@ export interface SKUResponse {
   id: number;
   name: string;
   sku: string;
+  client_id: string | null;
   client_name: string;
   category: Category;
   warehouse: Warehouse;
