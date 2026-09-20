@@ -432,6 +432,7 @@ class TestCreateOutboundOrder:
         )
 
         result = create_outbound_order(
+            request=_request(),
             payload=payload,
             session=db_session,
             current_user=auth_user,
@@ -474,6 +475,7 @@ class TestCreateOutboundOrder:
         )
 
         result = create_outbound_order(
+            request=_request(),
             payload=payload,
             session=db_session,
             current_user=auth_user,
@@ -510,6 +512,7 @@ class TestCreateOutboundOrder:
         )
 
         result = create_outbound_order(
+            request=_request(),
             payload=payload,
             session=db_session,
             current_user=auth_user,
@@ -550,6 +553,7 @@ class TestCreateOutboundOrder:
         )
 
         create_outbound_order(
+            request=_request(),
             payload=payload,
             session=db_session,
             current_user=auth_user,
@@ -585,6 +589,7 @@ class TestCreateOutboundOrder:
         )
 
         result = create_outbound_order(
+            request=_request(),
             payload=payload,
             session=db_session,
             current_user=auth_user,
@@ -629,6 +634,7 @@ class TestCreateOutboundOrder:
 
         with pytest.raises(HTTPException) as exc_info:
             create_outbound_order(
+                request=_request(),
                 payload=payload,
                 session=db_session,
                 current_user=auth_user,
@@ -664,6 +670,7 @@ class TestCreateOutboundOrder:
 
         with pytest.raises(HTTPException) as exc_info:
             create_outbound_order(
+                request=_request(),
                 payload=payload,
                 session=db_session,
                 current_user=auth_user,
@@ -702,6 +709,7 @@ class TestCreateOutboundOrder:
 
         with pytest.raises(HTTPException):
             create_outbound_order(
+                request=_request(),
                 payload=payload,
                 session=db_session,
                 current_user=auth_user,
@@ -741,6 +749,7 @@ class TestCreateOutboundOrder:
 
         with pytest.raises(HTTPException):
             create_outbound_order(
+                request=_request(),
                 payload=payload,
                 session=db_session,
                 current_user=auth_user,
@@ -765,6 +774,7 @@ class TestCreateOutboundOrder:
 
         with pytest.raises(HTTPException) as exc_info:
             create_outbound_order(
+                request=_request(),
                 payload=payload,
                 session=db_session,
                 current_user=auth_user,
@@ -801,6 +811,7 @@ class TestCreateOutboundOrder:
 
         with pytest.raises(HTTPException) as exc_info:
             create_outbound_order(
+                request=_request(),
                 payload=payload,
                 session=db_session,
                 current_user=auth_user,
@@ -836,6 +847,7 @@ class TestCreateOutboundOrder:
         )
 
         result = create_outbound_order(
+            request=_request(),
             payload=payload,
             session=db_session,
             current_user=auth_user,
@@ -875,6 +887,7 @@ class TestCreateOutboundOrder:
         )
 
         result = create_outbound_order(
+            request=_request(),
             payload=payload,
             session=db_session,
             current_user=auth_user,

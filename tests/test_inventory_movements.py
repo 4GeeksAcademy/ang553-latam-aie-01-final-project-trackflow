@@ -357,7 +357,9 @@ class TestCreateStockExit:
 
     # ── 1. Valid exit persists ──────────────────────────────────────────
 
-    def test_valid_exit_persists(self, db_session: Session) -> None:
+    def test_valid_exit_persists(
+        self, db_session: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """MOVEMENT-EXIT-01: a valid StockExit is persisted."""
         sku = _create_sku(db_session, sku_code="SKU-EXT-01")
         # Add stock first
@@ -368,6 +370,9 @@ class TestCreateStockExit:
             ),
             user_uuid="u1",
         )
+
+        captured = []
+        monkeypatch.setattr(inventory_service, "capture_telemetry_events", captured.extend)
 
         exit_record = create_stock_exit(
             db_session,
@@ -388,6 +393,9 @@ class TestCreateStockExit:
         assert exit_record.tracking_number == "TRK-001"
         assert exit_record.warehouse == "LA"
         assert exit_record.user_uuid == "backend-user-abc"
+        assert captured == []
+        remaining = get_current_stock(db_session, sku_id=sku.id, warehouse="LA")
+        assert remaining == 7
 
     # ── 2. User UUID from backend ───────────────────────────────────────
 
@@ -504,6 +512,144 @@ class TestCreateStockExit:
 
         assert exc_info.value.status_code == 400
         assert exc_info.value.headers == {"X-TrackFlow-Error-Code": "insufficient_stock"}
+
+    def test_insufficient_stock_emits_exact_event_and_preserves_http_error(
+        self, db_session: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured = []
+        sku = SKU(
+            name="Telemetry SKU",
+            sku="SKU-EXT-TELEMETRY",
+            client_name="Client",
+            client_id="client-123",
+            category="fashion",
+            warehouse="LA",
+        )
+        db_session.add(sku)
+        db_session.commit()
+        db_session.refresh(sku)
+        create_stock_entry(
+            db_session,
+            StockEntryCreate(
+                sku_id=sku.id, quantity=5, reference="PO", warehouse="LA"
+            ),
+            user_uuid="u1",
+        )
+        monkeypatch.setattr(inventory_service, "capture_telemetry_events", captured.extend)
+
+        with pytest.raises(HTTPException) as exc_info:
+            create_stock_exit(
+                db_session,
+                StockExitCreate(
+                    sku_id=sku.id,
+                    quantity=8,
+                    exit_type="dispatch",
+                    tracking_number="TRK-TELEMETRY",
+                    warehouse="LA",
+                ),
+                user_uuid="user-123",
+                request_id="request-123",
+            )
+
+        assert len(captured) == 1
+        event = captured[0]
+        assert event.event_type == "inventory_stock_insufficient"
+        assert event.properties == {
+            "warehouse": "los_angeles",
+            "client_id": "client-123",
+            "product_id": str(sku.id),
+            "product_category": "fashion",
+            "requested_quantity": 8,
+            "available_quantity": 5,
+        }
+        assert event.eventId.version == 4
+        assert event.timestamp.endswith("Z")
+        assert event.schemaVersion == "1.0"
+        assert event.requestId == "request-123"
+        assert event.userId == "user-123"
+        assert event.sessionId is None
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == (
+            f"Insufficient stock for SKU '{sku.sku}'. Available: 5, requested: 8."
+        )
+        assert exc_info.value.headers == {
+            "X-TrackFlow-Error-Code": "insufficient_stock"
+        }
+        assert db_session.exec(select(StockExit)).all() == []
+
+    def test_insufficient_stock_sink_failure_preserves_rejection(
+        self, db_session: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sku = _create_sku(db_session, sku_code="SKU-EXT-SINK")
+        create_stock_entry(
+            db_session,
+            StockEntryCreate(sku_id=sku.id, quantity=5, reference="PO", warehouse="LA"),
+            user_uuid="u1",
+        )
+        monkeypatch.setattr(
+            inventory_service,
+            "capture_telemetry_events",
+            lambda _events: (_ for _ in ()).throw(RuntimeError("sink failure")),
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            create_stock_exit(
+                db_session,
+                StockExitCreate(
+                    sku_id=sku.id,
+                    quantity=8,
+                    exit_type="dispatch",
+                    tracking_number="TRK-SINK",
+                    warehouse="LA",
+                ),
+                user_uuid="u1",
+            )
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == (
+            f"Insufficient stock for SKU '{sku.sku}'. Available: 5, requested: 8."
+        )
+        assert exc_info.value.headers == {
+            "X-TrackFlow-Error-Code": "insufficient_stock"
+        }
+        assert db_session.exec(select(StockExit)).all() == []
+
+    def test_insufficient_stock_legacy_client_skips_event(
+        self, db_session: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured = []
+        sku = _create_sku(db_session, sku_code="SKU-EXT-LEGACY")
+        create_stock_entry(
+            db_session,
+            StockEntryCreate(sku_id=sku.id, quantity=5, reference="PO", warehouse="LA"),
+            user_uuid="u1",
+        )
+        monkeypatch.setattr(inventory_service, "capture_telemetry_events", captured.extend)
+
+        with pytest.raises(HTTPException) as exc_info:
+            create_stock_exit(
+                db_session,
+                StockExitCreate(
+                    sku_id=sku.id,
+                    quantity=8,
+                    exit_type="dispatch",
+                    tracking_number="TRK-LEGACY",
+                    warehouse="LA",
+                ),
+                user_uuid="u1",
+            )
+
+        assert captured == []
+        assert sku.client_id is None
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == (
+            f"Insufficient stock for SKU '{sku.sku}'. "
+            "Available: 5, requested: 8."
+        )
+        assert exc_info.value.headers == {
+            "X-TrackFlow-Error-Code": "insufficient_stock"
+        }
+        assert db_session.exec(select(StockExit)).all() == []
 
     # ── 6. Insufficient stock uses status 400 ───────────────────────────
 
@@ -630,7 +776,9 @@ class TestCreateStockExit:
 
     # ── 10. Warehouse mismatch → 400 ─────────────────────────────────────
 
-    def test_warehouse_mismatch_raises_400(self, db_session: Session) -> None:
+    def test_warehouse_mismatch_raises_400(
+        self, db_session: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """MOVEMENT-EXIT-10: LA SKU cannot exit with warehouse ZGZ."""
         sku = _create_sku(db_session, sku_code="SKU-EXT-10", warehouse="LA")
         create_stock_entry(
@@ -640,6 +788,10 @@ class TestCreateStockExit:
             ),
             user_uuid="u1",
         )
+
+        captured = []
+        monkeypatch.setattr(inventory_service, "capture_telemetry_events", captured.extend)
+        before = db_session.exec(select(StockExit)).all()
 
         with pytest.raises(HTTPException) as exc_info:
             create_stock_exit(
@@ -657,11 +809,20 @@ class TestCreateStockExit:
         assert exc_info.value.status_code == 400
         assert "Warehouse mismatch" in exc_info.value.detail
         assert exc_info.value.headers == {"X-TrackFlow-Error-Code": "warehouse_mismatch"}
+        assert captured == []
+        after = db_session.exec(select(StockExit)).all()
+        assert len(after) == len(before)
 
     # ── 11. SKU inexistente → 404 ────────────────────────────────────────
 
-    def test_sku_not_found_raises_404(self, db_session: Session) -> None:
+    def test_sku_not_found_raises_404(
+        self, db_session: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """MOVEMENT-EXIT-11: non-existent SKU raises HTTP 404."""
+        captured = []
+        monkeypatch.setattr(inventory_service, "capture_telemetry_events", captured.extend)
+        before = db_session.exec(select(StockExit)).all()
+
         with pytest.raises(HTTPException) as exc_info:
             create_stock_exit(
                 db_session,
@@ -678,6 +839,9 @@ class TestCreateStockExit:
         assert exc_info.value.status_code == 404
         assert exc_info.value.detail == "SKU not found."
         assert exc_info.value.headers == {"X-TrackFlow-Error-Code": "unknown_product"}
+        assert captured == []
+        after = db_session.exec(select(StockExit)).all()
+        assert len(after) == len(before)
 
     # ── 12. LA stock cannot use ZGZ stock ────────────────────────────────
 

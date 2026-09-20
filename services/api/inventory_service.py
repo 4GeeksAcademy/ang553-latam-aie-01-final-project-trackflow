@@ -290,6 +290,7 @@ def create_stock_exit(
     session: Session,
     data: StockExitCreate,
     user_uuid: str,
+    request_id: str | None = None,
 ):
     """Register an outbound stock movement (StockExit).
 
@@ -346,6 +347,37 @@ def create_stock_exit(
     # 3. Calculate available stock and validate sufficiency
     available = get_current_stock(session, sku_id=sku.id, warehouse=movement_warehouse)
     if data.quantity > available:
+        if sku.client_id is None:
+            logger.warning("Telemetry skipped for insufficient stock")
+        else:
+            try:
+                warehouse = canonical_telemetry_warehouse(movement_warehouse)
+                if warehouse is None:
+                    logger.warning("Telemetry skipped for insufficient stock")
+                else:
+                    event = TelemetryEvent(
+                        eventId=uuid4(),
+                        timestamp=datetime.now(timezone.utc).isoformat().replace(
+                            "+00:00", "Z"
+                        ),
+                        sessionId=None,
+                        userId=user_uuid,
+                        event_type="inventory_stock_insufficient",
+                        schemaVersion="1.0",
+                        requestId=request_id,
+                        properties={
+                            "warehouse": warehouse,
+                            "client_id": sku.client_id,
+                            "product_id": str(sku.id),
+                            "product_category": sku.category,
+                            "requested_quantity": data.quantity,
+                            "available_quantity": available,
+                        },
+                    )
+                    capture_telemetry_events([event])
+            except Exception:
+                logger.warning("Telemetry capture failed for insufficient stock")
+
         raise HTTPException(
             status_code=400,
             detail=(

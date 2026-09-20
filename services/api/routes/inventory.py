@@ -270,6 +270,7 @@ def create_inbound_order(
 
 @router.post("/orders/outbound", response_model=MovementCreatedResponse, status_code=status.HTTP_201_CREATED)
 def create_outbound_order(
+    request: Request,
     payload: StockExitCreate,
     session: Annotated[Session, Depends(get_db)],
     current_user: Annotated[UserInDB, Depends(get_current_user)],
@@ -287,6 +288,7 @@ def create_outbound_order(
         session=session,
         data=payload,
         user_uuid=current_user.id,
+        request_id=getattr(request.state, "request_id", None),
     )
     return MovementCreatedResponse(id=exit_record.id)
 
