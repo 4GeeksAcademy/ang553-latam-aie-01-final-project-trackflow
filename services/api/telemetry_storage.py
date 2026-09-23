@@ -97,11 +97,15 @@ def filter_tags(event_type: str, properties: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in properties.items() if key in allowed}
 
 
-def map_event_to_row(event: TelemetryEvent) -> dict[str, Any]:
+def map_event_to_row(
+    event: TelemetryEvent,
+    *,
+    service: str = "backoffice",
+) -> dict[str, Any]:
     """Map a validated event envelope to the insertable telemetry columns."""
     return {
         "timestamp": event.timestamp,
-        "service": "backoffice",
+        "service": service,
         "event_type": event.event_type,
         "level": "info",
         "value": None,
@@ -122,3 +126,16 @@ def bulk_insert_telemetry(session: Any, rows: Iterable[dict[str, Any]]) -> None:
     except Exception:
         session.rollback()
         raise
+
+
+def persist_backend_telemetry(
+    session: Any,
+    events: Iterable[TelemetryEvent],
+) -> None:
+    """Persist validated events emitted internally by the API."""
+    events = list(events)
+    if not events:
+        return
+
+    rows = [map_event_to_row(event, service="api") for event in events]
+    bulk_insert_telemetry(session, rows)

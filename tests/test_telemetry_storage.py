@@ -17,6 +17,7 @@ from services.api.telemetry_storage import (
     bulk_insert_telemetry,
     filter_tags,
     map_event_to_row,
+    persist_backend_telemetry,
 )
 
 
@@ -82,6 +83,26 @@ def test_map_event_to_row_has_exact_closed_mapping():
     }
     assert "id" not in row
     assert not {"eventId", "sessionId", "userId", "schemaVersion", "requestId"} & row["tags"].keys()
+
+
+def test_map_event_to_row_accepts_api_service():
+    assert map_event_to_row(make_event(), service="api")["service"] == "api"
+
+
+def test_persist_backend_telemetry_maps_all_events_and_bulk_inserts_once(monkeypatch):
+    events = [make_event(), make_event(properties={"section": "suppliers"})]
+    session = Mock()
+    bulk_insert = Mock()
+    monkeypatch.setattr(
+        "services.api.telemetry_storage.bulk_insert_telemetry", bulk_insert
+    )
+
+    persist_backend_telemetry(session, events)
+
+    bulk_insert.assert_called_once_with(
+        session,
+        [map_event_to_row(event, service="api") for event in events],
+    )
 
 
 def test_bulk_insert_empty_rows_does_nothing():
