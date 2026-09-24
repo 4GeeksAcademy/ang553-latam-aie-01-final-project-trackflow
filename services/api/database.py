@@ -84,6 +84,15 @@ def get_db() -> Generator[Session, None, None]:
         yield session
 
 
+def open_db_session() -> Session:
+    """Open a SQLModel session using the lazily cached application engine.
+
+    Callers outside FastAPI dependency injection own the returned session's
+    lifecycle and should use it as a context manager.
+    """
+    return Session(_get_engine())
+
+
 def create_db_and_tables() -> None:
     """Create all registered SQLModel metadata tables.
 

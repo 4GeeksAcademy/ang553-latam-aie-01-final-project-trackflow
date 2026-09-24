@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 from uuid import uuid4
 
 import pytest
@@ -18,6 +18,7 @@ from services.api.telemetry_storage import (
     filter_tags,
     map_event_to_row,
     persist_backend_telemetry,
+    persist_backend_telemetry_best_effort,
 )
 
 
@@ -104,6 +105,58 @@ def test_persist_backend_telemetry_maps_all_events_and_bulk_inserts_once(monkeyp
         [map_event_to_row(event, service="api") for event in events],
     )
 
+
+def test_best_effort_persistence_opens_session_and_closes_context(monkeypatch):
+    event = make_event()
+    session = Mock()
+    session_context = MagicMock()
+    session_context.__enter__.return_value = session
+    open_session = Mock(return_value=session_context)
+    persist = Mock()
+    monkeypatch.setattr("services.api.telemetry_storage.open_db_session", open_session)
+    monkeypatch.setattr("services.api.telemetry_storage.persist_backend_telemetry", persist)
+
+    persist_backend_telemetry_best_effort([event])
+
+    open_session.assert_called_once_with()
+    persist.assert_called_once_with(session, [event])
+    session_context.__enter__.assert_called_once_with()
+    session_context.__exit__.assert_called_once()
+
+
+def test_best_effort_persistence_swallows_session_creation_failure(monkeypatch):
+    event = make_event()
+    monkeypatch.setattr(
+        "services.api.telemetry_storage.open_db_session",
+        Mock(side_effect=RuntimeError("database unavailable")),
+    )
+
+    persist_backend_telemetry_best_effort([event])
+
+
+def test_best_effort_persistence_swallows_storage_failure(monkeypatch):
+    event = make_event()
+    session_context = MagicMock()
+    session_context.__enter__.return_value = Mock()
+    monkeypatch.setattr(
+        "services.api.telemetry_storage.open_db_session",
+        Mock(return_value=session_context),
+    )
+    monkeypatch.setattr(
+        "services.api.telemetry_storage.persist_backend_telemetry",
+        Mock(side_effect=RuntimeError("insert failed")),
+    )
+
+    persist_backend_telemetry_best_effort([event])
+
+
+def test_best_effort_persistence_empty_events_is_noop(monkeypatch):
+    open_session = Mock()
+    monkeypatch.setattr("services.api.telemetry_storage.open_db_session", open_session)
+
+    persist_backend_telemetry_best_effort([])
+
+    open_session.assert_not_called()
 
 def test_bulk_insert_empty_rows_does_nothing():
     session = Mock()

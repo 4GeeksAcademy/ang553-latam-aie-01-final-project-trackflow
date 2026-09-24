@@ -38,6 +38,7 @@ from services.api.auth_services import (
 from services.api.email_service import send_password_reset_email
 from services.api.telemetry_capture import capture_telemetry_events
 from services.api.telemetry_schemas import TelemetryEvent
+from services.api.telemetry_storage import persist_backend_telemetry_best_effort
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,15 @@ def _capture_login_failed(
             requestId=getattr(request.state, "request_id", None),
             properties=properties,
         )
-        capture_telemetry_events([login_event])
+        try:
+            capture_telemetry_events([login_event])
+        except Exception:
+            logger.warning("Telemetry capture failed for failed login")
+
+        try:
+            persist_backend_telemetry_best_effort([login_event])
+        except Exception:
+            logger.warning("Telemetry persistence failed for failed login")
     except Exception:
         logger.warning("Telemetry capture failed for failed login")
 

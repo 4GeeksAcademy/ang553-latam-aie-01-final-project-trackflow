@@ -151,10 +151,16 @@ def test_login_rejects_incorrect_password_with_generic_credentials_error(
         UserCreate(email="wrong.password@example.com", password="StrongPass123")
     )
     captured = []
+    persisted = []
     monkeypatch.setattr(
         auth_route,
         "capture_telemetry_events",
         lambda events: captured.extend(events),
+    )
+    monkeypatch.setattr(
+        auth_route,
+        "persist_backend_telemetry_best_effort",
+        lambda events: persisted.extend(events),
     )
 
     with pytest.raises(HTTPException) as exc_info:
@@ -176,6 +182,7 @@ def test_login_rejects_incorrect_password_with_generic_credentials_error(
     assert event.schemaVersion == "1.0"
     assert event.eventId.version == 4
     assert event.properties == {"failure_reason": "invalid_password"}
+    assert persisted == [event]
 
 
 def test_login_rejects_non_existent_user_with_generic_credentials_error(
@@ -183,10 +190,16 @@ def test_login_rejects_non_existent_user_with_generic_credentials_error(
 ) -> None:
     """AUTH-LOGIN-FAIL-02: unknown user is rejected generically."""
     captured = []
+    persisted = []
     monkeypatch.setattr(
         auth_route,
         "capture_telemetry_events",
         lambda events: captured.extend(events),
+    )
+    monkeypatch.setattr(
+        auth_route,
+        "persist_backend_telemetry_best_effort",
+        lambda events: persisted.extend(events),
     )
 
     with pytest.raises(HTTPException) as exc_info:
@@ -208,6 +221,7 @@ def test_login_rejects_non_existent_user_with_generic_credentials_error(
     assert event.schemaVersion == "1.0"
     assert event.eventId.version == 4
     assert event.properties == {"failure_reason": "account_not_found"}
+    assert persisted == [event]
 
 
 def test_login_rejects_inactive_user_even_with_correct_password(
@@ -217,10 +231,16 @@ def test_login_rejects_inactive_user_even_with_correct_password(
     created = create_user(UserCreate(email="inactive@example.com", password="StrongPass123"))
     update_user(created.id, UserUpdate(is_active=False))
     captured = []
+    persisted = []
     monkeypatch.setattr(
         auth_route,
         "capture_telemetry_events",
         lambda events: captured.extend(events),
+    )
+    monkeypatch.setattr(
+        auth_route,
+        "persist_backend_telemetry_best_effort",
+        lambda events: persisted.extend(events),
     )
 
     with pytest.raises(HTTPException) as exc_info:
@@ -245,6 +265,7 @@ def test_login_rejects_inactive_user_even_with_correct_password(
         "failure_reason": "inactive_account",
         "role_if_known": "user",
     }
+    assert persisted == [event]
 
 
 def test_failed_login_preserves_401_when_telemetry_capture_fails(
@@ -255,6 +276,12 @@ def test_failed_login_preserves_401_when_telemetry_capture_fails(
         auth_route,
         "capture_telemetry_events",
         lambda events: (_ for _ in ()).throw(RuntimeError("capture failed")),
+    )
+    persisted = []
+    monkeypatch.setattr(
+        auth_route,
+        "persist_backend_telemetry_best_effort",
+        lambda events: persisted.extend(events),
     )
 
     with pytest.raises(HTTPException) as exc_info:
@@ -268,3 +295,64 @@ def test_failed_login_preserves_401_when_telemetry_capture_fails(
     assert exc_info.value.status_code == 401
     assert exc_info.value.detail == "Incorrect email or password"
     assert exc_info.value.headers == {"WWW-Authenticate": "Bearer"}
+    assert len(persisted) == 1
+    assert persisted[0].event_type == "auth_login_failed"
+
+
+def test_failed_login_preserves_401_when_telemetry_persistence_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    create_user(UserCreate(email="telemetry.failed.persistence@example.com", password="StrongPass123"))
+    captured = []
+    monkeypatch.setattr(
+        auth_route,
+        "capture_telemetry_events",
+        lambda events: captured.extend(events),
+    )
+    monkeypatch.setattr(
+        auth_route,
+        "persist_backend_telemetry_best_effort",
+        lambda events: (_ for _ in ()).throw(RuntimeError("storage failed")),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        _run(
+            auth_route.login(
+                _request("550e8400-e29b-41d4-a716-446655440006"),
+                _form("telemetry.failed.persistence@example.com", "BadPass999"),
+            )
+        )
+
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "Incorrect email or password"
+    assert len(captured) == 1
+    assert captured[0].properties == {"failure_reason": "invalid_password"}
+
+
+def test_failed_login_does_not_require_database_when_telemetry_session_open_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    create_user(UserCreate(email="telemetry.no.database@example.com", password="StrongPass123"))
+    captured = []
+    monkeypatch.setattr(
+        auth_route,
+        "capture_telemetry_events",
+        lambda events: captured.extend(events),
+    )
+    monkeypatch.setattr(
+        "services.api.telemetry_storage.open_db_session",
+        lambda: (_ for _ in ()).throw(RuntimeError("database unavailable")),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        _run(
+            auth_route.login(
+                _request("550e8400-e29b-41d4-a716-446655440007"),
+                _form("telemetry.no.database@example.com", "BadPass999"),
+            )
+        )
+
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "Incorrect email or password"
+    assert len(captured) == 1
+    assert captured[0].properties == {"failure_reason": "invalid_password"}

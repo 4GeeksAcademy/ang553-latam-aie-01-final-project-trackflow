@@ -11,7 +11,12 @@ from typing import Any, Iterable
 from sqlalchemy import Column, DateTime, MetaData, Numeric, Table, Text, insert, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
+from services.api.database import open_db_session
 from services.api.telemetry_schemas import TelemetryEvent
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 telemetry_metadata = MetaData()
@@ -139,3 +144,18 @@ def persist_backend_telemetry(
 
     rows = [map_event_to_row(event, service="api") for event in events]
     bulk_insert_telemetry(session, rows)
+
+
+def persist_backend_telemetry_best_effort(
+    events: Iterable[TelemetryEvent],
+) -> None:
+    """Persist API-produced telemetry without affecting the caller flow."""
+    events = list(events)
+    if not events:
+        return
+
+    try:
+        with open_db_session() as session:
+            persist_backend_telemetry(session, events)
+    except Exception:
+        logger.warning("Backend telemetry persistence failed", exc_info=True)
