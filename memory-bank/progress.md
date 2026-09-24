@@ -142,3 +142,29 @@
 - Documentar y elevar los blockers contractuales, de dominio y policy pendientes.
 - Preparar la entrega/PR cuando los blockers requeridos por evaluación estén
 	resueltos o formalmente aceptados.
+
+## Telemetry storage — estado final del ticket
+
+- `telemetry_events` queda persistida en Supabase con 8 columnas contractuales e
+	índices sobre `timestamp`, `event_type` y GIN sobre `tags`.
+- La persistencia es append-only. `POST /telemetry/events` aplica validación
+	parcial y reporta `received`, `stored` y `rejected`; cada batch usa un único
+	bulk insert.
+- Los eventos enviados por frontend usan `service="backoffice"`; los eventos
+	generados en backend usan `service="api"`.
+- `inbound_order_created` y `outbound_order_created` persisten después del
+	commit de negocio.
+- `auth_login_failed` persiste best-effort, sin hacer depender la autenticación
+	de SQL. La implementación usa `open_db_session()` y
+	`persist_backend_telemetry_best_effort()`.
+- En Codespaces se requiere Supabase Session Pooler por conectividad IPv4/IPv6.
+	`DATABASE_URL` y `JWT_SECRET_KEY` quedaron configurados como repository
+	secrets de Codespaces.
+- E2E aprobado: inbound `+5`, outbound `-2`, `auth_login_failed` y batch mixto
+	con `2 received / 1 stored / 1 rejected`; se verificaron 5 filas reales en
+	Supabase.
+- El frontend no fue modificado. Los fallos globales preexistentes de tests
+	quedaron fuera de alcance.
+- Para levantar el backend desde Codespaces se debe ejecutar desde la raíz del
+	repositorio. El puerto 8000 se expone como Public solo temporalmente para E2E
+	y debe volver a Private al cerrar.

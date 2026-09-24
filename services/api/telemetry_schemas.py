@@ -1,4 +1,4 @@
-"""Pydantic schemas for the temporary telemetry ingestion endpoint."""
+"""Pydantic schemas for the telemetry ingestion endpoint."""
 
 from __future__ import annotations
 
@@ -61,8 +61,8 @@ class TelemetryEvent(BaseModel):
 
 
 class TelemetryEventsRequest(BaseModel):
-    """Batch body accepted by the temporary telemetry endpoint."""
+    """Batch body whose event items are validated by the route individually."""
 
     model_config = ConfigDict(extra="forbid")
 
-    events: list[TelemetryEvent]
+    events: list[Any]

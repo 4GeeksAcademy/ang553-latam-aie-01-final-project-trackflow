@@ -231,6 +231,33 @@
 - Incidents CSV contract comprobado.
 - Datos temporales de QA fueron limpiados/restaurados al finalizar.
 
+## Telemetry storage
+
+- Supabase contiene la tabla `telemetry_events` con 8 columnas contractuales,
+  persistencia append-only e índices sobre `timestamp`, `event_type` y GIN
+  sobre `tags`.
+- `POST /telemetry/events` admite validación parcial y devuelve los conteos
+  `received`, `stored` y `rejected`; la escritura de cada batch se realiza con
+  un único bulk insert.
+- Los eventos del frontend se identifican con `service="backoffice"` y los
+  generados por backend con `service="api"`.
+- `inbound_order_created` y `outbound_order_created` se persisten después del
+  commit de negocio.
+- `auth_login_failed` usa persistencia best-effort, sin acoplar la autenticación
+  a SQL. La ruta de persistencia emplea `open_db_session()` y
+  `persist_backend_telemetry_best_effort()`.
+- En Codespaces, la conexión usa Supabase Session Pooler por la conectividad
+  IPv4/IPv6. `DATABASE_URL` y `JWT_SECRET_KEY` están configurados como
+  Codespaces repository secrets.
+- E2E aprobado con inbound `+5`, outbound `-2`, `auth_login_failed` y un batch
+  mixto de `2 received / 1 stored / 1 rejected`; se comprobaron 5 filas reales
+  en Supabase.
+- El frontend no se modificó. Los fallos globales preexistentes de tests están
+  fuera del alcance del ticket.
+- Para iniciar el backend desde Codespaces, ejecutar desde la raíz del repo.
+  El puerto 8000 solo debe ser Public temporalmente durante E2E y volver a
+  Private al finalizar.
+
 ## Autenticacion frontend (uis/backoffice)
 
 - Token JWT almacenado en `localStorage` bajo la clave `trackflow_access_token` (`lib/auth.ts`).
