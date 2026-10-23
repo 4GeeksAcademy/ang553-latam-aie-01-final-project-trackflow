@@ -11,11 +11,16 @@
 - Fase 2.4 completada.
 - Fase 2.5 completada.
 - Fase 3 implementada y auditada.
+- Fase 1.1 completada: `inventory_stock_insufficient` se construye,
+	captura y persiste mediante `persist_backend_telemetry_best_effort`
+	con sesión independiente; un fallo de telemetría no altera el
+	HTTP 400 insufficient_stock; tests focalizados de StockExit (17/17 pass).
 - Eventos implementados: `backoffice_section_entered`,
 	`inventory_workflow_started`, `inventory_workflow_abandoned`,
 	`auth_login_succeeded`, `auth_login_failed`,
 	`auth_password_reset_requested`, `auth_password_reset_completed`,
-	`inventory_validation_failed` y `api_request_failed`.
+	`inventory_validation_failed`, `api_request_failed` e
+	`inventory_stock_insufficient`.
 - QA de Fase 3: compileall PASS; pytest bloqueado por `tinydb` ausente;
 	runtime frontend no disponible; diagnósticos estáticos limpios.
 
@@ -138,6 +143,7 @@
 
 ## Siguiente paso
 
+- Generar/verificar el dataset real requerido antes del pipeline Pandas.
 - Realizar QA final del ticket completo contra README y criterios de entrega.
 - Documentar y elevar los blockers contractuales, de dominio y policy pendientes.
 - Preparar la entrega/PR cuando los blockers requeridos por evaluación estén
@@ -154,6 +160,10 @@
 	generados en backend usan `service="api"`.
 - `inbound_order_created` y `outbound_order_created` persisten después del
 	commit de negocio.
+- `inventory_stock_insufficient` persiste mediante
+	`persist_backend_telemetry_best_effort` con sesión independiente;
+	un fallo de telemetría no altera el HTTP 400 insufficient_stock y la
+	Session principal no recibe commit/rollback adicional.
 - `auth_login_failed` persiste best-effort, sin hacer depender la autenticación
 	de SQL. La implementación usa `open_db_session()` y
 	`persist_backend_telemetry_best_effort()`.

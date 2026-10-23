@@ -24,7 +24,10 @@ from sqlmodel import Session, func, select
 from services.api.inventory_schemas import StockEntryCreate, StockExitCreate
 from services.api.telemetry_capture import capture_telemetry_events
 from services.api.telemetry_schemas import TelemetryEvent
-from services.api.telemetry_storage import persist_backend_telemetry
+from services.api.telemetry_storage import (
+    persist_backend_telemetry,
+    persist_backend_telemetry_best_effort,
+)
 from services.api.telemetry_utils import canonical_telemetry_warehouse
 
 logger = logging.getLogger(__name__)
@@ -383,6 +386,7 @@ def create_stock_exit(
                         },
                     )
                     capture_telemetry_events([event])
+                    persist_backend_telemetry_best_effort([event])
             except Exception:
                 logger.warning("Telemetry capture failed for insufficient stock")
 
