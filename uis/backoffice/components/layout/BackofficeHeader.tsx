@@ -52,6 +52,12 @@ export function BackofficeHeader() {
             Inventory History
           </Link>
           <Link
+            href="/backoffice/telemetry"
+            className="text-sm font-medium text-slate-100 transition-colors hover:text-white"
+          >
+            Telemetry
+          </Link>
+          <Link
             href="/account/profile"
             className="text-sm font-medium text-slate-100 transition-colors hover:text-white"
           >
