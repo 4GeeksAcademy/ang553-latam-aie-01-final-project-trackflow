@@ -391,9 +391,41 @@
 - No asumir tecnologias de backend adicionales en la raiz mientras no aparezcan explicitamente en el repo.
 - En `src/` no existe `README.md` actualmente, asi que cualquier cambio ahi debe apoyarse en la estructura existente y en los contextos de hitos.
 
+## Telemetry Report Pipeline — Fase 7
+
+### Análisis operacional con Pandas
+- Pipeline de análisis implementado en `services/telemetry/analysis.py`.
+- Recibe `session` explícita de SQLAlchemy/SQLModel (sin dependencias globales).
+- SQL filtra ventana temporal [start_date, end_date) con >= y <.
+- SQL filtra event_type cuando corresponde (allowlist para fallos, stock_insufficient específico, etc.).
+- Pandas convierte timestamps con `pd.to_datetime(..., utc=True)` para coherencia de zonas horarias.
+- Agregación via groupby/agg de Pandas; sin loops for para cálculo de métricas.
+- Resultado JSON serializable: list[dict] con .to_dict(orient="records").
+
+### Cuatro métricas operacionales
+1. **event_volume_by_day_and_type**: volumen diario por tipo de evento (técnico).
+2. **operational_failures_by_type_and_day**: fallos operacionales por tipo/día (OPS).
+3. **stock_insufficiency_by_day_warehouse_category**: insuficiencias por almacén y categoría (OPS).
+4. **auth_failure_rate_by_day**: tasa de fallos de autenticación (TECHNICAL, EXTRA).
+
+### Endpoint GET /telemetry/report
+- Parámetros opcionales: start_date, end_date (ambos requeridos juntos, timezone-aware).
+- Default automático: últimos 7 días si no se especifican.
+- Periodo resuelto una sola vez antes del cache.
+- Cache in-process TTL=60 segundos, keyed por rango UTC canonicalizado.
+- Offsets equivalentes producen igual cache key.
+- JSON devuelve: {period: {from, to}, metrics: {...}}.
+
+### Dashboard técnico (EXTRA)
+- Ubicación: `uis/backoffice/app/backoffice/telemetry/page.tsx`.
+- Consume GET /telemetry/report.
+- Muestra período y las cuatro métricas en tablas técnicas.
+- Sin KPIs de negocio, sin pickers de fecha, sin recálculo.
+
 ## Implicaciones por hito
 
 - **Hito 1**: Sitio web responsive con Tailwind, landing en `/` y formulario funcional en `/application` (migrados y validados).
 - **Hito 2**: Utilidades TypeScript puras en `src/` (inventario, envios, scoring, calculos, validaciones). No duplicar.
 - **Hito 3**: `apps/talent-pipeline-tracker/` confirma Next.js para interfaces operativas. Backend FastAPI con auth (AUTH-01/AUTH-02) implementado en `services/api/`.
 - **Hito 4**: Infraestructura AI-ready (`memory-bank/`, `AGENTS.md`, skills). Web publica y backoffice en `uis/`. Logica Hito 2 integrada visualmente sin duplicacion. Auth frontend/backend implementados.
+- **Hito 6**: Pipeline Pandas de telemetría implementado. GET /telemetry/report con cache 60s. Dashboard técnico en backoffice. Dataset real (31 eventos).

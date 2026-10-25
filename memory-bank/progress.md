@@ -11,11 +11,16 @@
 - Fase 2.4 completada.
 - Fase 2.5 completada.
 - Fase 3 implementada y auditada.
+- Fase 1.1 completada: `inventory_stock_insufficient` se construye,
+	captura y persiste mediante `persist_backend_telemetry_best_effort`
+	con sesión independiente; un fallo de telemetría no altera el
+	HTTP 400 insufficient_stock; tests focalizados de StockExit (17/17 pass).
 - Eventos implementados: `backoffice_section_entered`,
 	`inventory_workflow_started`, `inventory_workflow_abandoned`,
 	`auth_login_succeeded`, `auth_login_failed`,
 	`auth_password_reset_requested`, `auth_password_reset_completed`,
-	`inventory_validation_failed` y `api_request_failed`.
+	`inventory_validation_failed`, `api_request_failed` e
+	`inventory_stock_insufficient`.
 - QA de Fase 3: compileall PASS; pytest bloqueado por `tinydb` ausente;
 	runtime frontend no disponible; diagnósticos estáticos limpios.
 
@@ -62,6 +67,24 @@
 - No se usan serializers JSON artificiales para 204 o CSV.
 - Auditoría actual: 33 compliant, 0 optimize, 0 missing.
 - Fase 3.1 — verificación global HTTP completada.
+- Fase 3.1 — pipeline Pandas de análisis de telemetría completado:
+	dataset real preparado y verificado (25 eventos totales,
+	20 dentro de últimos 7 días);
+	`inventory_stock_insufficient` persiste correctamente;
+	pipeline implementado en `services/telemetry/analysis.py`;
+	métricas: `event_volume_by_day_and_type`,
+	`operational_failures_by_type_and_day`,
+	`stock_insufficiency_by_day_warehouse_category`;
+	`build_telemetry_report` implementado;
+	SQL aplica filtros temporales/event_type;
+	Pandas realiza conversión temporal, refinamiento y agregación;
+	`period.from`/`to` normalizados a UTC;
+	tests de análisis: 30 PASS;
+	suite telemetry relevante: 63 PASS;
+	Pandas/uv.lock sincronizados.
+	PENDIENTE: GET /telemetry/report, default 7 días,
+	start_date/end_date, cache TTL 60s, auth_failure_rate,
+	dashboard técnico.
 - Lazy Loading real de IncidentSummary mediante `next/dynamic` completado.
 - Placeholder ligero compartido mantiene la UI inicial.
 - IncidentSummary completo solo se carga cuando existe `result`.
@@ -136,12 +159,24 @@
 - `FRONTEND_RUNTIME_UNAVAILABLE`: `uis/backoffice/node_modules` ausente.
 - `FRONTEND_STATIC_DIAGNOSTICS = NO_ERRORS_REPORTED`.
 
-## Siguiente paso
+## FASE 7 — CIERRE FINAL: TELEMETRÍA COMPLETADA
 
-- Realizar QA final del ticket completo contra README y criterios de entrega.
-- Documentar y elevar los blockers contractuales, de dominio y policy pendientes.
-- Preparar la entrega/PR cuando los blockers requeridos por evaluación estén
-	resueltos o formalmente aceptados.
+- GET /telemetry/report implementado con cache TTL 60 segundos.
+- Default automático: últimos 7 días si no se especifican start_date/end_date.
+- Parámetros start_date/end_date opcionales; ambos deben estar presentes y ser timezone-aware.
+- Periodo resuelto una sola vez; intervalo [start_date, end_date).
+- Cuatro métricas operacionales implementadas:
+  - event_volume_by_day_and_type: volumen diario por tipo de evento.
+  - operational_failures_by_type_and_day: fallos técnicos por tipo y día.
+  - stock_insufficiency_by_day_warehouse_category: insuficiencias de stock por almacén y categoría.
+  - auth_failure_rate_by_day: tasa de fallos de autenticación diaria (EXTRA).
+- Pipeline Pandas completo: filtrado SQL → conversión UTC → agregación groupby → JSON.
+- Dataset real verificado: 31 eventos totales, 26 en últimos 7 días.
+- Dashboard técnico (EXTRA) implementado en uis/backoffice/app/backoffice/telemetry/page.tsx.
+- Backend tests: 40 PASS (analysis) + 19 PASS (report) = 59 PASS.
+- Frontend: ESLint, TypeScript, build — todos OK.
+- Seguridad: sin secretos hardcodeados, diff limpio.
+- Rama feat/telemetry-report lista para PR.
 
 ## Telemetry storage — estado final del ticket
 
@@ -154,6 +189,10 @@
 	generados en backend usan `service="api"`.
 - `inbound_order_created` y `outbound_order_created` persisten después del
 	commit de negocio.
+- `inventory_stock_insufficient` persiste mediante
+	`persist_backend_telemetry_best_effort` con sesión independiente;
+	un fallo de telemetría no altera el HTTP 400 insufficient_stock y la
+	Session principal no recibe commit/rollback adicional.
 - `auth_login_failed` persiste best-effort, sin hacer depender la autenticación
 	de SQL. La implementación usa `open_db_session()` y
 	`persist_backend_telemetry_best_effort()`.

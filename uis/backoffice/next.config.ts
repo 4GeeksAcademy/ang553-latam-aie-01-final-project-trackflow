@@ -38,6 +38,10 @@ const nextConfig: NextConfig = {
         source: "/api/suppliers/:path*",
         destination: `${backendUrl}/api/suppliers/:path*`,
       },
+      {
+        source: "/telemetry/:path*",
+        destination: `${backendUrl}/telemetry/:path*`,
+      },
     ];
   },
 };

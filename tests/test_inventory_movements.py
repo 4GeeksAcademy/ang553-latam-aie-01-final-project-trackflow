@@ -614,8 +614,8 @@ class TestCreateStockExit:
         persisted = []
         monkeypatch.setattr(
             inventory_service,
-            "persist_backend_telemetry",
-            lambda _session, events: persisted.extend(events),
+            "persist_backend_telemetry_best_effort",
+            lambda events: persisted.extend(events),
         )
 
         with pytest.raises(HTTPException) as exc_info:
@@ -644,7 +644,8 @@ class TestCreateStockExit:
             "available_quantity": 5,
         }
         assert event.eventId.version == 4
-        assert event.timestamp.endswith("Z")
+        assert event.timestamp.tzinfo is not None
+        assert event.timestamp.strftime("%z") == "+0000"
         assert event.schemaVersion == "1.0"
         assert event.requestId == "request-123"
         assert event.userId == "user-123"
@@ -657,7 +658,7 @@ class TestCreateStockExit:
             "X-TrackFlow-Error-Code": "insufficient_stock"
         }
         assert db_session.exec(select(StockExit)).all() == []
-        assert persisted == []
+        assert persisted == [event]
 
     def test_outbound_telemetry_failure_preserves_exit(
         self, db_session: Session, monkeypatch: pytest.MonkeyPatch
@@ -729,6 +730,61 @@ class TestCreateStockExit:
             "X-TrackFlow-Error-Code": "insufficient_stock"
         }
         assert db_session.exec(select(StockExit)).all() == []
+
+    def test_insufficient_stock_best_effort_failure_preserves_400(
+        self, db_session: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When best-effort persistence fails internally, HTTP 400 is preserved.
+
+        The real ``persist_backend_telemetry_best_effort`` is kept — we only
+        break its internal dependency (``open_db_session``) so that the
+        helper's own ``try/except`` absorbs the failure.
+        """
+        import services.api.telemetry_storage as telemetry_storage
+
+        sku = _create_sku(db_session, sku_code="SKU-EXT-BEST-EFF")
+        sku.client_id = "client-123"
+        db_session.add(sku)
+        db_session.commit()
+        create_stock_entry(
+            db_session,
+            StockEntryCreate(sku_id=sku.id, quantity=5, reference="PO", warehouse="LA"),
+            user_uuid="u1",
+        )
+        captured = []
+        monkeypatch.setattr(inventory_service, "capture_telemetry_events", captured.extend)
+        # Do NOT mock persist_backend_telemetry_best_effort itself.
+        # Instead, make open_db_session fail inside the real helper.
+        monkeypatch.setattr(
+            telemetry_storage,
+            "open_db_session",
+            lambda: (_ for _ in ()).throw(RuntimeError("db connection failed")),
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            create_stock_exit(
+                db_session,
+                StockExitCreate(
+                    sku_id=sku.id,
+                    quantity=8,
+                    exit_type="dispatch",
+                    tracking_number="TRK-BEST-EFF",
+                    warehouse="LA",
+                ),
+                user_uuid="u1",
+            )
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == (
+            f"Insufficient stock for SKU '{sku.sku}'. "
+            "Available: 5, requested: 8."
+        )
+        assert exc_info.value.headers == {
+            "X-TrackFlow-Error-Code": "insufficient_stock"
+        }
+        assert db_session.exec(select(StockExit)).all() == []
+        assert len(captured) == 1
+        assert captured[0].event_type == "inventory_stock_insufficient"
 
     def test_insufficient_stock_legacy_client_skips_event(
         self, db_session: Session, monkeypatch: pytest.MonkeyPatch
