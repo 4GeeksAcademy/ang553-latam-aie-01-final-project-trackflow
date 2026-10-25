@@ -22,6 +22,7 @@ METRICS = {
     "event_volume_by_day_and_type",
     "operational_failures_by_type_and_day",
     "stock_insufficiency_by_day_warehouse_category",
+    "auth_failure_rate",
 }
 
 
@@ -36,6 +37,7 @@ def make_report(session, start_date, end_date):
                 {"day": "2026-10-24", "event_type": "auth_login_failed", "count": 2}
             ],
             "stock_insufficiency_by_day_warehouse_category": [],
+            "auth_failure_rate": [],
         },
     }
 

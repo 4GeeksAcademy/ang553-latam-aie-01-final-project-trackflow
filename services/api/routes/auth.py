@@ -166,6 +166,7 @@ async def login(
             properties={"role": user.role.value},
         )
         capture_telemetry_events([login_event])
+        persist_backend_telemetry_best_effort([login_event])
     except Exception:
         logger.warning("Telemetry capture failed for successful login")
 

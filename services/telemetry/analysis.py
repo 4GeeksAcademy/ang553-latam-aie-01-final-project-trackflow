@@ -158,6 +158,85 @@ def stock_insufficiency_by_day_warehouse_category(
     return grouped.to_dict(orient="records")
 
 
+# ── Metric D ─────────────────────────────────────────────────────────────────
+
+
+def auth_failure_rate_by_day(
+    session: Any,
+    start_date: datetime,
+    end_date: datetime,
+) -> list[dict[str, Any]]:
+    """What proportion of login attempts observed ended in failure, per day?
+
+    Loads both ``auth_login_failed`` and ``auth_login_succeeded`` events in a
+    single SQL query, then computes the failure rate per UTC day.
+
+    Parameters
+    ----------
+    session
+        A SQLAlchemy / SQLModel database session.
+    start_date
+        Inclusive start of the analysis window (UTC).
+    end_date
+        Exclusive end of the analysis window (UTC).
+
+    Returns
+    -------
+    list[dict]
+        Each record: ``{"day": "YYYY-MM-DD", "failed": int, "succeeded": int,
+        "total": int, "failure_rate": float}``.
+    """
+    stmt = (
+        select(
+            telemetry_events.c.timestamp,
+            telemetry_events.c.event_type,
+        )
+        .where(telemetry_events.c.timestamp >= start_date)
+        .where(telemetry_events.c.timestamp < end_date)
+        .where(
+            telemetry_events.c.event_type.in_(
+                ["auth_login_failed", "auth_login_succeeded"],
+            )
+        )
+    )
+    rows = session.execute(stmt).mappings().all()
+    if not rows:
+        return []
+
+    df = pd.DataFrame(rows)
+    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+    df["day"] = df["timestamp"].dt.strftime("%Y-%m-%d")
+
+    # Create boolean flags per event type
+    df["failed"] = df["event_type"] == "auth_login_failed"
+    df["succeeded"] = df["event_type"] == "auth_login_succeeded"
+
+    grouped = (
+        df.groupby("day")
+        .agg(
+            failed=("failed", "sum"),
+            succeeded=("succeeded", "sum"),
+        )
+        .reset_index()
+    )
+
+    grouped["total"] = grouped["failed"] + grouped["succeeded"]
+
+    # Defensive: avoid division by zero (should not happen since the SQL only
+    # returns rows with these two event types, but guard anyway).
+    grouped["failure_rate"] = grouped.apply(
+        lambda r: r["failed"] / r["total"] if r["total"] > 0 else 0.0,
+        axis=1,
+    )
+
+    # Cast integer columns to Python int (JSON-safe)
+    grouped["failed"] = grouped["failed"].astype(int)
+    grouped["succeeded"] = grouped["succeeded"].astype(int)
+    grouped["total"] = grouped["total"].astype(int)
+
+    return grouped.to_dict(orient="records")
+
+
 # ── Report builder ───────────────────────────────────────────────────────────
 
 
@@ -198,6 +277,9 @@ def build_telemetry_report(
                 session, start_date, end_date,
             ),
             "stock_insufficiency_by_day_warehouse_category": stock_insufficiency_by_day_warehouse_category(
+                session, start_date, end_date,
+            ),
+            "auth_failure_rate": auth_failure_rate_by_day(
                 session, start_date, end_date,
             ),
         },

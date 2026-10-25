@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import httpx
 import pytest
@@ -52,6 +53,8 @@ def test_http_login_captures_one_success_event_with_contract_fields(monkeypatch)
         "capture_telemetry_events",
         lambda events: captured.extend(events),
     )
+    persist = Mock()
+    monkeypatch.setattr(auth_route, "persist_backend_telemetry_best_effort", persist)
     request_id = "550e8400-e29b-41d4-a716-446655440010"
 
     response = asyncio.run(
@@ -72,6 +75,60 @@ def test_http_login_captures_one_success_event_with_contract_fields(monkeypatch)
     assert event.schemaVersion == "1.0"
     assert event.properties == {"role": "user"}
     assert all(item.event_type != "auth_login_failed" for item in captured)
+    persist.assert_called_once_with([event])
+    assert persist.call_args.args[0][0] is event
+    assert response.json()["token_type"] == "bearer"
+    payload = jwt.decode(
+        response.json()["access_token"],
+        JWT_SECRET_KEY,
+        algorithms=[JWT_ALGORITHM],
+    )
+    assert payload["sub"] == created.id
+
+
+def test_successful_login_preserves_200_when_telemetry_session_open_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    created = create_user(
+        UserCreate(email="telemetry.success.no.database@example.com", password="StrongPass123")
+    )
+    captured = []
+    monkeypatch.setattr(
+        auth_route,
+        "capture_telemetry_events",
+        lambda events: captured.extend(events),
+    )
+    open_session = Mock(side_effect=RuntimeError("database unavailable"))
+    monkeypatch.setattr("services.api.telemetry_storage.open_db_session", open_session)
+
+    response = asyncio.run(
+        _http_login(
+            "telemetry.success.no.database@example.com",
+            "StrongPass123",
+            "550e8400-e29b-41d4-a716-446655440012",
+        )
+    )
+
+    assert response.status_code == 200
+    assert set(response.json()) == {"access_token", "token_type"}
+    assert response.json()["token_type"] == "bearer"
+    payload = jwt.decode(
+        response.json()["access_token"],
+        JWT_SECRET_KEY,
+        algorithms=[JWT_ALGORITHM],
+    )
+    assert payload["sub"] == created.id
+    assert len(captured) == 1
+    assert captured[0].event_type == "auth_login_succeeded"
+    assert captured[0].properties == {"role": "user"}
+    open_session.assert_called_once_with()
+    assert any(
+        record.name == "services.api.telemetry_storage"
+        and record.getMessage() == "Backend telemetry persistence failed"
+        and record.exc_info is not None
+        for record in caplog.records
+    )
 
 
 def test_login_succeeds_when_telemetry_capture_fails(monkeypatch) -> None:

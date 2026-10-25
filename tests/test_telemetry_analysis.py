@@ -16,6 +16,7 @@ import pytest
 
 from services.telemetry.analysis import (
     OPERATIONAL_FAILURE_ALLOWLIST,
+    auth_failure_rate_by_day,
     build_telemetry_report,
     event_volume_by_day_and_type,
     operational_failures_by_type_and_day,
@@ -438,6 +439,7 @@ class TestBuildTelemetryReport:
             "event_volume_by_day_and_type",
             "operational_failures_by_type_and_day",
             "stock_insufficiency_by_day_warehouse_category",
+            "auth_failure_rate",
         }
 
     def test_empty_metrics_are_empty_lists(self) -> None:
@@ -450,7 +452,7 @@ class TestBuildTelemetryReport:
             assert report["metrics"][key] == []
 
     def test_metrics_receive_same_start_end(self) -> None:
-        """All three metrics receive the same start_date and end_date."""
+        """All metrics receive the same start_date and end_date."""
         rows = [
             {"timestamp": "2026-10-20T08:00:00Z", "event_type": "auth_login_succeeded"},
             {"timestamp": "2026-10-20T09:00:00Z", "event_type": "auth_login_failed"},
@@ -474,7 +476,7 @@ class TestBuildTelemetryReport:
         end = datetime(2026, 10, 27, 0, 0, 0, tzinfo=timezone.utc)
         report = build_telemetry_report(session, start, end)
 
-        # The report includes all three metric keys with non-None values
+        # The report includes all metric keys with non-None values
         for key in report["metrics"]:
             assert report["metrics"][key] is not None
 
@@ -524,3 +526,177 @@ class TestUTCCanonicalization:
 
         assert report["period"]["from"] == "2026-10-20T00:00:00+00:00"
         assert report["period"]["to"] == "2026-10-27T00:00:00+00:00"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# H — Metric D: auth_failure_rate_by_day
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestMetricD:
+    """auth_failure_rate_by_day — basic computation."""
+
+    def test_empty(self) -> None:
+        """1. Empty dataset returns []."""
+        session = _mock_session([])
+        result = auth_failure_rate_by_day(session, T0, T2)
+        assert result == []
+
+    def test_failed_and_succeeded_same_day(self) -> None:
+        """2. Both event types on the same day."""
+        rows = [
+            {"timestamp": "2026-10-20T08:00:00Z", "event_type": "auth_login_failed"},
+            {"timestamp": "2026-10-20T09:00:00Z", "event_type": "auth_login_failed"},
+            {"timestamp": "2026-10-20T10:00:00Z", "event_type": "auth_login_failed"},
+            {"timestamp": "2026-10-20T11:00:00Z", "event_type": "auth_login_failed"},
+            {"timestamp": "2026-10-20T12:00:00Z", "event_type": "auth_login_failed"},
+            {"timestamp": "2026-10-20T13:00:00Z", "event_type": "auth_login_succeeded"},
+            {"timestamp": "2026-10-20T14:00:00Z", "event_type": "auth_login_succeeded"},
+            {"timestamp": "2026-10-20T15:00:00Z", "event_type": "auth_login_succeeded"},
+            {"timestamp": "2026-10-20T16:00:00Z", "event_type": "auth_login_succeeded"},
+            {"timestamp": "2026-10-20T17:00:00Z", "event_type": "auth_login_succeeded"},
+        ]
+        session = _mock_session(rows)
+        result = auth_failure_rate_by_day(session, T0, T2)
+        assert len(result) == 1
+        assert result[0]["day"] == "2026-10-20"
+        assert result[0]["failed"] == 5
+        assert result[0]["succeeded"] == 5
+        assert result[0]["total"] == 10
+        assert result[0]["failure_rate"] == 0.5
+
+    def test_only_failed(self) -> None:
+        """3. Only failed events → failure_rate = 1.0."""
+        rows = [
+            {"timestamp": "2026-10-20T08:00:00Z", "event_type": "auth_login_failed"},
+            {"timestamp": "2026-10-20T09:00:00Z", "event_type": "auth_login_failed"},
+        ]
+        session = _mock_session(rows)
+        result = auth_failure_rate_by_day(session, T0, T2)
+        assert len(result) == 1
+        assert result[0]["failed"] == 2
+        assert result[0]["succeeded"] == 0
+        assert result[0]["total"] == 2
+        assert result[0]["failure_rate"] == 1.0
+
+    def test_only_succeeded(self) -> None:
+        """4. Only succeeded events → failure_rate = 0.0."""
+        rows = [
+            {"timestamp": "2026-10-20T08:00:00Z", "event_type": "auth_login_succeeded"},
+            {"timestamp": "2026-10-20T09:00:00Z", "event_type": "auth_login_succeeded"},
+        ]
+        session = _mock_session(rows)
+        result = auth_failure_rate_by_day(session, T0, T2)
+        assert len(result) == 1
+        assert result[0]["failed"] == 0
+        assert result[0]["succeeded"] == 2
+        assert result[0]["total"] == 2
+        assert result[0]["failure_rate"] == 0.0
+
+
+class TestMetricDMultipleDays:
+    """auth_failure_rate_by_day — multiple days."""
+
+    def test_multiple_days(self) -> None:
+        """5. Events across different days produce separate records."""
+        rows = [
+            {"timestamp": "2026-10-20T08:00:00Z", "event_type": "auth_login_failed"},
+            {"timestamp": "2026-10-20T09:00:00Z", "event_type": "auth_login_succeeded"},
+            {"timestamp": "2026-10-21T08:00:00Z", "event_type": "auth_login_succeeded"},
+            {"timestamp": "2026-10-21T09:00:00Z", "event_type": "auth_login_succeeded"},
+            {"timestamp": "2026-10-21T10:00:00Z", "event_type": "auth_login_failed"},
+        ]
+        session = _mock_session(rows)
+        result = auth_failure_rate_by_day(session, T0, T2)
+        assert len(result) == 2
+
+        d20 = next(r for r in result if r["day"] == "2026-10-20")
+        assert d20["failed"] == 1
+        assert d20["succeeded"] == 1
+        assert d20["total"] == 2
+        assert d20["failure_rate"] == 0.5
+
+        d21 = next(r for r in result if r["day"] == "2026-10-21")
+        assert d21["failed"] == 1
+        assert d21["succeeded"] == 2
+        assert d21["total"] == 3
+        assert round(d21["failure_rate"], 10) == round(1 / 3, 10)
+
+
+class TestMetricDUTCOffsets:
+    """6. Offsets → UTC grouping is correct."""
+
+    def test_utc_day_correct_with_offsets(self) -> None:
+        rows = [
+            # UTC: 2026-10-20 23:00 (local 2026-10-20 18:00 -05:00)
+            {"timestamp": "2026-10-20T18:00:00-05:00", "event_type": "auth_login_failed"},
+            # UTC: 2026-10-21 01:00 (local 2026-10-21 01:00Z)
+            {"timestamp": "2026-10-21T01:00:00Z", "event_type": "auth_login_succeeded"},
+            # UTC: 2026-10-20 10:00
+            {"timestamp": "2026-10-20T10:00:00Z", "event_type": "auth_login_failed"},
+        ]
+        session = _mock_session(rows)
+        result = auth_failure_rate_by_day(session, T0, T2)
+
+        d20 = next(r for r in result if r["day"] == "2026-10-20")
+        d21 = next(r for r in result if r["day"] == "2026-10-21")
+
+        assert d20["failed"] == 2  # 10:00Z + 18:00-05:00 (UTC 23:00)
+        assert d20["succeeded"] == 0
+        assert d20["failure_rate"] == 1.0
+
+        assert d21["failed"] == 0
+        assert d21["succeeded"] == 1
+        assert d21["failure_rate"] == 0.0
+
+
+class TestMetricDSQLFilters:
+    """7-8. SQL uses both event types; start/end filters correct."""
+
+    def test_both_event_types_in_filter(self) -> None:
+        session, captured = _mock_session_with_captured_stmt([])
+        auth_failure_rate_by_day(session, T0, T1)
+        assert len(captured) == 1
+        stmt_str = str(captured[0])
+        # The SQL filter uses an IN clause for both event types
+        # (SQLAlchemy compiles to POSTCOMPILE bind parameters)
+        assert "event_type IN" in stmt_str
+
+    def test_timestamp_range_filters(self) -> None:
+        session, captured = _mock_session_with_captured_stmt([])
+        start = datetime(2026, 10, 20, 0, 0, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 10, 27, 0, 0, 0, tzinfo=timezone.utc)
+        auth_failure_rate_by_day(session, start, end)
+        assert len(captured) == 1
+        stmt_str = str(captured[0])
+        assert ">=" in stmt_str
+        assert "<" in stmt_str
+
+
+class TestMetricDJSONSafety:
+    """9-11. JSON safety: dumps, ints, float."""
+
+    def test_json_dumps_works(self) -> None:
+        rows = [
+            {"timestamp": "2026-10-20T08:00:00Z", "event_type": "auth_login_failed"},
+            {"timestamp": "2026-10-20T09:00:00Z", "event_type": "auth_login_succeeded"},
+        ]
+        session = _mock_session(rows)
+        result = auth_failure_rate_by_day(session, T0, T2)
+        serialized = json.dumps(result)
+        assert isinstance(serialized, str)
+
+    def test_fields_are_correct_types(self) -> None:
+        rows = [
+            {"timestamp": "2026-10-20T08:00:00Z", "event_type": "auth_login_failed"},
+            {"timestamp": "2026-10-20T09:00:00Z", "event_type": "auth_login_succeeded"},
+        ]
+        session = _mock_session(rows)
+        result = auth_failure_rate_by_day(session, T0, T2)
+        assert len(result) == 1
+        r = result[0]
+        assert isinstance(r["day"], str)
+        assert isinstance(r["failed"], int)
+        assert isinstance(r["succeeded"], int)
+        assert isinstance(r["total"], int)
+        assert isinstance(r["failure_rate"], float)
