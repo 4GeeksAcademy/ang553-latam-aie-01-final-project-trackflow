@@ -1,0 +1,1 @@
+"""Telemetry analysis package — Pandas-based pipeline for operational metrics."""
