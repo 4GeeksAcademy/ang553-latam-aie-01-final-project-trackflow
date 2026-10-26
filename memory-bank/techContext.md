@@ -114,6 +114,16 @@
 - `uis/backoffice/lib/operationalSnapshot.ts` funciona como capa de integracion entre la logica compartida de `src/` y los componentes visuales del dashboard.
 - `src/package.json` define el alcance ESM de `src/` para resolver la compatibilidad de imports con las aplicaciones Next.js sin modificar ni duplicar la logica de negocio.
 
+### Parte 2 — Pipeline de Desempeño de Negocio (Fase 1)
+
+- `data/process/weekly_performance.py` contiene transformaciones puras por almacén, cliente y semana para `inbound_units_count`, `outbound_orders_count`, `stockout_events_count` y `discrepancy_events_count`; las semanas son ISO en UTC y la extracción usa el intervalo semiabierto `[week_start, next_week_start)`.
+- `data/pipelines/extraction.py` realiza extracción SQL read-only. La extracción configura `REPEATABLE READ, READ ONLY`; está implementado, pero aún no se ha verificado contra un servidor PostgreSQL real.
+- La clasificación outbound usa lectura auxiliar de StockExit/SKU. La transformación mantiene evidencia explícita de deduplicación y conflictos en diagnósticos separados de los agregados.
+- Los cuatro conteos están limitados al rango de PostgreSQL `integer` (0 a 2,147,483,647); `discrepancy_rate` se calcula con `Decimal`.
+- El DDL destino está definido explícitamente en `infra/sql/reporting_weekly_warehouse_client_performance.sql`.
+- `aggregate_integer_overflow` señala un conteo fuera de rango y bloquea los agregados de esa transformación; la futura validación de publicación deberá tratar esta condición como bloqueante.
+- UPSERT/publicación, Prefect, endpoints de reporting y certificación de cobertura no forman parte de lo implementado en esta fase.
+
 ## Backend: servicios API (FastAPI)
 
 ### Stack backend

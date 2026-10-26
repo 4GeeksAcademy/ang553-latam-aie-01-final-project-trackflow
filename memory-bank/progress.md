@@ -2,27 +2,38 @@
 
 ## Estado actual
 
-- Fase 1 — auditoría y consumer tracing completada.
-- Baseline formal creado en `docs/serialization-audit.md`.
-- Fase 2 — implementación de response contracts completada.
-- Fase 2.1 completada.
-- Fase 2.2 completada.
-- Fase 2.3 completada.
-- Fase 2.4 completada.
-- Fase 2.5 completada.
-- Fase 3 implementada y auditada.
-- Fase 1.1 completada: `inventory_stock_insufficient` se construye,
-	captura y persiste mediante `persist_backend_telemetry_best_effort`
-	con sesión independiente; un fallo de telemetría no altera el
-	HTTP 400 insufficient_stock; tests focalizados de StockExit (17/17 pass).
-- Eventos implementados: `backoffice_section_entered`,
-	`inventory_workflow_started`, `inventory_workflow_abandoned`,
-	`auth_login_succeeded`, `auth_login_failed`,
-	`auth_password_reset_requested`, `auth_password_reset_completed`,
-	`inventory_validation_failed`, `api_request_failed` e
-	`inventory_stock_insufficient`.
-- QA de Fase 3: compileall PASS; pytest bloqueado por `tinydb` ausente;
-	runtime frontend no disponible; diagnósticos estáticos limpios.
+- Parte 2 — Pipeline de Desempeño de Negocio: Fase 1 (núcleo de extracción y
+	transformación) completada; el pipeline completo no está terminado.
+
+### Parte 2 — Fase 1 completada
+
+- Transformaciones semanales de los cuatro KPIs oficiales, con normalización y
+	validación de eventos.
+- Deduplicación y clasificación outbound mediante evidencia auxiliar;
+	extracción SQL de solo lectura y preparación de evidencia de movimientos
+	entre semanas.
+- DDL explícito para `reporting.weekly_warehouse_client_performance`.
+- Diagnósticos de calidad y overflow compatible con PostgreSQL `integer`.
+- Suite focalizada: **73 pruebas PASS**.
+
+### En progreso / pendiente
+
+- Publicación transaccional y UPSERT; control persistente de corridas;
+	idempotencia y reconciliación.
+- Pruebas de integración con PostgreSQL aislado; orquestación Prefect 3;
+	reintentos, caché y CLI.
+- Endpoints en `services/reporting/` y QA integral.
+
+### Limitaciones de Parte 2
+
+- PostgreSQL real aún no se ha probado.
+- Cobertura incompleta de `stock_threshold_triggered` e `inventory_discrepancy_detected`.
+- Equivalencia entre movimientos `dispatch` y pedidos comerciales no certificada.
+- Cuatro fallos de regresión y un problema de colección preexistentes,
+  contrastados con el commit base.
+
+**Siguiente paso:** Fase 2 — publicación transaccional, UPSERT idempotente y
+control de ejecución.
 
 ## Completado relevante
 
