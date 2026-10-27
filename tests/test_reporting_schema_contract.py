@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 from dataclasses import fields
 
-from data.process.weekly_performance import WeeklyAggregate
+from pipelines.weekly_performance import WeeklyAggregate
 
 
 ROOT = Path(__file__).resolve().parents[1]

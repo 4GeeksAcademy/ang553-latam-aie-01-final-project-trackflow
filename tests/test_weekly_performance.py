@@ -11,7 +11,7 @@ from uuid import UUID
 
 import pytest
 
-from data.process.weekly_performance import (
+from pipelines.weekly_performance import (
     INBOUND_ORDER_CREATED,
     INVENTORY_DISCREPANCY_DETECTED,
     OUTBOUND_ORDER_CREATED,

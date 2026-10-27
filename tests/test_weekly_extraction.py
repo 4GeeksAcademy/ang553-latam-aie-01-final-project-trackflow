@@ -13,11 +13,11 @@ from uuid import UUID
 import pytest
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
-from data.pipelines.extraction import (
+from pipelines.extraction import (
     WeeklyExtractionError,
     extract_weekly_inputs,
 )
-from data.process.weekly_performance import (
+from pipelines.weekly_performance import (
     INBOUND_ORDER_CREATED,
     INVENTORY_DISCREPANCY_DETECTED,
     OFFICIAL_EVENT_TYPES,

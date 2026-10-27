@@ -16,13 +16,21 @@
 - Diagnósticos de calidad y overflow compatible con PostgreSQL `integer`.
 - Suite focalizada: **73 pruebas PASS**.
 
+### Parte 2 — Fase R1 completada
+
+- Migración funcional completada: el paquete activo del pipeline es `pipelines/`.
+- `pipelines/extraction.py` y `pipelines/weekly_performance.py` reutilizan la extracción y transformación de Fase 1; no se implementó una segunda lógica ETL.
+- Los originales bajo `data/` se conservan intactos como referencia histórica.
+- Los imports de pruebas focalizadas apuntan al paquete `pipelines`; setuptools incluye `pipelines*` en el descubrimiento de paquetes.
+- Verificación final: **73 pruebas focalizadas PASS**.
+- Los contratos empresariales y el DDL de reporting no se modificaron.
+
 ### En progreso / pendiente
 
-- Publicación transaccional y UPSERT; control persistente de corridas;
-	idempotencia y reconciliación.
-- Pruebas de integración con PostgreSQL aislado; orquestación Prefect 3;
-	reintentos, caché y CLI.
-- Endpoints en `services/reporting/` y QA integral.
+- Fase 2.1 — `pipelines/publication.py`: publicación transaccional y UPSERT;
+	control persistente de corridas, idempotencia y reconciliación.
+- Integración y pruebas con PostgreSQL real todavía pendientes.
+- Prefect, reintentos, caché, CLI y endpoints de reporting todavía pendientes.
 
 ### Limitaciones de Parte 2
 
@@ -32,8 +40,8 @@
 - Cuatro fallos de regresión y un problema de colección preexistentes,
   contrastados con el commit base.
 
-**Siguiente paso:** Fase 2 — publicación transaccional, UPSERT idempotente y
-control de ejecución.
+**Siguiente paso:** implementar `pipelines/publication.py` en Fase 2.1, sujeto a
+revisión y autorización arquitectónica.
 
 ## Completado relevante
 
