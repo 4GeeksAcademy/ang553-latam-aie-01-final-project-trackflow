@@ -114,6 +114,24 @@
 - `uis/backoffice/lib/operationalSnapshot.ts` funciona como capa de integracion entre la logica compartida de `src/` y los componentes visuales del dashboard.
 - `src/package.json` define el alcance ESM de `src/` para resolver la compatibilidad de imports con las aplicaciones Next.js sin modificar ni duplicar la logica de negocio.
 
+### Parte 2 — Pipeline de Desempeño de Negocio (Fase 1)
+
+- Los módulos activos del pipeline están bajo el paquete raíz `pipelines/`: `pipelines/weekly_performance.py` contiene transformaciones puras por almacén, cliente y semana; `pipelines/extraction.py` realiza extracción SQL read-only.
+- Los archivos originales de Fase 1 bajo `data/` se conservan como referencia histórica, no deben mantenerse como segunda implementación activa y no se deben consultar mediante el agente cuando estén excluidos por la política de Copilot.
+- La reorganización a `pipelines/` fue autorizada por el equipo docente debido a las exclusiones de contenido de Copilot sobre `data/`.
+- Las pruebas focalizadas importan desde `pipelines`; el descubrimiento de paquetes setuptools en `pyproject.toml` incluye `pipelines*`, manteniendo los patrones previos para `services.api*` y `services.telemetry*`.
+- El cambio de ubicación no modificó los contratos empresariales ni el DDL destino `reporting.weekly_warehouse_client_performance`.
+- La aceptación por el evaluador de la ruta alternativa `pipelines/pipeline.py` frente a la ruta indicada por el ticket (`data/pipelines/pipeline.py`) sigue pendiente de confirmación explícita.
+- Las transformaciones producen `inbound_units_count`, `outbound_orders_count`, `stockout_events_count` y `discrepancy_events_count`; las semanas son ISO en UTC y la extracción usa el intervalo semiabierto `[week_start, next_week_start)`.
+- La extracción configura `REPEATABLE READ, READ ONLY`; está implementado, pero aún no se ha verificado contra un servidor PostgreSQL real.
+- La clasificación outbound usa lectura auxiliar de StockExit/SKU. La transformación mantiene evidencia explícita de deduplicación y conflictos en diagnósticos separados de los agregados.
+- Los cuatro conteos están limitados al rango de PostgreSQL `integer` (0 a 2,147,483,647); `discrepancy_rate` se calcula con `Decimal`.
+- El DDL destino permanece definido en `infra/sql/reporting_weekly_warehouse_client_performance.sql`.
+- `aggregate_integer_overflow` señala un conteo fuera de rango y bloquea los agregados de esa transformación; la futura validación de publicación deberá tratar esta condición como bloqueante.
+- **Fase R1 completada:** 73 pruebas focalizadas PASS.
+- Fase 2.1 — UPSERT/publicación transaccional, integración PostgreSQL real, Prefect, CLI y endpoints de reporting siguen pendientes; también permanece pendiente la certificación de cobertura.
+- Se conservan las limitaciones conocidas: cobertura incompleta de `stock_threshold_triggered` e `inventory_discrepancy_detected`, y equivalencia entre movimientos `dispatch` y pedidos comerciales no certificada.
+
 ## Backend: servicios API (FastAPI)
 
 ### Stack backend
