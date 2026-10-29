@@ -29,7 +29,7 @@ La implementación actual no equivale a una finalización integral:
 - no están demostrados de extremo a extremo locks, fencing, atomicidad, concurrencia, recuperación y persistencia real;
 - el Memory Bank conserva estados históricos contradictorios, por lo que el código y las pruebas deben prevalecer como evidencia técnica, sin modificar dicho banco fuera de una autorización específica.
 
-El paquete activo es `pipelines/`, resultado de una reestructuración autorizada por el docente. A1 exige literalmente `data/pipelines/pipeline.py`; la aceptación formal de `pipelines/` como ruta alternativa por parte del evaluador continúa pendiente. C1.3 no autoriza mover ni duplicar rutas de código.
+El único paquete activo es `pipelines/`, resultado de una reestructuración autorizada por el docente y confirmado como decisión arquitectónica permanente por Usuario + ChatGPT. El flow Prefect 3 y la CLI se implementarán en `pipelines/pipeline.py`; el comando preferido será `python -m pipelines.pipeline`. A1 menciona históricamente `data/pipelines/pipeline.py`, y la aceptación de la ruta activa por el evaluador continúa pendiente, pero esa divergencia no autoriza wrappers, copias, symlinks ni una segunda implementación. Durante este hito no se modificarán archivos dentro de `data/`.
 
 La evidencia deberá distinguir tres niveles que no son intercambiables:
 
@@ -87,21 +87,21 @@ Estados permitidos: **No implementado**, **Implementado sin validación real**, 
 
 | ID | Requisito | Fuente exacta y autoridad | Estado actual | Archivo o función responsable | Evidencia existente | Prueba de aceptación necesaria | Fase | Dependencia o bloqueo |
 |---|---|---|---|---|---|---|---|---|
-| RQ-01 | Prefect 3 con al menos un `@flow` y tres o más `@task`; extracción, transformación y carga son tasks independientes. | A1 oficial; A3 § Prefect Orchestration. | No implementado | Ruta oficial `data/pipelines/pipeline.py` y núcleo activo `pipelines/` | No hay dependencia Prefect ni decoradores; existe un test estático que afirma su ausencia en el coordinador. | Inspección estática de la ruta oficial, tests del flow, ≥3 tasks y ejecución controlada. | F3 | Resolver arquitectura de ruta sin duplicar ETL. |
+| RQ-01 | Prefect 3 con al menos un `@flow` y tres o más `@task`; extracción, transformación y carga son tasks independientes. | A1 oficial; A3 § Prefect Orchestration; decisión arquitectónica permanente. | No implementado | `pipelines/pipeline.py`, reutilizando el núcleo raíz | No hay dependencia Prefect ni decoradores; existe un test estático que afirma su ausencia en el coordinador. | Inspección de `pipelines/pipeline.py`, tests del flow, ≥3 tasks y ejecución controlada. | F3 | Dependencias Prefect autorizadas; aceptación del evaluador pendiente. |
 | RQ-02 | Operaciones externas con `retries > 0`, `retry_delay_seconds` y justificación; nunca reintentar automáticamente un COMMIT incierto. | A1 oficial; A3 Prefect; salvaguarda A4 para commit incierto. | No implementado | Tasks externas futuras; `pipelines/coordinator.py` conserva `commit_uncertain` | Manejo conservador de commit ya existe fuera de Prefect. | Tests por task de retries/delay y prohibición de retry post-COMMIT incierto. | F3 | Política y versión Prefect. |
 | RQ-03 | Task opcional ejecutada con `return_state=True`; su fallo se tolera sin ocultarlo. | A1 oficial. | No implementado | Flow Prefect futuro | No existe implementación. | Test de fallo opcional, state retornado, evidencia visible y continuidad controlada. | F3 | Definir cuál task es verdaderamente opcional. |
 | RQ-04 | Caché de transformación mediante `cache_key_fn` y `cache_expiration`, reutilizando resultados seguros de la última hora. | A1 oficial; A3 diseño de orquestación. | No implementado | Task de transformación que delegue en `pipelines/weekly_performance.py` | No hay caché Prefect. | Tests de clave estable, expiración de una hora y no reutilización ante inputs, semana, reglas o evidencia diferentes. | F3 | Confirmar API exacta en la versión Prefect 3 seleccionada. |
 | RQ-05 | ETL idempotente apoyado en `UNIQUE (warehouse, client_id, week_start)`. | A1 oficial; A2 destino; A3 Load. | Validado con mocks o pruebas unitarias | `pipelines/publication.py`; DDL oficial | UPSERT, reconciliación y tests de insert/update/no-op. | Integración PostgreSQL aislada con repetición y preservación de identidad. | F2 | Base desechable autorizada. |
 | RQ-06 | Registrar por corrida inicio, fin, registros procesados, estado y errores. | A1 oficial; A3 run history. | Validado con mocks o pruebas unitarias | `pipelines/run_store.py`; `reporting_pipeline_control.sql` | Modelos/SQL y tests de run store; referencias Prefect opcionales. | Integración real para éxito, bloqueo y fallo con conteos y errores. | F2/F3 | Alinear conteos oficiales con campos actuales. |
-| RQ-07 | CLI exacta `python data/pipelines/pipeline.py` para ejecución completa. | A1 oficial. | No implementado | Ruta literal oficial y núcleo activo `pipelines/` | No existe `data/pipelines/pipeline.py` ejecutable. | Ejecución reproducible desde raíz, inspección estática y códigos de salida. | F1/F4 | Un wrapper mínimo podría no satisfacer la inspección de flow/tasks. |
-| RQ-08 | Documentar comando CLI y frecuencia semanal. | A1 oficial; A2 frecuencia de lunes. | No implementado | Documentación futura junto a la ruta oficial | No existe documentación del comando completo. | Revisión de comando, argumentos, frecuencia, ejemplos, seguridad y estados. | F4 | RQ-07. |
+| RQ-07 | CLI completa mediante `python -m pipelines.pipeline`; A1 conserva como referencia histórica `python data/pipelines/pipeline.py`. | A1 oficial; decisión arquitectónica permanente. | No implementado | `pipelines/pipeline.py` | No existe todavía la entrada CLI raíz; no se creará compatibilidad bajo `data/`. | Ejecución reproducible desde raíz con `python -m pipelines.pipeline`, inspección del módulo y códigos de salida. | F4 | Runner estable; aceptación del evaluador pendiente. |
+| RQ-08 | Documentar el comando preferido y la frecuencia semanal, explicando la divergencia histórica. | A1 oficial; A2 frecuencia de lunes; decisión arquitectónica permanente. | No implementado | Documentación futura del módulo raíz | No existe documentación del comando completo. | Revisión de comando, argumentos, frecuencia, ejemplos, seguridad, estados y nota de ruta. | F4 | RQ-07. |
 | RQ-09 | Escribir en la tabla oficial sin alterar telemetría técnica. | A1 oficial; A2 contrato y restricciones; A3 Load. | Validado con mocks o pruebas unitarias | `pipelines/publication.py`; DDL oficial | Tabla y DDL correctos; pruebas contractuales; separación técnica inspeccionada. | PostgreSQL real y regresión que proteja `telemetry_events`, `services/telemetry/analysis.py` y `/telemetry/report`. | F2/F6 | PostgreSQL aislado. |
 | RQ-10 | Producir los cuatro KPIs y cinco campos calculados con grano, dimensiones, eventos y fórmula A2. | A1 valores coherentes; A2 contrato empresarial; A3 Aggregation. | Validado con mocks o pruebas unitarias | `pipelines/weekly_performance.py` | Suite unitaria de normalización, deduplicación, suma, conteos y tasa. | Integración aislada y evidencia separada de cobertura empresarial; validar `client_id` texto y ambos almacenes. | F2/F6 | Decisión outbound; productores incompletos. |
 | RQ-11 | GET semanal con `week_start` opcional y fallback a última semana publicada apropiada. | A1 endpoints; A2 contrato HTTP; A3 Endpoint A. | No implementado | `services/reporting/` futuro | Diseño y ejemplo contractual; no hay ruta. | HTTP/OpenAPI, forma `week_start` + `entries`, autorización, errores, decimal y PostgreSQL. | F5 | Publicación estable y permisos. |
 | RQ-12 | GET de última corrida con estado y metadatos. | A1 endpoints; A2 contrato HTTP; A3 Endpoint B. | No implementado | `services/reporting/` + `pipelines/run_store.py` | Run store existe; endpoint no. | HTTP/OpenAPI para estados, ausencia de corridas, errores y autorización. | F5 | Modelo de respuesta y permisos. |
 | RQ-13 | POST manual que solicita una ejecución del flow. | A1 endpoints; A2 contrato HTTP; A3 Endpoint C. | No implementado | `services/reporting/` + solicitud durable + Prefect | A3 define request por semana, `202` solo tras registro durable, ausencia de conflicto y programación confirmada; 202 no implica publicación. | Tests HTTP, auth, 202/409/422/503, duplicados, concurrencia, timeout y reconciliación. | F5/F6 | Prefect, almacenamiento durable y permisos. |
-| RQ-14 | Correspondencia con `PIPELINE_DESIGN.md` sin duplicar ETL. | A1 oficial; A3 diseño aprobado. | Implementado sin validación real | Paquete activo `pipelines/` y adaptadores futuros | El núcleo refleja gran parte de A3, pero cambió la ubicación. | Matriz diseño→código y revisión de desviaciones. | F1/F6 | Resolver ruta oficial. |
-| RQ-15 | Cumplir ruta literal e inspección estática de `data/pipelines/pipeline.py` preservando el núcleo `pipelines/`. | A1 oficial; autorización docente histórica en A5. | Bloqueado | Arquitectura de compatibilidad por decidir | El archivo literal no existe; un wrapper simple puede fallar si A1 inspecciona allí flow/tasks. | Decisión aprobada y prueba estática/CLI que demuestre cumplimiento sin duplicación. | F1/F4 | Usuario + ChatGPT deben elegir arquitectura. |
+| RQ-14 | Correspondencia con `PIPELINE_DESIGN.md` sin duplicar ETL y con implementación exclusiva en el paquete raíz. | A1 oficial; A3 diseño aprobado; decisión arquitectónica permanente. | Implementado sin validación real | `pipelines/` y futuro `pipelines/pipeline.py` | El núcleo refleja gran parte de A3; la ubicación fue reestructurada con autorización docente. | Matriz diseño→código, ausencia de duplicación y revisión de desviaciones. | F1/F6 | Aceptación del evaluador pendiente. |
+| RQ-15 | Registrar y gestionar la divergencia entre la ruta histórica A1 y la ubicación obligatoria `pipelines/pipeline.py`, sin crear compatibilidad en `data/`. | A1 oficial; autorización docente histórica en A5; decisión permanente de Usuario + ChatGPT. | Bloqueado | Evidencia documental y comunicación con el evaluador; no corresponde crear código en `data/` | La arquitectura interna ya está decidida; falta aceptación formal externa. | Confirmación del evaluador de que `pipelines/pipeline.py` y `python -m pipelines.pipeline` satisfacen la evaluación. | F1/F4 | Bloqueo externo; no se resuelve mediante wrapper, symlink o copia. |
 | RQ-16 | Atomicidad, locks, fencing y concurrencia demostrados con PostgreSQL real aislado. | Diseño de publicación/concurrencia, A3; código/tests, A4. | Implementado sin validación real | `pipelines/publication.py`, `concurrency.py`, `coordinator.py` | Fakes y contratos; pruebas reales están condicionadas o funcionan como guardas de no certificación. | Dos conexiones reales, rollback, atomicidad, fencing, idempotencia y recuperación. | F2 | PostgreSQL desechable autorizado. |
 | RQ-17 | Distinguir fixtures técnicos, integración real y certificación de cobertura empresarial. | A2 restricciones; A3 § Cobertura; salvaguarda adicional A4. | Bloqueado | Gates de cobertura en `weekly_performance.py` y `coordinator.py`; productores externos | El código rechaza certificación sintética; faltan productores y equivalencia comercial. | Evidencia de productores reales, reconciliación y cobertura del periodo; nunca inferir cero de ausencia. | F6 | `stock_threshold_triggered`, `inventory_discrepancy_detected`, `client_id` y `dispatch`. |
 
@@ -117,9 +117,9 @@ Las seis fases siguientes se conservan provisionalmente porque sus dependencias 
 
 **Contratos empresariales afectados:** ninguno en ejecución; fija la correspondencia A1/A2/A3 y las dos decisiones semánticas sin cambiar KPIs.
 
-**Archivos autorizables previstos:** `.codex/trackflow-completion-plan.md` durante planificación; para implementación, la ruta oficial `data/pipelines/pipeline.py` y adaptadores mínimos solo después de decidir la arquitectura.
+**Archivos autorizables previstos:** `.codex/trackflow-completion-plan.md` durante planificación. La implementación futura usará exclusivamente `pipelines/pipeline.py`; `data/` queda fuera del alcance de escritura.
 
-**Riesgos/autorizaciones:** una solución tipo wrapper podría reutilizar el núcleo pero fallar una inspección estática que espere `@flow`/`@task` en la ruta literal.
+**Riesgos/autorizaciones:** el evaluador podría exigir la ruta literal histórica. Ese riesgo se gestiona mediante confirmación externa, no creando una segunda superficie técnica.
 
 **Objetivo:** establecer el inventario verificable del pipeline y un contrato de ejecución completo antes de añadir orquestación.
 
@@ -140,7 +140,7 @@ Las seis fases siguientes se conservan provisionalmente porque sus dependencias 
 
 **QA automatizado:** inspecciones contractuales existentes y suite focalizada que el plan aprobado autorice.
 
-**Gate de salida:** matriz fuente→requisito→prueba cerrada para todo criterio A1 disponible; decisión documentada sobre ruta o wrapper; ninguna duplicación de ETL.
+**Gate de salida:** matriz fuente→requisito→prueba cerrada; regla de ubicación transmitida a implementadores; evidencia de aceptación o riesgo explícito del evaluador; ninguna duplicación de ETL.
 
 **QA manual intermedio:** solo si resulta necesario para resolver una dependencia arquitectónica material que impida continuar.
 
@@ -187,9 +187,9 @@ Las seis fases siguientes se conservan provisionalmente porque sus dependencias 
 
 **Contratos empresariales afectados:** secuencia semanal, metadatos de corrida e idempotencia; no modifica fórmulas ni tabla.
 
-**Archivos autorizables previstos:** `data/pipelines/pipeline.py`, módulos adaptadores mínimos bajo `pipelines/` si son necesarios, tests Prefect y archivos Python de dependencias expresamente aprobados.
+**Archivos autorizables previstos:** `pipelines/pipeline.py`, módulos existentes bajo `pipelines/` solo cuando sea necesario, tests Prefect y archivos Python de dependencias expresamente aprobados. Ningún archivo bajo `data/`.
 
-**Riesgos/autorizaciones:** ruta literal frente a paquete activo, API exacta de Prefect 3, caché de una hora y retries inseguros tras resultados inciertos.
+**Riesgos/autorizaciones:** aceptación externa de la ruta raíz, API exacta de Prefect 3, caché de una hora y retries inseguros tras resultados inciertos.
 
 **Dependencia:** contrato integral estable; las garantías PostgreSQL críticas deben estar probadas o su riesgo aceptado explícitamente.
 
@@ -221,13 +221,13 @@ Las seis fases siguientes se conservan provisionalmente porque sus dependencias 
 
 ### Fase propuesta: CLI operativa
 
-**IDs principales:** RQ-07, RQ-08 y, si se autoriza, compatibilidad RQ-15.
+**IDs principales:** RQ-07, RQ-08 y documentación del bloqueo externo RQ-15.
 
 **Contratos empresariales afectados:** frecuencia semanal, selección de semana cerrada y entrada reproducible al flow.
 
-**Archivos autorizables previstos:** `data/pipelines/pipeline.py`, su documentación aprobada y tests CLI; no se duplicará ETL en la entrada.
+**Archivos autorizables previstos:** `pipelines/pipeline.py`, su documentación aprobada y tests CLI; no se duplicará ETL ni se modificará `data/`.
 
-**Riesgos/autorizaciones:** el comando debe ser literalmente ejecutable desde raíz y coexistir con la inspección estática de A1.
+**Riesgos/autorizaciones:** `python -m pipelines.pipeline` debe ser ejecutable desde la raíz; la diferencia frente al comando histórico debe permanecer documentada hasta la aceptación del evaluador.
 
 **Dependencia:** runner estable.
 
@@ -236,7 +236,7 @@ Las seis fases siguientes se conservan provisionalmente porque sus dependencias 
 **Entregables:**
 
 - comando para ejecutar una semana explícita;
-- ejecución CLI reproducible del flow aprobado;
+- ejecución CLI reproducible del flow mediante `python -m pipelines.pipeline`;
 - comandos o modos de dry-run/validación y consulta de estado, si son aprobados;
 - salida estructurada y códigos de proceso estables;
 - documentación de variables requeridas y seguridad.
@@ -250,7 +250,7 @@ Las seis fases siguientes se conservan provisionalmente porque sus dependencias 
 
 **QA automatizado:** parsing, validación, códigos de salida y delegación al runner mediante dobles controlados.
 
-**Gate de salida:** comando documentado y reproducible, sin lógica ETL duplicada, con códigos de salida probados.
+**Gate de salida:** `python -m pipelines.pipeline` documentado y reproducible, sin lógica ETL duplicada, con códigos de salida probados y divergencia histórica reportada.
 
 **QA manual intermedio:** solo si es necesaria para desbloquear una dependencia material; la validación integral de comportamiento CLI queda en la fase final.
 
@@ -332,11 +332,11 @@ Las seis fases siguientes se conservan provisionalmente porque sus dependencias 
 
 ## Decisiones que requieren autorización
 
-- arquitectura para que `data/pipelines/pipeline.py` defina o exponga el flow y las tasks exigidas por A1 mientras reutiliza `pipelines/`, sin asumir que un wrapper mínimo pasará la evaluación estática;
+- aceptación formal del evaluador para `pipelines/pipeline.py` y `python -m pipelines.pipeline` frente a la ruta/comando históricos de A1; no se autoriza una alternativa bajo `data/`;
 - decisión empresarial sobre si `outbound_orders_count` cuenta literalmente todos los `outbound_order_created` de A2 o conserva la clasificación `dispatch`/`loss` de A3; en ambos casos debe documentarse la limitación movimiento→pedido;
 - topología del PostgreSQL desechable, aplicación y limpieza de DDL;
 - archivos de dependencias que podrán modificarse para incorporar Prefect 3 y herramientas CLI;
-- ubicación del flow, runner y CLI dentro de la arquitectura actual;
+- detalles internos del flow, runner y CLI dentro de `pipelines/pipeline.py`, sin cambiar su ubicación obligatoria;
 - política de retries, caché, timeouts y recuperación de commits inciertos;
 - autorización por roles, filtros adicionales y detalles de error de los endpoints; la existencia del POST manual ya es obligatoria por A1/A2;
 - alcance del E2E y credenciales temporales autorizadas;
@@ -345,7 +345,7 @@ Las seis fases siguientes se conservan provisionalmente porque sus dependencias 
 - actualización posterior de documentación protegida y Memory Bank;
 - autorización de operaciones Git y cierre del hito.
 
-Conforme a `AGENTS.md`, cualquier cambio futuro en `package.json`, `package-lock.json`, `tsconfig.json`, `README.md`, `CONTEXT.md`, la estructura base, `milestones/` o lógica protegida requiere autorización expresa. Para este plan también deberán autorizarse los archivos de dependencias Python si incorporar Prefect 3 altera `pyproject.toml`, `uv.lock` o requisitos del servicio, así como cualquier cambio estructural para el wrapper histórico.
+Conforme a `AGENTS.md`, cualquier cambio futuro en `package.json`, `package-lock.json`, `tsconfig.json`, `README.md`, `CONTEXT.md`, la estructura base, `milestones/` o lógica protegida requiere autorización expresa. También deberán autorizarse los archivos de dependencias Python si incorporar Prefect 3 altera `pyproject.toml`, `uv.lock` o requisitos del servicio. La decisión de ubicación no autoriza cambios estructurales bajo `data/`.
 
 ## Evidencia para Project Learnings
 

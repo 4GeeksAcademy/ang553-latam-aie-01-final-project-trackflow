@@ -43,6 +43,22 @@ No concede autorización para implementar el borrador de plan ni para modificar 
 - El orquestador no puede inventar fases, ampliar el alcance, adelantar trabajo no autorizado ni convertir un borrador en autorización.
 - Una fase incompleta permanece `bloqueada` o `pendiente`; no se presenta como terminada por conveniencia del calendario.
 
+## Ubicación obligatoria del pipeline de TrackFlow
+
+- El único paquete Python activo del pipeline de este hito es `pipelines/`, en la raíz del repositorio.
+- Los módulos existentes de extracción, transformación, publicación, control de corridas y coordinación permanecen en `pipelines/`.
+- El futuro flow de Prefect 3 y su entrada CLI se implementarán en `pipelines/pipeline.py`.
+- El comando preferido de ejecución será `python -m pipelines.pipeline` y deberá verificarse durante la fase CLI.
+- El orquestador debe transmitir explícitamente esta regla a todo subagente implementador antes de delegar trabajo del pipeline.
+- No se creará ni mantendrá una segunda implementación bajo `data/pipelines/`.
+- No se crearán wrappers, symlinks, copias ni adaptadores de compatibilidad bajo `data/pipelines/`.
+- No se moverán nuevamente la extracción, transformación, publicación ni coordinación existentes.
+- No se modificará ningún archivo dentro de `data/` durante el desarrollo de este hito. Sus documentos pueden leerse como fuentes históricas o de diseño.
+- Los endpoints de reporting se implementarán bajo `services/reporting/` y reutilizarán el paquete raíz sin duplicar lógica empresarial en routers.
+- Cualquier cambio posterior de ubicación requiere aprobación explícita de Usuario + ChatGPT.
+
+Codex no carga automáticamente este contrato. Toda sesión futura y toda delegación relacionada con el hito deberán ordenar expresamente su lectura antes de proponer o ejecutar cambios.
+
 ## Corrección autónoma
 
 Dentro de una fase autorizada, el implementador y el orquestador pueden:
