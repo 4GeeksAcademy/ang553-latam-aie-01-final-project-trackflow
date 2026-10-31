@@ -49,7 +49,15 @@ from pipelines.run_store import (
     update_run,
 )
 from pipelines.weekly_performance import (
+    MetricContribution,
+    PreparedWeeklyEvents,
     WeeklyTransformationResult,
+    calculate_discrepancy_events,
+    calculate_inbound_volume,
+    calculate_outbound_throughput,
+    calculate_stockout_frequency,
+    compose_weekly_performance,
+    prepare_weekly_events,
     transform_weekly_performance,
 )
 from pipelines.technical_coverage import (
@@ -97,6 +105,15 @@ class PreparedRun:
     run_id: UUID
     lease: ConfirmedLeaseRight | None
     terminal_result: CoordinatorResult | None = None
+
+
+@dataclass(frozen=True)
+class WeeklyExtractionStage:
+    runtime: PipelineRuntime
+    extracted: WeeklyExtractionResult | None = None
+    operational_audit: OperationalCoverageAudit | None = None
+    failed_stage: str | None = None
+    error: str | None = None
 
 
 def _runtime_id(value: Any) -> str | None:
@@ -158,15 +175,64 @@ def transform_week_task(
     dependency_fingerprint: str,
     rules_version: str,
     technical_coverage_identity: str | None = None,
+    prepared: PreparedWeeklyEvents | None = None,
+    inbound: MetricContribution | None = None,
+    outbound: MetricContribution | None = None,
+    stockouts: MetricContribution | None = None,
+    discrepancies: MetricContribution | None = None,
 ) -> WeeklyTransformationResult:
     """Run the existing pure transformation with a one-hour evidence-aware cache."""
     if extracted.metadata.week_start != week_start:
         raise ValueError("extraction week does not match transformation week")
+    contributions = (inbound, outbound, stockouts, discrepancies)
+    if prepared is not None and all(item is not None for item in contributions):
+        return compose_weekly_performance(
+            prepared,
+            tuple(item for item in contributions if item is not None),
+        )
+    if prepared is not None or any(item is not None for item in contributions):
+        raise ValueError("prepared events and all KPI contributions must be supplied together")
     return transform_weekly_performance(
         extracted.events,
         commercial_order_evidence=extracted.commercial_order_evidence,
         movement_week_evidence=extracted.movement_week_evidence,
     )
+
+
+@task(name="trackflow-prepare-weekly-business-events")
+def prepare_weekly_events_task(
+    extracted: WeeklyExtractionResult,
+    week_start: date,
+) -> PreparedWeeklyEvents:
+    if extracted.metadata.week_start != week_start:
+        raise ValueError("extraction week does not match calculation week")
+    return prepare_weekly_events(
+        extracted.events,
+        movement_week_evidence=extracted.movement_week_evidence,
+    )
+
+
+@task(name="trackflow-calculate-inbound-volume")
+def calculate_inbound_volume_task(prepared: PreparedWeeklyEvents) -> MetricContribution:
+    return calculate_inbound_volume(prepared)
+
+
+@task(name="trackflow-calculate-outbound-throughput")
+def calculate_outbound_throughput_task(
+    prepared: PreparedWeeklyEvents,
+    extracted: WeeklyExtractionResult,
+) -> MetricContribution:
+    return calculate_outbound_throughput(prepared, extracted.commercial_order_evidence)
+
+
+@task(name="trackflow-calculate-stockout-frequency")
+def calculate_stockout_frequency_task(prepared: PreparedWeeklyEvents) -> MetricContribution:
+    return calculate_stockout_frequency(prepared)
+
+
+@task(name="trackflow-calculate-discrepancy-metrics")
+def calculate_discrepancy_metrics_task(prepared: PreparedWeeklyEvents) -> MetricContribution:
+    return calculate_discrepancy_events(prepared)
 
 
 @task(name="trackflow-create-run")
@@ -380,46 +446,32 @@ def optional_observer_task(runtime: PipelineRuntime, week_start: date, run_id: U
         runtime.optional_observer(week_start, run_id)
 
 
-def _run_optional_observer(runtime: PipelineRuntime, week_start: date, run_id: UUID) -> Any:
-    """Expose the non-critical State while never promoting its failure."""
-    state = optional_observer_task(runtime, week_start, run_id, return_state=True)
-    if runtime.optional_state_sink is not None:
-        runtime.optional_state_sink(state)
-    return state
-
-
-@flow(name="trackflow-weekly-performance")
-def weekly_performance_flow(runtime: PipelineRuntime, week_start: date) -> CoordinatorResult:
-    """Orchestrate independent extract, transform and load tasks."""
-    run_id = create_run_task(runtime, week_start)
+@flow(name="trackflow-extract-weekly-warehouse-events")
+def extract_weekly_warehouse_events_flow(
+    runtime: PipelineRuntime,
+    week_start: date,
+) -> WeeklyExtractionStage:
+    """Relay pending outbox rows, audit coverage, then take a read-only snapshot."""
     operational_audit: OperationalCoverageAudit | None = None
     if runtime.source_engine is not None and runtime.source_engine is not runtime.engine:
         relay_state = relay_outbox_task(
             runtime.source_engine, runtime.engine, return_state=True
         )
         if relay_state.is_failed():
-            result = fail_run_task(
+            return WeeklyExtractionStage(
                 runtime,
-                week_start,
-                run_id,
-                "relay",
-                str(relay_state.result(raise_on_failure=False)),
+                failed_stage="relay",
+                error=str(relay_state.result(raise_on_failure=False)),
             )
-            _run_optional_observer(runtime, week_start, run_id)
-            return result
         audit_state = audit_operational_coverage_task(
             runtime.source_engine, runtime.engine, week_start, return_state=True
         )
         if audit_state.is_failed():
-            result = fail_run_task(
+            return WeeklyExtractionStage(
                 runtime,
-                week_start,
-                run_id,
-                "coverage_audit",
-                str(audit_state.result(raise_on_failure=False)),
+                failed_stage="coverage_audit",
+                error=str(audit_state.result(raise_on_failure=False)),
             )
-            _run_optional_observer(runtime, week_start, run_id)
-            return result
         operational_audit = audit_state.result()
         runtime = replace(runtime, coverage=operational_audit.evidence)
     extracted_state = extract_week_task(
@@ -429,32 +481,63 @@ def weekly_performance_flow(runtime: PipelineRuntime, week_start: date) -> Coord
         return_state=True,
     )
     if extracted_state.is_failed():
-        result = fail_run_task(runtime, week_start, run_id, "extract", str(extracted_state.result(raise_on_failure=False)))
-        _run_optional_observer(runtime, week_start, run_id)
-        return result
-    extracted = extracted_state.result()
+        return WeeklyExtractionStage(
+            runtime,
+            failed_stage="extract",
+            error=str(extracted_state.result(raise_on_failure=False)),
+        )
+    return WeeklyExtractionStage(runtime, extracted_state.result(), operational_audit)
+
+
+@flow(name="trackflow-calculate-warehouse-client-indicators")
+def calculate_warehouse_client_indicators_flow(
+    runtime: PipelineRuntime,
+    week_start: date,
+    extracted: WeeklyExtractionResult,
+    operational_audit: OperationalCoverageAudit | None = None,
+) -> WeeklyTransformationResult:
+    """Calculate the four official KPI counters through independent tasks."""
+    prepared = prepare_weekly_events_task(extracted, week_start)
+    inbound = calculate_inbound_volume_task(prepared)
+    outbound = calculate_outbound_throughput_task(prepared, extracted)
+    stockouts = calculate_stockout_frequency_task(prepared)
+    discrepancies = calculate_discrepancy_metrics_task(prepared)
     transformed_state = transform_week_task(
         extracted,
         week_start,
         runtime.dependency_fingerprint,
         runtime.rules_version,
         None if runtime.technical_coverage is None else runtime.technical_coverage.identity,
+        prepared,
+        inbound,
+        outbound,
+        stockouts,
+        discrepancies,
         return_state=True,
     )
     if transformed_state.is_failed():
-        result = fail_run_task(runtime, week_start, run_id, "transform", str(transformed_state.result(raise_on_failure=False)), extracted.metadata.event_count)
-        _run_optional_observer(runtime, week_start, run_id)
-        return result
+        raise RuntimeError(str(transformed_state.result(raise_on_failure=False)))
     transformed = transformed_state.result()
     if operational_audit is not None:
         transformed = apply_operational_coverage(
             transformed, operational_audit, extracted
         )
+    return transformed
+
+
+@flow(name="trackflow-publish-weekly-business-report")
+def publish_weekly_business_report_flow(
+    runtime: PipelineRuntime,
+    week_start: date,
+    run_id: UUID,
+    extracted: WeeklyExtractionResult,
+    transformed: WeeklyTransformationResult,
+) -> CoordinatorResult:
+    """Apply quality, lease and atomic publication controls as one domain subflow."""
     blocked = quality_gate_task(
         runtime, week_start, run_id, extracted, transformed, extracted.metadata.event_count
     )
     if blocked is not None:
-        _run_optional_observer(runtime, week_start, run_id)
         return blocked
     transformed = apply_verified_technical_coverage(
         extracted,
@@ -467,12 +550,88 @@ def weekly_performance_flow(runtime: PipelineRuntime, week_start: date) -> Coord
     )
     prepared = acquire_lease_task(runtime, week_start, run_id)
     if prepared.terminal_result is not None:
-        _run_optional_observer(runtime, week_start, run_id)
         return prepared.terminal_result
-    result = publish_week_task(
+    return publish_week_task(
         runtime, week_start, prepared, transformed, extracted.metadata.event_count
     )
-    _run_optional_observer(runtime, week_start, run_id)
+
+
+@flow(name="trackflow-optional-weekly-observer")
+def optional_weekly_observer_flow(
+    runtime: PipelineRuntime,
+    week_start: date,
+    run_id: UUID,
+) -> None:
+    optional_observer_task(runtime, week_start, run_id)
+
+
+def _run_optional_observer(runtime: PipelineRuntime, week_start: date, run_id: UUID) -> Any:
+    """Expose the optional subflow State while never promoting its failure."""
+    state = optional_weekly_observer_flow(runtime, week_start, run_id, return_state=True)
+    if runtime.optional_state_sink is not None:
+        runtime.optional_state_sink(state)
+    return state
+
+
+@flow(name="trackflow-weekly-performance")
+def weekly_performance_flow(runtime: PipelineRuntime, week_start: date) -> CoordinatorResult:
+    """Run extraction, calculation and publication subflows sequentially."""
+    run_id = create_run_task(runtime, week_start)
+    extraction_state = extract_weekly_warehouse_events_flow(
+        runtime, week_start, return_state=True
+    )
+    if extraction_state.is_failed():
+        result = fail_run_task(
+            runtime,
+            week_start,
+            run_id,
+            "extract",
+            str(extraction_state.result(raise_on_failure=False)),
+        )
+        _run_optional_observer(runtime, week_start, run_id)
+        return result
+    stage = extraction_state.result()
+    if stage.failed_stage is not None or stage.extracted is None:
+        result = fail_run_task(
+            stage.runtime,
+            week_start,
+            run_id,
+            stage.failed_stage or "extract",
+            stage.error or "weekly extraction did not return data",
+        )
+        _run_optional_observer(stage.runtime, week_start, run_id)
+        return result
+    calculation_state = calculate_warehouse_client_indicators_flow(
+        stage.runtime,
+        week_start,
+        stage.extracted,
+        stage.operational_audit,
+        return_state=True,
+    )
+    if calculation_state.is_failed():
+        result = fail_run_task(
+            stage.runtime,
+            week_start,
+            run_id,
+            "transform",
+            str(calculation_state.result(raise_on_failure=False)),
+            stage.extracted.metadata.event_count,
+        )
+        _run_optional_observer(stage.runtime, week_start, run_id)
+        return result
+    publication_state = publish_weekly_business_report_flow(
+        stage.runtime,
+        week_start,
+        run_id,
+        stage.extracted,
+        calculation_state.result(),
+        return_state=True,
+    )
+    if publication_state.is_failed():
+        _run_optional_observer(stage.runtime, week_start, run_id)
+        raise RuntimeError(str(publication_state.result(raise_on_failure=False)))
+    result = publication_state.result()
+    _run_optional_observer(stage.runtime, week_start, run_id)
     return result
 
 

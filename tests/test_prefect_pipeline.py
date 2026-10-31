@@ -45,6 +45,33 @@ def test_prefect_3_task_contracts_are_safe_and_cache_is_exactly_one_hour():
     assert pipeline.transform_week_task.cache_key_fn is pipeline.transformation_cache_key
 
 
+def test_domain_subflows_and_metric_tasks_have_explicit_prefect_contracts():
+    from prefect.flows import Flow
+    from prefect.tasks import Task
+
+    subflows = (
+        pipeline.extract_weekly_warehouse_events_flow,
+        pipeline.calculate_warehouse_client_indicators_flow,
+        pipeline.publish_weekly_business_report_flow,
+        pipeline.optional_weekly_observer_flow,
+    )
+    assert all(isinstance(item, Flow) for item in subflows)
+    assert [item.name for item in subflows[:3]] == [
+        "trackflow-extract-weekly-warehouse-events",
+        "trackflow-calculate-warehouse-client-indicators",
+        "trackflow-publish-weekly-business-report",
+    ]
+    assert all(
+        isinstance(item, Task)
+        for item in (
+            pipeline.calculate_inbound_volume_task,
+            pipeline.calculate_outbound_throughput_task,
+            pipeline.calculate_stockout_frequency_task,
+            pipeline.calculate_discrepancy_metrics_task,
+        )
+    )
+
+
 def test_transform_cache_key_invalidates_every_required_dimension():
     extracted = SimpleNamespace(metadata=SimpleNamespace(week_start=WEEK), events=("evidence-a",))
     base = {
@@ -106,11 +133,8 @@ def test_flow_relays_before_extraction_when_source_is_distinct(monkeypatch):
         source_engine=object(),
         clock=configured.clock,
     )
-    run_id = uuid4()
     calls = []
-    expected = CoordinatorResult(WEEK, run_id, "superseded")
     state = lambda value: SimpleNamespace(is_failed=lambda: False, result=lambda **_kw: value)
-    monkeypatch.setattr(pipeline, "create_run_task", lambda *_args: run_id)
     monkeypatch.setattr(
         pipeline,
         "relay_outbox_task",
@@ -128,14 +152,8 @@ def test_flow_relays_before_extraction_when_source_is_distinct(monkeypatch):
         "extract_week_task",
         lambda *_args, **_kwargs: calls.append("extract") or state(extracted),
     )
-    monkeypatch.setattr(pipeline, "transform_week_task", lambda *_args, **_kwargs: state(object()))
-    monkeypatch.setattr(pipeline, "quality_gate_task", lambda *_args: None)
-    monkeypatch.setattr(
-        pipeline, "acquire_lease_task", lambda *_args: pipeline.PreparedRun(run_id, None, expected)
-    )
-    monkeypatch.setattr(pipeline, "_run_optional_observer", lambda *_args: None)
-
-    assert pipeline.weekly_performance_flow.fn(configured, WEEK) is expected
+    stage = pipeline.extract_weekly_warehouse_events_flow.fn(configured, WEEK)
+    assert stage.extracted is extracted
     assert calls == ["relay", "audit", "extract"]
 
 
@@ -148,10 +166,6 @@ def test_relay_failure_is_persisted_and_stops_before_extraction(monkeypatch):
         source_engine=object(),
         clock=configured.clock,
     )
-    run_id = uuid4()
-    expected = CoordinatorResult(WEEK, run_id, "failed_retryable")
-    persisted = []
-    monkeypatch.setattr(pipeline, "create_run_task", lambda *_args: run_id)
     monkeypatch.setattr(
         pipeline,
         "relay_outbox_task",
@@ -162,18 +176,11 @@ def test_relay_failure_is_persisted_and_stops_before_extraction(monkeypatch):
     )
     monkeypatch.setattr(
         pipeline,
-        "fail_run_task",
-        lambda _runtime, _week, _run, stage, _error: persisted.append(stage) or expected,
-    )
-    monkeypatch.setattr(
-        pipeline,
         "extract_week_task",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("extract must not run")),
     )
-    monkeypatch.setattr(pipeline, "_run_optional_observer", lambda *_args: None)
-
-    assert pipeline.weekly_performance_flow.fn(configured, WEEK) is expected
-    assert persisted == ["relay"]
+    stage = pipeline.extract_weekly_warehouse_events_flow.fn(configured, WEEK)
+    assert stage.failed_stage == "relay"
 
 
 def test_optional_failure_is_visible_and_actual_flow_returns_main_result(monkeypatch):
@@ -183,27 +190,18 @@ def test_optional_failure_is_visible_and_actual_flow_returns_main_result(monkeyp
     run_id = uuid4()
     expected = CoordinatorResult(WEEK, run_id, "superseded")
     states = []
-    monkeypatch.setattr(pipeline, "create_run_task", lambda *_args: run_id)
-    extracted = SimpleNamespace(metadata=SimpleNamespace(event_count=0), events=())
+    failed_state = SimpleNamespace(
+        is_failed=lambda: True,
+        result=lambda **_kwargs: RuntimeError("non-critical observer unavailable"),
+    )
     monkeypatch.setattr(
         pipeline,
-        "extract_week_task",
-        lambda *_args, **_kwargs: SimpleNamespace(is_failed=lambda: False, result=lambda **_kw: extracted),
+        "optional_weekly_observer_flow",
+        lambda *_args, **_kwargs: fail(WEEK, run_id) if False else failed_state,
     )
-    transformed = SimpleNamespace(aggregates=(), quality=None)
-    monkeypatch.setattr(
-        pipeline,
-        "transform_week_task",
-        lambda *_args, **_kwargs: SimpleNamespace(is_failed=lambda: False, result=lambda **_kw: transformed),
-    )
-    monkeypatch.setattr(pipeline, "quality_gate_task", lambda *_args: None)
-    monkeypatch.setattr(
-        pipeline, "acquire_lease_task", lambda *_args: pipeline.PreparedRun(run_id, None, expected)
-    )
-    result = pipeline.weekly_performance_flow(
-        runtime(observer=fail, state_sink=states.append), WEEK
-    )
-    assert result is expected
+    configured = runtime(observer=fail, state_sink=states.append)
+    returned = pipeline._run_optional_observer(configured, WEEK, run_id)
+    assert returned is failed_state
     assert len(states) == 1 and states[0].is_failed()
     assert "non-critical observer unavailable" in str(states[0].result(raise_on_failure=False))
 
@@ -214,20 +212,24 @@ def test_flow_preserves_terminal_non_success_and_requests_optional_state(monkeyp
     calls = []
     monkeypatch.setattr(pipeline, "create_run_task", lambda *_args: run_id)
     extracted = SimpleNamespace(metadata=SimpleNamespace(event_count=0), events=())
-    monkeypatch.setattr(
-        pipeline,
-        "extract_week_task",
-        lambda *_args, **_kwargs: SimpleNamespace(is_failed=lambda: False, result=lambda **_kw: extracted),
-    )
     transformed = SimpleNamespace(aggregates=(), quality=None)
+    state = lambda value: SimpleNamespace(is_failed=lambda: False, result=lambda **_kw: value)
     monkeypatch.setattr(
         pipeline,
-        "transform_week_task",
-        lambda *_args, **_kwargs: SimpleNamespace(is_failed=lambda: False, result=lambda **_kw: transformed),
+        "extract_weekly_warehouse_events_flow",
+        lambda configured, *_args, **_kwargs: state(
+            pipeline.WeeklyExtractionStage(configured, extracted)
+        ),
     )
-    monkeypatch.setattr(pipeline, "quality_gate_task", lambda *_args: None)
     monkeypatch.setattr(
-        pipeline, "acquire_lease_task", lambda *_args: pipeline.PreparedRun(run_id, None, expected)
+        pipeline,
+        "calculate_warehouse_client_indicators_flow",
+        lambda *_args, **_kwargs: state(transformed),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "publish_weekly_business_report_flow",
+        lambda *_args, **_kwargs: state(expected),
     )
     monkeypatch.setattr(
         pipeline, "_run_optional_observer", lambda *_args: calls.append("observed")
@@ -244,21 +246,26 @@ def test_extract_and_transform_failures_persist_without_acquiring_lease(monkeypa
         monkeypatch.setattr(pipeline, "create_run_task", lambda *_args, value=run_id: value)
         extracted = SimpleNamespace(metadata=SimpleNamespace(event_count=0), events=())
         extract_failed = failed_stage == "extract"
+        state = lambda value, failed=False: SimpleNamespace(
+            is_failed=lambda: failed,
+            result=lambda **_kw: value,
+        )
         monkeypatch.setattr(
             pipeline,
-            "extract_week_task",
-            lambda *_args, failed=extract_failed, **_kwargs: SimpleNamespace(
-                is_failed=lambda: failed,
-                result=lambda **_kw: RuntimeError("extract failed") if failed else extracted,
+            "extract_weekly_warehouse_events_flow",
+            lambda configured, *_args, failed=extract_failed, **_kwargs: state(
+                RuntimeError("extract failed")
+                if failed
+                else pipeline.WeeklyExtractionStage(configured, extracted),
+                failed,
             ),
         )
         transform_failed = failed_stage == "transform"
         monkeypatch.setattr(
             pipeline,
-            "transform_week_task",
-            lambda *_args, failed=transform_failed, **_kwargs: SimpleNamespace(
-                is_failed=lambda: failed,
-                result=lambda **_kw: RuntimeError("transform failed") if failed else object(),
+            "calculate_warehouse_client_indicators_flow",
+            lambda *_args, failed=transform_failed, **_kwargs: state(
+                RuntimeError("transform failed") if failed else object(), failed
             ),
         )
         monkeypatch.setattr(
@@ -284,13 +291,22 @@ def test_quality_block_is_terminal_before_lease(monkeypatch):
     monkeypatch.setattr(pipeline, "create_run_task", lambda *_args: run_id)
     extracted = SimpleNamespace(metadata=SimpleNamespace(event_count=0), events=())
     state = lambda value: SimpleNamespace(is_failed=lambda: False, result=lambda **_kw: value)
-    monkeypatch.setattr(pipeline, "extract_week_task", lambda *_args, **_kwargs: state(extracted))
-    monkeypatch.setattr(pipeline, "transform_week_task", lambda *_args, **_kwargs: state(object()))
-    monkeypatch.setattr(pipeline, "quality_gate_task", lambda *_args: blocked)
     monkeypatch.setattr(
         pipeline,
-        "acquire_lease_task",
-        lambda *_args: (_ for _ in ()).throw(AssertionError("blocked run must not acquire lease")),
+        "extract_weekly_warehouse_events_flow",
+        lambda configured, *_args, **_kwargs: state(
+            pipeline.WeeklyExtractionStage(configured, extracted)
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "calculate_warehouse_client_indicators_flow",
+        lambda *_args, **_kwargs: state(object()),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "publish_weekly_business_report_flow",
+        lambda *_args, **_kwargs: state(blocked),
     )
     monkeypatch.setattr(pipeline, "_run_optional_observer", lambda *_args: None)
     assert pipeline.weekly_performance_flow.fn(runtime(), WEEK) is blocked
