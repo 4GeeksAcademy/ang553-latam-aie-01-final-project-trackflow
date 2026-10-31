@@ -146,6 +146,7 @@ async def update_user_endpoint(
     - admin
 
     Rules:
+    - Password changes are not accepted here; use the dedicated auth flows.
     - Non-admin users CANNOT change their own ``role``.
     - Only admin can change ``role``.
     """

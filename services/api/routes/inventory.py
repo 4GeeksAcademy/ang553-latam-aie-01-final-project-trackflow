@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from typing import Annotated
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import Session, select
@@ -34,8 +34,14 @@ from services.api.database import get_db
 from services.api.inventory_models import SKU
 from services.api.inventory_schemas import (
     InventoryOrderListItem,
+    CommercialOrderCreate,
+    CommercialOrderDispatchAppend,
+    CommercialOrderMutationResponse,
+    InventoryPhysicalCountCreate,
+    InventoryPhysicalCountResponse,
     SKUCreate,
     SKUResponse,
+    SKUThresholdUpdate,
     StockEntryCreate,
     MovementCreatedResponse,
     StockExitCreate,
@@ -44,9 +50,13 @@ from services.api.inventory_service import (
     InventoryDataIntegrityError,
     create_stock_entry,
     create_stock_exit,
+    append_commercial_order_dispatches,
+    confirm_inventory_physical_count,
+    create_commercial_order,
     get_current_stock,
     get_current_stocks,
     list_orders,
+    update_sku_threshold,
 )
 from services.api.telemetry_capture import capture_telemetry_events
 from services.api.telemetry_schemas import TelemetryEvent
@@ -69,6 +79,7 @@ def _sku_to_response(sku: SKU, stock_map: dict[tuple[int, str], int]) -> SKUResp
         client_name=sku.client_name,
         category=sku.category,
         warehouse=sku.warehouse,
+        minimum_stock_threshold=sku.minimum_stock_threshold,
         current_stock=stock_map.get((sku.id, sku.warehouse), 0),
     )
 
@@ -162,6 +173,7 @@ def get_product(
         client_name=sku.client_name,
         category=sku.category,
         warehouse=sku.warehouse,
+        minimum_stock_threshold=sku.minimum_stock_threshold,
         current_stock=current_stock,
     )
 
@@ -188,6 +200,7 @@ def create_product(
         client_name=payload.client_name,
         category=payload.category,
         warehouse=payload.warehouse,
+        minimum_stock_threshold=payload.minimum_stock_threshold,
     )
     session.add(sku)
     session.commit()
@@ -233,8 +246,101 @@ def create_product(
         client_name=sku.client_name,
         category=sku.category,
         warehouse=sku.warehouse,
+        minimum_stock_threshold=sku.minimum_stock_threshold,
         current_stock=0,
     )
+
+
+@router.patch("/products/{id}/threshold", response_model=SKUResponse)
+def configure_product_threshold(
+    id: int,
+    payload: SKUThresholdUpdate,
+    session: Annotated[Session, Depends(get_db)],
+    _current_user: Annotated[UserInDB, Depends(get_current_user)],
+) -> SKUResponse:
+    """Configure or disable the threshold; configuration emits no event."""
+    sku = update_sku_threshold(
+        session,
+        sku_id=id,
+        minimum_stock_threshold=payload.minimum_stock_threshold,
+    )
+    stock = get_current_stock(session, sku.id, sku.warehouse)
+    return _sku_to_response(sku, {(sku.id, sku.warehouse): stock})
+
+
+@router.post(
+    "/physical-counts",
+    response_model=InventoryPhysicalCountResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def confirm_physical_count(
+    request: Request,
+    payload: InventoryPhysicalCountCreate,
+    session: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[UserInDB, Depends(get_current_user)],
+) -> InventoryPhysicalCountResponse:
+    return InventoryPhysicalCountResponse.model_validate(
+        confirm_inventory_physical_count(
+            session,
+            payload,
+            user_uuid=current_user.id,
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
+
+
+def _order_mutation_response(order, dispatches) -> CommercialOrderMutationResponse:
+    return CommercialOrderMutationResponse(
+        id=order.id,
+        order_id=order.order_id,
+        dispatch_ids=sorted(
+            (item.dispatch_id for item in dispatches),
+            key=str,
+        ),
+    )
+
+
+@router.post(
+    "/commercial-orders",
+    response_model=CommercialOrderMutationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_order_with_dispatches(
+    request: Request,
+    payload: CommercialOrderCreate,
+    session: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[UserInDB, Depends(get_current_user)],
+) -> CommercialOrderMutationResponse:
+    order, dispatches = create_commercial_order(
+        session,
+        payload,
+        user_uuid=current_user.id,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    return _order_mutation_response(order, dispatches)
+
+
+@router.post(
+    "/commercial-orders/{order_id}/dispatches",
+    response_model=CommercialOrderMutationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def append_order_dispatches(
+    order_id: UUID,
+    request: Request,
+    payload: CommercialOrderDispatchAppend,
+    session: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[UserInDB, Depends(get_current_user)],
+) -> CommercialOrderMutationResponse:
+    if order_id != payload.order_id:
+        raise HTTPException(status_code=409, detail="order_id path and payload mismatch")
+    order, dispatches = append_commercial_order_dispatches(
+        session,
+        payload,
+        user_uuid=current_user.id,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    return _order_mutation_response(order, dispatches)
 
 
 # ── POST /inventory/orders/inbound ────────────────────────────────────────────

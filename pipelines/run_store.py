@@ -141,6 +141,18 @@ UPDATE_RUN_SQL = text(
     RETURNING {_RUN_COLUMNS}
     """
 )
+CORRELATE_PENDING_RUN_SQL = text(
+    f"""
+    /* op:correlate_pending_run */
+    UPDATE {RUNS_TABLE}
+    SET prefect_flow_run_id = :prefect_flow_run_id,
+        prefect_task_run_id = :prefect_task_run_id,
+        stage_reached = 'prefect',
+        updated_at = statement_timestamp()
+    WHERE run_id = :run_id AND status = 'pending'
+    RETURNING {_RUN_COLUMNS}
+    """
+)
 LATEST_RUN_SQL = text(
     f"""
     /* op:latest_run */
@@ -220,6 +232,7 @@ _SQL_STATEMENTS = (
     CREATE_RUN_SQL,
     SELECT_RUN_SQL,
     UPDATE_RUN_SQL,
+    CORRELATE_PENDING_RUN_SQL,
     LATEST_RUN_SQL,
     ENSURE_CONTROL_SQL,
     SELECT_CONTROL_SQL,
@@ -405,6 +418,29 @@ def update_run(
     rows = _rows(connection, UPDATE_RUN_SQL, parameters)
     if not rows:
         raise RunStoreError("status_conflict", "run status changed before the update")
+    return _run(rows[0])
+
+
+def correlate_pending_run(
+    connection: Any,
+    run_id: UUID,
+    *,
+    prefect_flow_run_id: str,
+    prefect_task_run_id: str,
+) -> RunRecord:
+    """Attach Prefect identities to one durably accepted pending run."""
+    _require_transaction(connection)
+    rows = _rows(
+        connection,
+        CORRELATE_PENDING_RUN_SQL,
+        {
+            "run_id": _uuid(run_id, "run_id"),
+            "prefect_flow_run_id": _label(prefect_flow_run_id, "prefect_flow_run_id"),
+            "prefect_task_run_id": _label(prefect_task_run_id, "prefect_task_run_id"),
+        },
+    )
+    if not rows:
+        raise RunStoreError("status_conflict", "accepted run is no longer pending")
     return _run(rows[0])
 
 
@@ -609,6 +645,8 @@ def _rows(connection: Any, statement: Any, parameters: Mapping[str, Any]) -> lis
     except SQLAlchemyError as exc:
         raise RunStoreError("write_error", str(exc)) from exc
     if result is None:
+        return []
+    if getattr(result, "returns_rows", True) is False:
         return []
     mappings = getattr(result, "mappings", None)
     if callable(mappings):

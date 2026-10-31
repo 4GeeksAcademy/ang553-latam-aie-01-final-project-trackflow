@@ -61,6 +61,7 @@ REQUIRED_COVERAGE_EVENTS = frozenset(
     }
 )
 SYNTHETIC_COVERAGE_SOURCE = "synthetic_fixture"
+OPERATIONAL_COVERAGE_SOURCE = "operational_checkpoints"
 FINGERPRINT_PARTS = ("telemetry=", "movements=", "stockexit=", "rules=")
 
 STATUS_COMMIT_UNCERTAIN = "commit_uncertain"
@@ -144,6 +145,7 @@ def publish_weekly_business_report(
     business: Any,
     operational: Any,
     now: datetime,
+    records_processed: int | None = None,
 ) -> CoordinatorResult:
     """Publish one elapsed ISO week inside one business transaction.
 
@@ -340,6 +342,7 @@ def publish_weekly_business_report(
         updated=staged.updated,
         unchanged=staged.unchanged,
         aggregates=len(aggregates),
+        records_processed=records_processed,
     )
     return _result(
         week_start,
@@ -444,7 +447,10 @@ def _pre_write_issues(
 def _coverage_issues(coverage: CoverageEvidence | None) -> tuple[str, ...]:
     if not isinstance(coverage, CoverageEvidence):
         return ("coverage_evidence_required",)
-    if coverage.source != SYNTHETIC_COVERAGE_SOURCE or coverage.lookup_complete is not True:
+    if coverage.source not in {
+        SYNTHETIC_COVERAGE_SOURCE,
+        OPERATIONAL_COVERAGE_SOURCE,
+    } or coverage.lookup_complete is not True:
         return ("coverage_insufficient",)
     confirmed = coverage.confirmed_event_types
     if not isinstance(confirmed, frozenset) or not REQUIRED_COVERAGE_EVENTS <= confirmed:
@@ -453,7 +459,6 @@ def _coverage_issues(coverage: CoverageEvidence | None) -> tuple[str, ...]:
     if not isinstance(pairs, tuple):
         return ("dispatch_order_not_unique",)
     movements = []
-    orders = []
     for pair in pairs:
         if not isinstance(pair, tuple) or len(pair) != 2:
             return ("dispatch_order_not_unique",)
@@ -461,8 +466,7 @@ def _coverage_issues(coverage: CoverageEvidence | None) -> tuple[str, ...]:
         if not isinstance(movement, str) or not isinstance(order, str) or not movement or not order:
             return ("dispatch_order_not_unique",)
         movements.append(movement)
-        orders.append(order)
-    if len(movements) != len(set(movements)) or len(orders) != len(set(orders)):
+    if len(movements) != len(set(movements)):
         return ("dispatch_order_not_unique",)
     return ()
 
@@ -563,7 +567,9 @@ def _finish_run(
     updated: int = 0,
     unchanged: int = 0,
     aggregates: int | None = None,
+    records_processed: int | None = None,
 ) -> None:
+    _begin_operational_transaction(connection)
     update_run(
         connection,
         run_id,
@@ -571,6 +577,7 @@ def _finish_run(
         status=status,
         finished_at=now,
         stage_reached=stage_reached,
+        records_processed=records_processed,
         aggregates_calculated=aggregates,
         rows_inserted=inserted,
         rows_updated=updated,
@@ -625,6 +632,7 @@ def _abort_staged(
 
 
 def _observe_uncertain(connection: Any, run_id: UUID, commit_result: str) -> None:
+    _begin_operational_transaction(connection)
     record_commit_observation(
         connection,
         run_id,
@@ -651,6 +659,18 @@ def _commit_operational(connection: Any) -> None:
         connection.commit()
     except Exception as exc:
         raise CoordinatorError("operational_commit_failed", "run history could not be committed") from exc
+
+
+def _begin_operational_transaction(connection: Any) -> None:
+    in_transaction = getattr(connection, "in_transaction", None)
+    if callable(in_transaction) and not in_transaction():
+        begin = getattr(connection, "begin", None)
+        if not callable(begin):
+            raise CoordinatorError(
+                "transaction_required",
+                "operational connection cannot start a transaction",
+            )
+        begin()
 
 
 def _release_business_lock(connection: Any) -> None:

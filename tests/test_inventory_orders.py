@@ -36,6 +36,7 @@ from services.api.inventory_service import (
     create_stock_entry,
     list_orders,
 )
+from services.api.inventory_outbox import inventory_outbox_metadata
 from services.api.cache import TTLCache, orders_cache, inventory_cache_key, products_cache
 from services.api.routes import inventory as inventory_routes
 from services.api.routes.inventory import list_orders_endpoint
@@ -55,6 +56,7 @@ def db_session() -> Session:
     """
     engine = create_engine("sqlite://", echo=False)
     SQLModel.metadata.create_all(engine)
+    inventory_outbox_metadata.create_all(engine)
     with Session(engine) as session:
         yield session
 
@@ -508,7 +510,7 @@ class TestRouterRegistration:
     """Confirm that the inventory router is correctly registered in main.py."""
 
     def test_all_inventory_routes_exist(self) -> None:
-        """ROUTER-01: exactly 6 inventory routes exist with correct paths.
+        """ROUTER-01: inventory routes exist with correct paths.
 
         We check the inventory_router itself (which is imported and used
         by main.py) to verify all route paths are defined.
@@ -522,15 +524,19 @@ class TestRouterRegistration:
             "/inventory/orders",
             "/inventory/orders/inbound",
             "/inventory/orders/outbound",
+            "/inventory/physical-counts",
             "/inventory/products",
+            "/inventory/products/{id}/threshold",
             "/inventory/products/{id}",
+            "/inventory/commercial-orders",
+            "/inventory/commercial-orders/{order_id}/dispatches",
         ]
         for p in expected:
             assert p in paths, f"Missing route: {p}"
 
-        # The inventory router has 5 unique paths (6 route entries because
-        # /inventory/products has both GET and POST)
-        assert len(set(paths)) == 5, f"Expected 5 unique paths, got {len(set(paths))}"
+        # The inventory router has 9 unique paths (10 route entries because
+        # /inventory/products has both GET and POST).
+        assert len(set(paths)) == 9, f"Expected 9 unique paths, got {len(set(paths))}"
 
     def test_inventory_prefix_is_single(self) -> None:
         """ROUTER-02: no route contains ``/inventory/inventory``."""

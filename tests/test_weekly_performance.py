@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
 
@@ -19,8 +19,8 @@ from pipelines.weekly_performance import (
     STOCK_THRESHOLD_TRIGGERED,
     _postgres_integer_overflows,
     MovementWeekEvidence,
-    StockExitEvidence,
-    StockExitRecord,
+    CommercialOrderEvidence,
+    CommercialOrderRecord,
     iso_week_bounds,
     iso_week_start,
     transform_weekly_performance,
@@ -45,10 +45,20 @@ def event(
 ):
     """Construct a deterministic synthetic telemetry row."""
     tags = {"warehouse": warehouse, "client_id": client_id, "product_id": product_id}
-    if event_type in {INBOUND_ORDER_CREATED, OUTBOUND_ORDER_CREATED}:
-        tags.update({"movement_id": movement_id or f"move-{suffix}", "quantity": quantity})
-    elif event_type in {STOCK_THRESHOLD_TRIGGERED, INVENTORY_DISCREPANCY_DETECTED}:
+    identity = movement_id or f"move-{suffix}"
+    if event_type == INBOUND_ORDER_CREATED:
+        tags.update({"movement_id": identity, "quantity": quantity})
+    elif event_type == OUTBOUND_ORDER_CREATED:
+        tags = {
+            "warehouse": warehouse,
+            "client_id": client_id,
+            "order_id": str(UUID(bytes=uuid5(NAMESPACE_URL, identity).bytes, version=4)),
+        }
+    elif event_type == STOCK_THRESHOLD_TRIGGERED:
+        tags.update({"quantity": quantity, "movement_id": identity})
+    elif event_type == INVENTORY_DISCREPANCY_DETECTED:
         tags["quantity"] = quantity
+        tags["count_id"] = str(UUID(bytes=uuid5(NAMESPACE_URL, identity).bytes, version=4))
     tags.update(extra_tags)
     return {
         "id": str(UUID(int=suffix)),
@@ -62,9 +72,14 @@ def event(
 def transform(rows, *, exits=None, weeks=None, lookup_complete=True):
     return transform_weekly_performance(
         rows,
-        stockexit_evidence=StockExitEvidence(exits or {}, lookup_complete),
+        commercial_order_evidence=CommercialOrderEvidence(exits or {}, lookup_complete),
         movement_week_evidence=weeks,
     )
+
+
+def order_record(row, *, client_id=CLIENT_A, warehouse="los_angeles"):
+    order_id = row["tags"]["order_id"]
+    return CommercialOrderRecord(order_id, warehouse, client_id, 1)
 
 
 @pytest.mark.parametrize(
@@ -142,7 +157,7 @@ def test_rejects_invalid_inbound_quantities(quantity):
 @pytest.mark.parametrize(
     ("event_type", "quantity", "accepted"),
     [
-        (OUTBOUND_ORDER_CREATED, 0, False),
+        (OUTBOUND_ORDER_CREATED, 0, True),
         (OUTBOUND_ORDER_CREATED, 2, True),
         (STOCK_THRESHOLD_TRIGGERED, 0, True),
         (STOCK_THRESHOLD_TRIGGERED, -1, False),
@@ -153,7 +168,7 @@ def test_rejects_invalid_inbound_quantities(quantity):
 def test_quantity_rules_follow_each_event_schema(event_type, quantity, accepted):
     row = event(1, event_type, quantity=quantity)
     exits = (
-        {row["tags"]["movement_id"]: StockExitRecord(row["tags"]["movement_id"], "dispatch", "los_angeles", CLIENT_A, "42", quantity)}
+        {row["tags"]["order_id"]: order_record(row)}
         if event_type == OUTBOUND_ORDER_CREATED and accepted
         else None
     )
@@ -241,10 +256,11 @@ def test_consistent_inbound_duplicates_contribute_once_and_report_both_layers():
 def test_consistent_outbound_duplicates_count_one_dispatch():
     first = event(1, OUTBOUND_ORDER_CREATED, movement_id="out-1", quantity=9)
     duplicate = event(2, OUTBOUND_ORDER_CREATED, movement_id="out-1", quantity=9)
-    exits = {"out-1": StockExitRecord("out-1", "dispatch", "los_angeles", CLIENT_A, "42")}
+    order_id = first["tags"]["order_id"]
+    exits = {order_id: order_record(first)}
     result = transform([first, duplicate], exits=exits)
     assert result.aggregates[0].outbound_orders_count == 1
-    assert result.quality.duplicate_movement_keys_consolidated == ((OUTBOUND_ORDER_CREATED, "out-1"),)
+    assert result.quality.duplicate_movement_keys_consolidated == ((OUTBOUND_ORDER_CREATED, order_id),)
     assert result.quality.duplicate_movement_event_ids_consolidated == (duplicate["id"],)
 
 
@@ -279,17 +295,14 @@ def test_cross_week_deduplication_without_complete_evidence_is_pending_not_guara
     assert result.quality.cross_week_verification_pending == ((INBOUND_ORDER_CREATED, "cross"),)
 
 
-def test_excludes_loss_and_counts_confirmed_dispatch_only():
-    loss = event(1, OUTBOUND_ORDER_CREATED, movement_id="loss")
+def test_counts_only_orders_backed_by_at_least_one_dispatch():
+    missing = event(1, OUTBOUND_ORDER_CREATED, movement_id="missing")
     dispatch = event(2, OUTBOUND_ORDER_CREATED, movement_id="dispatch")
-    exits = {
-        "loss": StockExitRecord("loss", "loss", "los_angeles", CLIENT_A, "42"),
-        "dispatch": StockExitRecord("dispatch", "dispatch", "los_angeles", CLIENT_A, "42"),
-    }
-    result = transform([loss, dispatch], exits=exits)
-    assert len(result.aggregates) == 1
+    exits = {dispatch["tags"]["order_id"]: order_record(dispatch)}
+    result = transform([missing, dispatch], exits=exits)
     assert result.aggregates[0].outbound_orders_count == 1
-    assert result.quality.accepted_event_ids == tuple(sorted((loss["id"], dispatch["id"])))
+    assert result.quality.accepted_event_ids == (dispatch["id"],)
+    assert result.quality.rejected_event_ids == (missing["id"],)
 
 
 def test_unavailable_classification_does_not_presume_dispatch():
@@ -297,55 +310,51 @@ def test_unavailable_classification_does_not_presume_dispatch():
     result = transform([row], lookup_complete=False)
     assert result.aggregates == ()
     assert result.quality.rejected_event_ids == (row["id"],)
-    assert result.quality.issues[0].code == "outbound_classification_unavailable"
+    assert result.quality.issues[0].code == "outbound_order_verification_unavailable"
 
 
-def test_conflicting_stockexit_client_id_is_distinct_from_unverified():
+def test_conflicting_commercial_order_client_id_is_rejected():
     row = event(1, OUTBOUND_ORDER_CREATED, movement_id="conflicting-client")
     result = transform(
         [row],
-        exits={
-            "conflicting-client": StockExitRecord(
-                "conflicting-client", "dispatch", "los_angeles", CLIENT_B_HISTORICAL, "42", 2
-            )
-        },
+        exits={row["tags"]["order_id"]: order_record(row, client_id=CLIENT_B_HISTORICAL)},
     )
 
     assert result.aggregates == ()
-    assert result.quality.conflict_movement_keys == ((OUTBOUND_ORDER_CREATED, "conflicting-client"),)
-    assert result.quality.issues[0].code == "stockexit_identity_conflict"
+    assert result.quality.conflict_movement_keys == ((OUTBOUND_ORDER_CREATED, row["tags"]["order_id"]),)
+    assert result.quality.issues[0].code == "commercial_order_identity_conflict"
 
 
-def test_null_stockexit_client_id_is_unverified_not_a_verified_dispatch():
+def test_missing_commercial_order_is_not_a_verified_outbound():
     row = event(1, OUTBOUND_ORDER_CREATED, movement_id="unverified-client")
     result = transform(
         [row],
-        exits={
-            "unverified-client": StockExitRecord(
-                "unverified-client", "dispatch", "los_angeles", None, "42", 2
-            )
-        },
+        exits={},
     )
 
     assert result.aggregates == ()
     assert result.quality.accepted_event_ids == ()
     assert result.quality.rejected_event_ids == (row["id"],)
     assert result.quality.conflict_movement_keys == ()
-    assert result.quality.issues[0].code == "stockexit_identity_unverified"
+    assert result.quality.issues[0].code == "commercial_order_missing"
     assert result.quality.issues[0].event_ids == (row["id"],)
 
 
-def test_complete_lookup_missing_movement_and_unknown_exit_type_are_issues():
+def test_complete_lookup_missing_order_and_zero_dispatch_are_issues():
     absent = event(1, OUTBOUND_ORDER_CREATED, movement_id="absent")
     unknown = event(2, OUTBOUND_ORDER_CREATED, movement_id="unknown")
     result = transform(
         [absent, unknown],
-        exits={"unknown": StockExitRecord("unknown", "refund", "los_angeles", CLIENT_A, "42", 2)},
+        exits={
+            unknown["tags"]["order_id"]: CommercialOrderRecord(
+                unknown["tags"]["order_id"], "los_angeles", CLIENT_A, 0
+            )
+        },
     )
     assert result.aggregates == ()
     assert {issue.code for issue in result.quality.issues} == {
-        "stockexit_movement_missing",
-        "stockexit_type_unknown",
+        "commercial_order_missing",
+        "commercial_order_identity_conflict",
     }
 
 
@@ -372,8 +381,9 @@ def test_discrepancy_rate_is_decimal_ratio_without_business_rounding():
     exits = {}
     for index in range(2, 6):
         movement_id = f"dispatch-{index}"
-        rows.append(event(index, OUTBOUND_ORDER_CREATED, movement_id=movement_id))
-        exits[movement_id] = StockExitRecord(movement_id, "dispatch", "los_angeles", CLIENT_A, "42", 2)
+        row = event(index, OUTBOUND_ORDER_CREATED, movement_id=movement_id)
+        rows.append(row)
+        exits[row["tags"]["order_id"]] = order_record(row)
     result = transform(rows, exits=exits)
     assert result.aggregates[0].discrepancy_rate == Decimal("0.25")
     assert result.aggregates[0].discrepancy_rate.as_tuple().exponent == -2

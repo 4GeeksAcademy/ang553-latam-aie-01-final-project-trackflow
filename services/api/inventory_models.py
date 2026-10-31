@@ -1,13 +1,15 @@
 """
 TrackFlow Inventory ORM Models — SQLModel.
 
-Persistent models for SKU, StockEntry, and StockExit.
+Persistent models for inventory, commercial orders, and physical counts.
 
 Coexists with TinyDB auth — no SQLModel User table is created.
 """
 
 from datetime import datetime, timezone
+from uuid import UUID, uuid4
 
+from sqlalchemy import CheckConstraint, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -39,6 +41,8 @@ class SKU(SQLModel, table=True):
     client_id : str | None
         Stable internal identifier for the owning client. Nullable temporarily
         while legacy rows are backfilled.
+    minimum_stock_threshold : int | None
+        Non-negative alert threshold. ``None`` disables threshold events.
     category : str
         Product category (fashion, electronics, cosmetics).
     warehouse : str
@@ -56,6 +60,13 @@ class SKU(SQLModel, table=True):
 
     __tablename__: str = "sku"
 
+    __table_args__ = (
+        CheckConstraint(
+            "minimum_stock_threshold IS NULL OR minimum_stock_threshold >= 0",
+            name="ck_sku_minimum_stock_threshold_nonnegative",
+        ),
+    )
+
     id: int | None = Field(default=None, primary_key=True)
     name: str
     sku: str
@@ -63,6 +74,7 @@ class SKU(SQLModel, table=True):
     category: str
     warehouse: str
     client_id: str | None = None
+    minimum_stock_threshold: int | None = Field(default=None)
 
     # (stock is calculated, not stored — see inventory_service)
 
@@ -130,6 +142,9 @@ class StockExit(SQLModel, table=True):
     user_uuid : str
         UUID of the TinyDB user who recorded the exit.
         No SQL FK — TinyDB manages users.
+    commercial_order_id : int | None
+        Optional migration-stage FK to the commercial order. When present, the
+        exit must be a dispatch; one order may own multiple dispatches.
     """
 
     __tablename__: str = "stockexit"
@@ -142,5 +157,108 @@ class StockExit(SQLModel, table=True):
     warehouse: str
     created_at: datetime = Field(default_factory=_utc_now)
     user_uuid: str
+    commercial_order_id: int | None = Field(
+        default=None,
+        foreign_key="commercial_order.id",
+    )
+    dispatch_id: UUID | None = Field(default=None)
+
+    __table_args__ = (
+        CheckConstraint(
+            "commercial_order_id IS NULL OR exit_type = 'dispatch'",
+            name="ck_stockexit_order_only_for_dispatch",
+        ),
+        UniqueConstraint("dispatch_id", name="uq_stockexit_dispatch_id"),
+        CheckConstraint(
+            "commercial_order_id IS NULL OR dispatch_id IS NOT NULL",
+            name="ck_stockexit_order_requires_dispatch_id",
+        ),
+    )
 
     # (FK only — no ORM back-reference)
+
+
+class CommercialOrder(SQLModel, table=True):
+    """Commercial order identity; one order may own multiple dispatch exits."""
+
+    __tablename__: str = "commercial_order"
+    __table_args__ = (
+        UniqueConstraint("order_id", name="uq_commercial_order_order_id"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    order_id: UUID = Field(default_factory=uuid4, nullable=False)
+    client_id: str
+    warehouse: str
+    created_at: datetime = Field(default_factory=_utc_now)
+
+
+class InventoryPhysicalCount(SQLModel, table=True):
+    """Confirmed physical count; recording it never adjusts computed stock."""
+
+    __tablename__: str = "inventory_physical_count"
+    __table_args__ = (
+        UniqueConstraint(
+            "count_id",
+            name="uq_inventory_physical_count_count_id",
+        ),
+        CheckConstraint(
+            "expected_quantity >= 0",
+            name="ck_inventory_physical_count_expected_nonnegative",
+        ),
+        CheckConstraint(
+            "observed_quantity >= 0",
+            name="ck_inventory_physical_count_observed_nonnegative",
+        ),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    count_id: UUID = Field(default_factory=uuid4, nullable=False)
+    sku_id: int = Field(foreign_key="sku.id")
+    client_id: str
+    warehouse: str
+    expected_quantity: int
+    observed_quantity: int
+    confirmed_at: datetime = Field(default_factory=_utc_now)
+    user_uuid: str
+
+
+class InventoryThresholdEvaluation(SQLModel, table=True):
+    """Durable threshold decision for every inbound or outbound movement."""
+
+    __tablename__: str = "inventory_threshold_evaluation"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_table", "source_pk", name="uq_threshold_evaluation_source"
+        ),
+        CheckConstraint(
+            "source_table IN ('stockentry', 'stockexit')",
+            name="ck_threshold_evaluation_source_table",
+        ),
+        CheckConstraint(
+            "before_quantity >= 0 AND after_quantity >= 0",
+            name="ck_threshold_evaluation_quantities_nonnegative",
+        ),
+        CheckConstraint(
+            "threshold_quantity IS NULL OR threshold_quantity >= 0",
+            name="ck_threshold_evaluation_threshold_nonnegative",
+        ),
+        CheckConstraint(
+            "(crossed = true AND event_id IS NOT NULL) OR "
+            "(crossed = false AND event_id IS NULL)",
+            name="ck_threshold_evaluation_crossed_event",
+        ),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    source_table: str
+    source_pk: int
+    sku_id: int = Field(foreign_key="sku.id")
+    client_id: str | None = None
+    warehouse: str
+    before_quantity: int
+    after_quantity: int
+    threshold_quantity: int | None = None
+    crossed: bool
+    event_id: UUID | None = None
+    evaluated_at: datetime = Field(default_factory=_utc_now)

@@ -758,21 +758,17 @@ def test_new_connection_does_not_inherit_an_aborted_connection():
 )
 def test_postgres_insert_update_idempotent_id_and_computed_at():
     """Real PostgreSQL coverage. Not executed without an isolated test URL."""
-    from pathlib import Path
-
     from sqlalchemy import create_engine, text
 
     url = os.environ["TRACKFLOW_PUBLICATION_TEST_DATABASE_URL"]
     if url == os.getenv("DATABASE_URL"):
-        pytest.skip("Refusing to reuse DATABASE_URL as the publication test database")
+        pytest.fail("Refusing to reuse DATABASE_URL as the publication test database")
     engine = create_engine(url)
-    ddl = Path("infra/sql/reporting_weekly_warehouse_client_performance.sql").read_text(encoding="utf-8")
     original = aggregate()
     changed = aggregate(inbound_units_count=9)
     with engine.connect() as connection:
         transaction = connection.begin()
         try:
-            connection.execute(text(ddl))
             inserted = _stage_weekly_upsert(connection, WEEK, (original,), now=COMPLETE_NOW)
             assert inserted.status == "staged"
             assert inserted.inserted == 1
@@ -823,11 +819,13 @@ def test_postgres_insert_update_idempotent_id_and_computed_at():
             transaction.rollback()
 
 
-@pytest.mark.skip(
-    reason=(
-        "Pending isolated PostgreSQL fault injection. Uncertain COMMIT must not be "
-        "simulated against an unauthorized server and is not a real transaction when mocked."
-    )
+@pytest.mark.skipif(
+    not os.getenv("TRACKFLOW_PUBLICATION_TEST_DATABASE_URL"),
+    reason=POSTGRES_SKIP_REASON,
 )
 def test_postgres_uncertain_commit_pending():
-    pytest.fail("isolated PostgreSQL fault injection is not authorized in this session")
+    from tests.test_pipeline_postgres_integration import (
+        _assert_metadata_recovery_without_fault_injection,
+    )
+
+    _assert_metadata_recovery_without_fault_injection()

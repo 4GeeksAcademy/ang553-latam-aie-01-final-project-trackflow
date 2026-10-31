@@ -11,6 +11,7 @@ Exposes:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from tinydb import TinyDB
@@ -18,10 +19,11 @@ from tinydb import TinyDB
 # ── Database path ────────────────────────────────────────────────────────────
 # Same data directory as suppliers, but different file.
 
-_DATA_DIR = Path(__file__).resolve().parent / "data"
-_DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-_AUTH_DB_PATH = _DATA_DIR / "auth.json"
+_DEFAULT_AUTH_DB_PATH = Path(__file__).resolve().parent / "data" / "auth.json"
+_AUTH_DB_PATH = Path(
+    os.getenv("TRACKFLOW_AUTH_DATABASE_PATH", str(_DEFAULT_AUTH_DB_PATH))
+).expanduser().resolve()
+_AUTH_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 # ── TinyDB instance & tables ─────────────────────────────────────────────────
 

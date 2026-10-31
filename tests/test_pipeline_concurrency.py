@@ -490,7 +490,8 @@ def test_later_server_clock_expires_a_lease_and_fencing_store_cannot_replace_the
     ),
 )
 def test_two_postgres_connections_cannot_both_hold_one_week():
-    url = os.environ["TRACKFLOW_PUBLICATION_TEST_DATABASE_URL"]
-    if url == os.getenv("DATABASE_URL"):
-        pytest.skip("Refusing to reuse DATABASE_URL as the lease test database")
-    pytest.fail("Isolated PostgreSQL is configured, but the two-connection lease test is not executed yet")
+    from tests.test_pipeline_postgres_integration import (
+        _assert_locking_fencing_and_contention,
+    )
+
+    _assert_locking_fencing_and_contention()

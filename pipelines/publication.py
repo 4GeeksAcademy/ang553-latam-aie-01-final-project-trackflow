@@ -56,6 +56,9 @@ BLOCKING_QUALITY_CODES = frozenset(
         "stockexit_movement_missing",
         "stockexit_type_unknown",
         "outbound_classification_unavailable",
+        "invalid_row_id",
+        "event_validation_failed",
+        "telemetry_row_id_conflict",
     }
 )
 

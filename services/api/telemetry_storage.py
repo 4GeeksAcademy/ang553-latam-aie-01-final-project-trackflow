@@ -7,9 +7,11 @@ statements.  Table provisioning is owned by ``infra/sql/telemetry_events.sql``.
 from __future__ import annotations
 
 from typing import Any, Iterable
+from datetime import datetime
+from uuid import UUID as PyUUID
 
 from sqlalchemy import Column, DateTime, MetaData, Numeric, Table, Text, insert, text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 
 from services.api.database import open_db_session
 from services.api.telemetry_schemas import TelemetryEvent
@@ -24,7 +26,7 @@ telemetry_metadata = MetaData()
 telemetry_events = Table(
     "telemetry_events",
     telemetry_metadata,
-    Column("id", UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
+    Column("id", PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
     Column("timestamp", DateTime(timezone=True), nullable=False),
     Column("service", Text, nullable=False),
     Column("event_type", Text, nullable=False),
@@ -40,10 +42,10 @@ EVENT_PROPERTY_ALLOWLISTS: dict[str, frozenset[str]] = {
         {"warehouse", "client_id", "product_id", "product_category", "quantity", "movement_id"}
     ),
     "outbound_order_created": frozenset(
-        {"warehouse", "client_id", "product_id", "product_category", "quantity", "movement_id"}
+        {"warehouse", "client_id", "order_id"}
     ),
     "stock_threshold_triggered": frozenset(
-        {"warehouse", "client_id", "product_id", "product_category", "quantity", "threshold_quantity"}
+        {"warehouse", "client_id", "product_id", "product_category", "quantity", "threshold_quantity", "movement_id"}
     ),
     "direct_stock_edit_rejected": frozenset(
         {"warehouse", "client_id", "product_id", "product_category", "quantity"}
@@ -58,6 +60,8 @@ EVENT_PROPERTY_ALLOWLISTS: dict[str, frozenset[str]] = {
             "system_quantity",
             "counted_quantity",
             "discrepancy_delta",
+            "discrepancy_type",
+            "count_id",
         }
     ),
     "auth_login_succeeded": frozenset({"role"}),
@@ -116,6 +120,26 @@ def map_event_to_row(
         "value": None,
         "message": None,
         "tags": filter_tags(event.event_type, event.properties),
+    }
+
+
+def map_outbox_event_to_row(
+    *,
+    event_id: PyUUID,
+    occurred_at: datetime,
+    event_type: str,
+    tags: dict[str, Any],
+) -> dict[str, Any]:
+    """Map a trusted operational outbox row while preserving its stable UUID."""
+    return {
+        "id": event_id,
+        "timestamp": occurred_at,
+        "service": "api",
+        "event_type": event_type,
+        "level": "info",
+        "value": None,
+        "message": None,
+        "tags": filter_tags(event_type, tags),
     }
 
 

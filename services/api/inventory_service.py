@@ -15,17 +15,26 @@ Movement operations enforce:
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from datetime import datetime, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException
+from sqlalchemy import text
 from sqlmodel import Session, func, select
 
-from services.api.inventory_schemas import StockEntryCreate, StockExitCreate
+from services.api.inventory_schemas import (
+    CommercialOrderCreate,
+    CommercialOrderDispatchAppend,
+    InventoryPhysicalCountCreate,
+    StockEntryCreate,
+    StockExitCreate,
+)
+from services.api.cache import invalidate_inventory_cache
 from services.api.telemetry_capture import capture_telemetry_events
+from services.api.inventory_outbox import enqueue_inventory_event
 from services.api.telemetry_schemas import TelemetryEvent
 from services.api.telemetry_storage import (
-    persist_backend_telemetry,
     persist_backend_telemetry_best_effort,
 )
 from services.api.telemetry_utils import canonical_telemetry_warehouse
@@ -42,6 +51,135 @@ class InventoryDataIntegrityError(RuntimeError):
             "Inventory movements reference missing SKUs: "
             f"{sorted(self.missing_sku_ids)}"
         )
+
+
+def _lock_idempotency_keys(session: Session, values: list[UUID]) -> None:
+    """Serialize UUID commands in PostgreSQL; SQLite unit tests stay local."""
+    bind = session.get_bind()
+    if getattr(bind.dialect, "name", None) != "postgresql":
+        return
+    for value in sorted(set(values), key=str):
+        key = int.from_bytes(value.bytes[:8], "big", signed=True)
+        session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": key})
+
+
+def _lock_skus(session: Session, sku_ids: set[int]) -> dict[int, object]:
+    """Lock SKU rows in stable order to serialize stock-derived writes."""
+    from services.api.inventory_models import SKU
+
+    ordered = sorted(sku_ids)
+    rows = session.exec(
+        select(SKU)
+        .where(SKU.id.in_(ordered))
+        .order_by(SKU.id)
+        .with_for_update()
+    ).all()
+    return {row.id: row for row in rows}
+
+
+def _event(
+    *,
+    event_type: str,
+    user_uuid: str,
+    request_id: str | None,
+    occurred_at: datetime,
+    tags: dict,
+) -> TelemetryEvent:
+    return TelemetryEvent(
+        eventId=uuid4(),
+        timestamp=occurred_at.isoformat().replace("+00:00", "Z"),
+        sessionId=None,
+        userId=user_uuid,
+        event_type=event_type,
+        schemaVersion="1.0",
+        requestId=request_id,
+        properties=tags,
+    )
+
+
+def _threshold_event(
+    session: Session,
+    *,
+    sku: object,
+    source_pk: int,
+    before: int,
+    after: int,
+    user_uuid: str,
+    request_id: str | None,
+    occurred_at: datetime,
+) -> TelemetryEvent | None:
+    threshold = sku.minimum_stock_threshold
+    if threshold is None or not (before > threshold and after <= threshold):
+        return None
+    warehouse = canonical_telemetry_warehouse(sku.warehouse)
+    if warehouse is None or not sku.client_id:
+        raise InventoryDataIntegrityError({sku.id})
+    tags = {
+        "warehouse": warehouse,
+        "client_id": sku.client_id,
+        "product_id": str(sku.id),
+        "product_category": sku.category,
+        "quantity": after,
+        "threshold_quantity": threshold,
+        "movement_id": str(source_pk),
+    }
+    event = _event(
+        event_type="stock_threshold_triggered",
+        user_uuid=user_uuid,
+        request_id=request_id,
+        occurred_at=occurred_at,
+        tags=tags,
+    )
+    enqueue_inventory_event(
+        session,
+        event_id=event.eventId,
+        occurred_at=occurred_at,
+        source_table="stockexit",
+        source_pk=source_pk,
+        event_type=event.event_type,
+        tags=tags,
+    )
+    return event
+
+
+def _record_threshold_evaluation(
+    session: Session,
+    *,
+    source_table: str,
+    source_pk: int,
+    sku: object,
+    before: int,
+    after: int,
+    event: TelemetryEvent | None,
+    evaluated_at: datetime,
+) -> None:
+    from services.api.inventory_models import InventoryThresholdEvaluation
+
+    crossed = event is not None
+    session.add(
+        InventoryThresholdEvaluation(
+            source_table=source_table,
+            source_pk=source_pk,
+            sku_id=sku.id,
+            client_id=sku.client_id,
+            warehouse=sku.warehouse,
+            before_quantity=before,
+            after_quantity=after,
+            threshold_quantity=sku.minimum_stock_threshold,
+            crossed=crossed,
+            event_id=None if event is None else event.eventId,
+            evaluated_at=evaluated_at,
+        )
+    )
+
+
+def _capture_after_commit(events: list[TelemetryEvent]) -> None:
+    if not events:
+        return
+    try:
+        capture_telemetry_events(events)
+    except Exception:
+        logger.warning("Telemetry capture failed after committed inventory operation")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -214,7 +352,7 @@ def create_stock_entry(
     from services.api.inventory_models import StockEntry
 
     # 1. Check SKU exists
-    sku = get_sku_or_none(session, data.sku_id)
+    sku = _lock_skus(session, {data.sku_id}).get(data.sku_id)
     if sku is None:
         raise HTTPException(
             status_code=404,
@@ -235,53 +373,80 @@ def create_stock_entry(
             headers={"X-TrackFlow-Error-Code": "warehouse_mismatch"},
         )
 
-    # 3. Build and persist
+    before = get_current_stock(session, data.sku_id, movement_warehouse)
+
+    # 3. Build the movement and its authentic event in one transaction.
+    occurred_at = datetime.now(timezone.utc)
     entry = StockEntry(
         sku_id=data.sku_id,
         quantity=data.quantity,
         reference=data.reference,
         warehouse=movement_warehouse,
         user_uuid=user_uuid,
+        created_at=occurred_at,
     )
-    session.add(entry)
-    session.commit()
-    session.refresh(entry)
+    event: TelemetryEvent | None = None
+    try:
+        session.add(entry)
+        session.flush()
+        if entry.id is None:
+            raise RuntimeError("inbound movement identity was not assigned")
+        after = before + entry.quantity
 
-    if sku.client_id is None:
-        logger.warning("Telemetry skipped for inbound stock creation")
-    else:
-        try:
+        if sku.client_id is None:
+            logger.warning("Outbox skipped for legacy inbound stock creation")
+        else:
             warehouse = canonical_telemetry_warehouse(entry.warehouse)
             if warehouse is None:
-                logger.warning("Telemetry skipped for inbound stock creation")
+                logger.warning("Outbox skipped for inbound stock creation")
             else:
+                event_id = uuid4()
+                tags = {
+                    "warehouse": warehouse,
+                    "client_id": sku.client_id,
+                    "product_id": str(sku.id),
+                    "product_category": sku.category,
+                    "quantity": entry.quantity,
+                    "movement_id": str(entry.id),
+                }
                 event = TelemetryEvent(
-                    eventId=uuid4(),
-                    timestamp=datetime.now(timezone.utc).isoformat().replace(
-                        "+00:00", "Z"
-                    ),
+                    eventId=event_id,
+                    timestamp=occurred_at.isoformat().replace("+00:00", "Z"),
                     sessionId=None,
                     userId=user_uuid,
                     event_type="inbound_order_created",
                     schemaVersion="1.0",
                     requestId=request_id,
-                    properties={
-                        "warehouse": warehouse,
-                        "client_id": sku.client_id,
-                        "product_id": str(sku.id),
-                        "product_category": sku.category,
-                        "quantity": entry.quantity,
-                        "movement_id": str(entry.id),
-                    },
+                    properties=tags,
                 )
-                try:
-                    capture_telemetry_events([event])
-                except Exception:
-                    logger.warning("Telemetry capture failed for inbound stock creation")
-                try:
-                    persist_backend_telemetry(session, [event])
-                except Exception:
-                    logger.warning("Telemetry persistence failed for inbound stock creation")
+                enqueue_inventory_event(
+                    session,
+                    event_id=event_id,
+                    occurred_at=occurred_at,
+                    source_table="stockentry",
+                    source_pk=entry.id,
+                    event_type=event.event_type,
+                    tags=tags,
+                )
+        _record_threshold_evaluation(
+            session,
+            source_table="stockentry",
+            source_pk=entry.id,
+            sku=sku,
+            before=before,
+            after=after,
+            event=None,
+            evaluated_at=occurred_at,
+        )
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    session.refresh(entry)
+
+    if event is not None:
+        try:
+            capture_telemetry_events([event])
         except Exception:
             logger.warning("Telemetry capture failed for inbound stock creation")
 
@@ -334,7 +499,7 @@ def create_stock_exit(
     from services.api.inventory_models import StockExit
 
     # 1. Check SKU exists
-    sku = get_sku_or_none(session, data.sku_id)
+    sku = _lock_skus(session, {data.sku_id}).get(data.sku_id)
     if sku is None:
         raise HTTPException(
             status_code=404,
@@ -399,7 +564,10 @@ def create_stock_exit(
             headers={"X-TrackFlow-Error-Code": "insufficient_stock"},
         )
 
-    # 4. Build and persist
+    # 4. Persist the legacy movement. The commercial order, not an individual
+    # dispatch, owns outbound_order_created. This legacy operation therefore
+    # never claims that a standalone StockExit is a commercial order.
+    occurred_at = datetime.now(timezone.utc)
     exit_record = StockExit(
         sku_id=data.sku_id,
         quantity=data.quantity,
@@ -407,54 +575,439 @@ def create_stock_exit(
         tracking_number=data.tracking_number,
         warehouse=movement_warehouse,
         user_uuid=user_uuid,
+        created_at=occurred_at,
     )
-    session.add(exit_record)
-    session.commit()
+    events: list[TelemetryEvent] = []
+    try:
+        session.add(exit_record)
+        session.flush()
+        if exit_record.id is None:
+            raise RuntimeError("outbound movement identity was not assigned")
+        threshold_event = _threshold_event(
+            session,
+            sku=sku,
+            source_pk=exit_record.id,
+            before=available,
+            after=available - exit_record.quantity,
+            user_uuid=user_uuid,
+            request_id=request_id,
+            occurred_at=occurred_at,
+        )
+        if threshold_event is not None:
+            events.append(threshold_event)
+        _record_threshold_evaluation(
+            session,
+            source_table="stockexit",
+            source_pk=exit_record.id,
+            sku=sku,
+            before=available,
+            after=available - exit_record.quantity,
+            event=threshold_event,
+            evaluated_at=occurred_at,
+        )
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     session.refresh(exit_record)
-
-    if sku.client_id is None:
-        logger.warning("Telemetry skipped for outbound stock creation")
-    else:
-        try:
-            warehouse = canonical_telemetry_warehouse(exit_record.warehouse)
-            if warehouse is None:
-                logger.warning("Telemetry skipped for outbound stock creation")
-            else:
-                event = TelemetryEvent(
-                    eventId=uuid4(),
-                    timestamp=datetime.now(timezone.utc).isoformat().replace(
-                        "+00:00", "Z"
-                    ),
-                    sessionId=None,
-                    userId=user_uuid,
-                    event_type="outbound_order_created",
-                    schemaVersion="1.0",
-                    requestId=request_id,
-                    properties={
-                        "warehouse": warehouse,
-                        "client_id": sku.client_id,
-                        "product_id": str(sku.id),
-                        "product_category": sku.category,
-                        "quantity": exit_record.quantity,
-                        "movement_id": str(exit_record.id),
-                    },
-                )
-                try:
-                    capture_telemetry_events([event])
-                except Exception:
-                    logger.warning("Telemetry capture failed for outbound stock creation")
-                try:
-                    persist_backend_telemetry(session, [event])
-                except Exception:
-                    logger.warning("Telemetry persistence failed for outbound stock creation")
-        except Exception:
-            logger.warning("Telemetry capture failed for outbound stock creation")
+    _capture_after_commit(events)
 
     from services.api.cache import invalidate_inventory_cache
 
     invalidate_inventory_cache(session)
 
     return exit_record
+
+
+def update_sku_threshold(
+    session: Session,
+    *,
+    sku_id: int,
+    minimum_stock_threshold: int | None,
+):
+    """Configure a threshold without emitting a business event."""
+    sku = _lock_skus(session, {sku_id}).get(sku_id)
+    if sku is None:
+        raise HTTPException(status_code=404, detail="SKU not found.")
+    try:
+        sku.minimum_stock_threshold = minimum_stock_threshold
+        session.add(sku)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    session.refresh(sku)
+    invalidate_inventory_cache(session)
+    return sku
+
+
+def _conflict(detail: str) -> HTTPException:
+    return HTTPException(status_code=409, detail=detail)
+
+
+def confirm_inventory_physical_count(
+    session: Session,
+    data: InventoryPhysicalCountCreate,
+    *,
+    user_uuid: str,
+    request_id: str | None = None,
+):
+    """Persist one idempotent count and discrepancy outbox event atomically."""
+    from services.api.inventory_models import InventoryPhysicalCount
+
+    _lock_idempotency_keys(session, [data.count_id])
+    existing = session.exec(
+        select(InventoryPhysicalCount)
+        .where(InventoryPhysicalCount.count_id == data.count_id)
+        .with_for_update()
+    ).first()
+    if existing is not None:
+        if (
+            existing.sku_id == data.sku_id
+            and existing.warehouse == data.warehouse.value
+            and existing.observed_quantity == data.observed_quantity
+            and existing.user_uuid == user_uuid
+        ):
+            return existing
+        raise _conflict("count_id already exists with different content")
+
+    sku = _lock_skus(session, {data.sku_id}).get(data.sku_id)
+    if sku is None:
+        raise HTTPException(status_code=404, detail="SKU not found.")
+    if sku.warehouse != data.warehouse.value:
+        raise HTTPException(status_code=400, detail="Warehouse mismatch for SKU.")
+    if not sku.client_id:
+        raise InventoryDataIntegrityError({data.sku_id})
+    expected = get_current_stock(session, data.sku_id, data.warehouse.value)
+    occurred_at = datetime.now(timezone.utc)
+    count = InventoryPhysicalCount(
+        count_id=data.count_id,
+        sku_id=data.sku_id,
+        client_id=sku.client_id,
+        warehouse=data.warehouse.value,
+        expected_quantity=expected,
+        observed_quantity=data.observed_quantity,
+        confirmed_at=occurred_at,
+        user_uuid=user_uuid,
+    )
+    events: list[TelemetryEvent] = []
+    try:
+        session.add(count)
+        session.flush()
+        if count.id is None:
+            raise RuntimeError("physical count identity was not assigned")
+        delta = data.observed_quantity - expected
+        if delta:
+            warehouse = canonical_telemetry_warehouse(data.warehouse.value)
+            if warehouse is None:
+                raise InventoryDataIntegrityError({data.sku_id})
+            tags = {
+                "warehouse": warehouse,
+                "client_id": sku.client_id,
+                "product_id": str(sku.id),
+                "product_category": sku.category,
+                "quantity": abs(delta),
+                "system_quantity": expected,
+                "counted_quantity": data.observed_quantity,
+                "discrepancy_delta": delta,
+                "discrepancy_type": "surplus" if delta > 0 else "shortage",
+                "count_id": str(count.count_id),
+            }
+            event = _event(
+                event_type="inventory_discrepancy_detected",
+                user_uuid=user_uuid,
+                request_id=request_id,
+                occurred_at=occurred_at,
+                tags=tags,
+            )
+            enqueue_inventory_event(
+                session,
+                event_id=event.eventId,
+                occurred_at=occurred_at,
+                source_table="inventory_physical_count",
+                source_pk=count.id,
+                event_type=event.event_type,
+                tags=tags,
+            )
+            events.append(event)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    session.refresh(count)
+    _capture_after_commit(events)
+    return count
+
+
+def _dispatch_matches(record: object, payload: object, order_id: int) -> bool:
+    return (
+        record.commercial_order_id == order_id
+        and record.sku_id == payload.sku_id
+        and record.quantity == payload.quantity
+        and record.exit_type == "dispatch"
+        and record.tracking_number == payload.tracking_number
+    )
+
+
+def _order_dispatches(session: Session, order_pk: int) -> list[object]:
+    from services.api.inventory_models import StockExit
+
+    return list(
+        session.exec(
+            select(StockExit)
+            .where(StockExit.commercial_order_id == order_pk)
+            .order_by(StockExit.dispatch_id)
+        ).all()
+    )
+
+
+def _validate_order_skus(
+    session: Session,
+    *,
+    dispatches: list[object],
+    client_id: str,
+    warehouse: str,
+) -> dict[int, object]:
+    sku_ids = {item.sku_id for item in dispatches}
+    skus = _lock_skus(session, sku_ids)
+    missing = sku_ids - set(skus)
+    if missing:
+        raise InventoryDataIntegrityError(missing)
+    for sku in skus.values():
+        if sku.client_id != client_id or sku.warehouse != warehouse:
+            raise HTTPException(
+                status_code=400,
+                detail="Order client or warehouse does not match its SKU.",
+            )
+    required: dict[int, int] = defaultdict(int)
+    for item in dispatches:
+        required[item.sku_id] += item.quantity
+    for sku_id, quantity in required.items():
+        available = get_current_stock(session, sku_id, warehouse)
+        if quantity > available:
+            raise HTTPException(status_code=400, detail="Insufficient stock for order.")
+    return skus
+
+
+def _add_order_dispatches(
+    session: Session,
+    *,
+    order: object,
+    dispatches: list[object],
+    skus: dict[int, object],
+    user_uuid: str,
+    request_id: str | None,
+    occurred_at: datetime,
+) -> tuple[list[object], list[TelemetryEvent]]:
+    from services.api.inventory_models import StockExit
+
+    running = {
+        sku_id: get_current_stock(session, sku_id, order.warehouse)
+        for sku_id in skus
+    }
+    created: list[object] = []
+    events: list[TelemetryEvent] = []
+    for item in sorted(dispatches, key=lambda value: str(value.dispatch_id)):
+        before = running[item.sku_id]
+        record = StockExit(
+            dispatch_id=item.dispatch_id,
+            commercial_order_id=order.id,
+            sku_id=item.sku_id,
+            quantity=item.quantity,
+            exit_type="dispatch",
+            tracking_number=item.tracking_number,
+            warehouse=order.warehouse,
+            user_uuid=user_uuid,
+            created_at=occurred_at,
+        )
+        session.add(record)
+        session.flush()
+        if record.id is None:
+            raise RuntimeError("dispatch identity was not assigned")
+        after = before - item.quantity
+        running[item.sku_id] = after
+        threshold = _threshold_event(
+            session,
+            sku=skus[item.sku_id],
+            source_pk=record.id,
+            before=before,
+            after=after,
+            user_uuid=user_uuid,
+            request_id=request_id,
+            occurred_at=occurred_at,
+        )
+        if threshold is not None:
+            events.append(threshold)
+        _record_threshold_evaluation(
+            session,
+            source_table="stockexit",
+            source_pk=record.id,
+            sku=skus[item.sku_id],
+            before=before,
+            after=after,
+            event=threshold,
+            evaluated_at=occurred_at,
+        )
+        created.append(record)
+    return created, events
+
+
+def create_commercial_order(
+    session: Session,
+    data: CommercialOrderCreate,
+    *,
+    user_uuid: str,
+    request_id: str | None = None,
+):
+    """Create one order, its initial dispatches, and one outbound event."""
+    from services.api.inventory_models import CommercialOrder, StockExit
+
+    dispatch_ids = [item.dispatch_id for item in data.dispatches]
+    if len(dispatch_ids) != len(set(dispatch_ids)):
+        raise _conflict("dispatch_id values must be unique within a command")
+    _lock_idempotency_keys(session, [data.order_id, *dispatch_ids])
+    existing = session.exec(
+        select(CommercialOrder)
+        .where(CommercialOrder.order_id == data.order_id)
+        .with_for_update()
+    ).first()
+    if existing is not None:
+        persisted = {item.dispatch_id: item for item in _order_dispatches(session, existing.id)}
+        if existing.client_id != data.client_id or existing.warehouse != data.warehouse.value:
+            raise _conflict("order_id already exists with different content")
+        if set(persisted) == set(dispatch_ids) and all(
+            item.dispatch_id in persisted
+            and _dispatch_matches(persisted[item.dispatch_id], item, existing.id)
+            for item in data.dispatches
+        ):
+            return existing, list(persisted.values())
+        raise _conflict("order_id already exists with different dispatches")
+
+    existing_dispatches = session.exec(
+        select(StockExit).where(StockExit.dispatch_id.in_(dispatch_ids))
+    ).all()
+    if existing_dispatches:
+        raise _conflict("dispatch_id already exists")
+    skus = _validate_order_skus(
+        session,
+        dispatches=list(data.dispatches),
+        client_id=data.client_id,
+        warehouse=data.warehouse.value,
+    )
+    occurred_at = datetime.now(timezone.utc)
+    order = CommercialOrder(
+        order_id=data.order_id,
+        client_id=data.client_id,
+        warehouse=data.warehouse.value,
+        created_at=occurred_at,
+    )
+    events: list[TelemetryEvent] = []
+    try:
+        session.add(order)
+        session.flush()
+        if order.id is None:
+            raise RuntimeError("commercial order identity was not assigned")
+        created, threshold_events = _add_order_dispatches(
+            session,
+            order=order,
+            dispatches=list(data.dispatches),
+            skus=skus,
+            user_uuid=user_uuid,
+            request_id=request_id,
+            occurred_at=occurred_at,
+        )
+        tags = {
+            "order_id": str(order.order_id),
+            "warehouse": canonical_telemetry_warehouse(order.warehouse),
+            "client_id": order.client_id,
+        }
+        outbound = _event(
+            event_type="outbound_order_created",
+            user_uuid=user_uuid,
+            request_id=request_id,
+            occurred_at=occurred_at,
+            tags=tags,
+        )
+        enqueue_inventory_event(
+            session,
+            event_id=outbound.eventId,
+            occurred_at=occurred_at,
+            source_table="commercial_order",
+            source_pk=order.id,
+            event_type=outbound.event_type,
+            tags=tags,
+        )
+        events = [outbound, *threshold_events]
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    session.refresh(order)
+    invalidate_inventory_cache(session)
+    _capture_after_commit(events)
+    return order, created
+
+
+def append_commercial_order_dispatches(
+    session: Session,
+    data: CommercialOrderDispatchAppend,
+    *,
+    user_uuid: str,
+    request_id: str | None = None,
+):
+    """Append new partials, deduplicating exact dispatch-id retries."""
+    from services.api.inventory_models import CommercialOrder, StockExit
+
+    dispatch_ids = [item.dispatch_id for item in data.dispatches]
+    if len(dispatch_ids) != len(set(dispatch_ids)):
+        raise _conflict("dispatch_id values must be unique within a command")
+    _lock_idempotency_keys(session, [data.order_id, *dispatch_ids])
+    order = session.exec(
+        select(CommercialOrder)
+        .where(CommercialOrder.order_id == data.order_id)
+        .with_for_update()
+    ).first()
+    if order is None:
+        raise HTTPException(status_code=404, detail="Commercial order not found.")
+    existing = {
+        item.dispatch_id: item
+        for item in session.exec(
+            select(StockExit).where(StockExit.dispatch_id.in_(dispatch_ids))
+        ).all()
+    }
+    new_items = []
+    for item in data.dispatches:
+        record = existing.get(item.dispatch_id)
+        if record is None:
+            new_items.append(item)
+        elif not _dispatch_matches(record, item, order.id):
+            raise _conflict("dispatch_id already exists with different content")
+    if not new_items:
+        return order, _order_dispatches(session, order.id)
+    skus = _validate_order_skus(
+        session,
+        dispatches=new_items,
+        client_id=order.client_id,
+        warehouse=order.warehouse,
+    )
+    try:
+        occurred_at = datetime.now(timezone.utc)
+        _created, events = _add_order_dispatches(
+            session,
+            order=order,
+            dispatches=new_items,
+            skus=skus,
+            user_uuid=user_uuid,
+            request_id=request_id,
+            occurred_at=occurred_at,
+        )
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    invalidate_inventory_cache(session)
+    _capture_after_commit(events)
+    return order, _order_dispatches(session, order.id)
 
 
 # ═════════════════════════════════════════════════════════════════════════════

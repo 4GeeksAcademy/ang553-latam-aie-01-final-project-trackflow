@@ -17,8 +17,9 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 from typing import Optional
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, UUID4, model_validator
 
 from services.api.inventory_clients import validate_client_pair
 
@@ -66,6 +67,7 @@ class SKUCreate(BaseModel):
     client_name: str
     category: Category
     warehouse: Warehouse
+    minimum_stock_threshold: int | None = Field(default=None, ge=0, strict=True)
 
     @model_validator(mode="after")
     def _validate_client_identity(self) -> SKUCreate:
@@ -90,7 +92,16 @@ class SKUResponse(BaseModel):
     client_name: str
     category: Category
     warehouse: Warehouse
+    minimum_stock_threshold: int | None
     current_stock: int
+
+
+class SKUThresholdUpdate(BaseModel):
+    """Configure or disable a SKU threshold after product creation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    minimum_stock_threshold: int | None = Field(ge=0, strict=True)
 
 
 # ── StockEntry schemas ───────────────────────────────────────────────────────
@@ -184,6 +195,99 @@ class StockExitResponse(BaseModel):
     tracking_number: Optional[str] = None
     warehouse: Warehouse
     created_at: datetime
+    user_uuid: str
+    commercial_order_id: int | None = None
+
+
+class CommercialOrderDispatchCreate(BaseModel):
+    """One dispatch partial associated with a stable commercial order."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dispatch_id: UUID4
+    sku_id: int = Field(gt=0, strict=True)
+    quantity: int = Field(gt=0, strict=True)
+    tracking_number: str = Field(min_length=1)
+
+
+class CommercialOrderCreate(BaseModel):
+    """Idempotent order command with at least one initial dispatch partial."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    order_id: UUID4
+    client_id: str = Field(min_length=1)
+    warehouse: Warehouse
+    dispatches: list[CommercialOrderDispatchCreate] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _unique_dispatch_ids(self) -> CommercialOrderCreate:
+        ids = [item.dispatch_id for item in self.dispatches]
+        if len(ids) != len(set(ids)):
+            raise ValueError("dispatch_id values must be unique within a command")
+        return self
+
+
+class CommercialOrderDispatchAppend(BaseModel):
+    """Append partial dispatches without creating another order event."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    order_id: UUID4
+    dispatches: list[CommercialOrderDispatchCreate] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _unique_dispatch_ids(self) -> CommercialOrderDispatchAppend:
+        ids = [item.dispatch_id for item in self.dispatches]
+        if len(ids) != len(set(ids)):
+            raise ValueError("dispatch_id values must be unique within a command")
+        return self
+
+
+class CommercialOrderResponse(BaseModel):
+    """Persisted commercial identity shared by one or more dispatch exits."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    order_id: UUID
+    client_id: str
+    warehouse: Warehouse
+    created_at: datetime
+
+
+class CommercialOrderMutationResponse(BaseModel):
+    """Stable order identity and the complete persisted dispatch-id set."""
+
+    id: int
+    order_id: UUID
+    dispatch_ids: list[UUID]
+
+
+class InventoryPhysicalCountCreate(BaseModel):
+    """One observed count; expected stock is derived by the service."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    count_id: UUID4
+    sku_id: int
+    observed_quantity: int = Field(ge=0, strict=True)
+    warehouse: Warehouse
+
+
+class InventoryPhysicalCountResponse(BaseModel):
+    """Durable physical-count evidence with stable public UUID."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    count_id: UUID
+    sku_id: int
+    client_id: str
+    warehouse: Warehouse
+    expected_quantity: int
+    observed_quantity: int
+    confirmed_at: datetime
     user_uuid: str
 
 

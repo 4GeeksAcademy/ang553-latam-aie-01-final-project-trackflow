@@ -24,6 +24,7 @@ from services.api.inventory_service import (
     get_current_stock,
     get_current_stocks,
 )
+from services.api.inventory_outbox import inventory_outbox_metadata
 from services.api.cache import TTLCache, inventory_cache_key, orders_cache, products_cache
 from services.api.routes import inventory as inventory_routes
 from services.api.routes.inventory import create_product, get_product, list_products
@@ -51,6 +52,7 @@ def db_session() -> Session:
     """
     engine = create_engine("sqlite://", echo=False)
     SQLModel.metadata.create_all(engine)
+    inventory_outbox_metadata.create_all(engine)
     with Session(engine) as session:
         yield session
 
@@ -438,7 +440,8 @@ class TestCreateProduct:
             "product_category": "fashion",
         }
         assert event.eventId.version == 4
-        assert event.timestamp.endswith("Z")
+        assert event.timestamp.tzinfo is not None
+        assert event.timestamp.utcoffset().total_seconds() == 0
         assert event.schemaVersion == "1.0"
         assert event.requestId == request_id
         assert event.userId == auth_user.id

@@ -85,22 +85,20 @@ class MovementWeekEvidence:
 
 
 @dataclass(frozen=True)
-class StockExitRecord:
-    """A previously extracted stockexit row used only for outbound classification."""
+class CommercialOrderRecord:
+    """Authoritative order identity backed by one or more dispatch rows."""
 
-    movement_id: str
-    exit_type: str
-    warehouse: str | None = None
-    client_id: str | None = None
-    product_id: str | None = None
-    quantity: int | None = None
+    order_id: str
+    warehouse: str
+    client_id: str
+    dispatch_count: int
 
 
 @dataclass(frozen=True)
-class StockExitEvidence:
-    """Explicit stockexit lookup results and whether absence is conclusive."""
+class CommercialOrderEvidence:
+    """Explicit commercial-order lookup results and completeness."""
 
-    records: Mapping[str, StockExitRecord]
+    records: Mapping[str, CommercialOrderRecord]
     lookup_complete: bool
 
 
@@ -139,10 +137,16 @@ class _ValidatedEvent:
 
     @property
     def movement_key(self) -> tuple[str, str] | None:
-        movement_id = self.tags.get("movement_id")
-        if self.event_type in {INBOUND_ORDER_CREATED, OUTBOUND_ORDER_CREATED}:
-            return self.event_type, movement_id
-        return None
+        identity_field = {
+            INBOUND_ORDER_CREATED: "movement_id",
+            OUTBOUND_ORDER_CREATED: "order_id",
+            STOCK_THRESHOLD_TRIGGERED: "movement_id",
+            INVENTORY_DISCREPANCY_DETECTED: "count_id",
+        }.get(self.event_type)
+        if identity_field is None:
+            return None
+        identity = self.tags.get(identity_field)
+        return (self.event_type, identity) if isinstance(identity, str) else None
 
 
 def _row_id(value: Any) -> str:
@@ -244,15 +248,33 @@ def _validate_event(row: Mapping[str, Any]) -> _ValidatedEvent:
     warehouse = _canonical_warehouse(tags.get("warehouse"))
     client_id = _valid_client_id(tags.get("client_id"))
 
-    if event_type in {INBOUND_ORDER_CREATED, OUTBOUND_ORDER_CREATED}:
+    if event_type == INBOUND_ORDER_CREATED:
         movement_id = tags.get("movement_id")
         if not isinstance(movement_id, str) or not movement_id.strip():
-            raise ValueError("movement_id must be a non-empty string for movements")
+            raise ValueError("movement_id must be a non-empty string for inbound movements")
         _integer_quantity(tags.get("quantity"))
+    elif event_type == OUTBOUND_ORDER_CREATED:
+        order_id = tags.get("order_id")
+        try:
+            parsed_order_id = UUID(order_id) if isinstance(order_id, str) else None
+        except ValueError:
+            parsed_order_id = None
+        if parsed_order_id is None or parsed_order_id.version != 4:
+            raise ValueError("order_id must be a UUID v4 for outbound orders")
     elif event_type == STOCK_THRESHOLD_TRIGGERED:
+        movement_id = tags.get("movement_id")
+        if not isinstance(movement_id, str) or not movement_id.strip():
+            raise ValueError("movement_id must be a non-empty string for threshold events")
         # The event schema defines quantity as nonnegative for threshold events.
         _integer_quantity(tags.get("quantity"), allow_zero=True)
     elif event_type == INVENTORY_DISCREPANCY_DETECTED:
+        count_id = tags.get("count_id")
+        try:
+            parsed_count_id = UUID(count_id) if isinstance(count_id, str) else None
+        except ValueError:
+            parsed_count_id = None
+        if parsed_count_id is None or parsed_count_id.version != 4:
+            raise ValueError("count_id must be a UUID v4 for discrepancy events")
         # The discrepancy event schema defines quantity as positive.
         _integer_quantity(tags.get("quantity"))
     product_id = tags.get("product_id")
@@ -297,12 +319,10 @@ def _same_persisted_row(left: Mapping[str, Any], right: Mapping[str, Any]) -> bo
 
 
 def _movement_signature(event: _ValidatedEvent) -> tuple[Any, ...]:
-    tags = event.tags
     return (
         event.warehouse,
         event.client_id,
-        tags.get("quantity"),
-        str(tags.get("product_id")) if tags.get("product_id") is not None else None,
+        _stable_value(event.tags),
         event.week_start,
     )
 
@@ -324,13 +344,13 @@ def _evidence_for_key(
 def transform_weekly_performance(
     events: Sequence[Mapping[str, Any]],
     *,
-    stockexit_evidence: StockExitEvidence,
+    commercial_order_evidence: CommercialOrderEvidence,
     movement_week_evidence: Mapping[tuple[str, str], MovementWeekEvidence] | None = None,
 ) -> WeeklyTransformationResult:
     """Validate, deduplicate, classify, and aggregate extracted telemetry rows.
 
-    ``stockexit_evidence.lookup_complete`` distinguishes confirmed absence from
-    unavailable classification. ``movement_week_evidence`` records complete
+    ``commercial_order_evidence.lookup_complete`` distinguishes confirmed absence
+    from unavailable order verification. ``movement_week_evidence`` records complete
     auxiliary checks for movement attribution across ISO weeks. No database or
     current-client-registry access is performed.
     """
@@ -414,7 +434,7 @@ def transform_weekly_performance(
             reason = (
                 "Complete movement evidence attributes this movement to conflicting ISO weeks."
                 if cross_week_conflict
-                else "Repeated movement_id values conflict on warehouse, client, quantity, product, or week."
+                else "Repeated business identities conflict on event tags, warehouse, client, or week."
             )
             issues.append(
                 QualityIssue("movement_conflict", reason, tuple(event.row_id for event in group), key)
@@ -441,14 +461,14 @@ def transform_weekly_performance(
             counters[0] += _integer_quantity(event.tags.get("quantity"))
             accepted.add(event.row_id)
         elif event.event_type == OUTBOUND_ORDER_CREATED:
-            movement_id = event.tags["movement_id"]
-            record = stockexit_evidence.records.get(movement_id)
+            order_id = event.tags["order_id"]
+            record = commercial_order_evidence.records.get(order_id)
             if record is None:
-                if stockexit_evidence.lookup_complete:
+                if commercial_order_evidence.lookup_complete:
                     issues.append(
                         QualityIssue(
-                            "stockexit_movement_missing",
-                            "No matching stockexit movement was found by the complete auxiliary lookup.",
+                            "commercial_order_missing",
+                            "No matching commercial order with a dispatch was found by the complete auxiliary lookup.",
                             (event.row_id,),
                             event.movement_key,
                         )
@@ -456,8 +476,8 @@ def transform_weekly_performance(
                 else:
                     issues.append(
                         QualityIssue(
-                            "outbound_classification_unavailable",
-                            "Stockexit classification was not available; dispatch was not presumed.",
+                            "outbound_order_verification_unavailable",
+                            "Commercial-order verification was unavailable; an order was not presumed.",
                             (event.row_id,),
                             event.movement_key,
                         )
@@ -465,28 +485,24 @@ def transform_weekly_performance(
                 rejected.add(event.row_id)
                 continue
             identity_conflicts = []
-            if record.movement_id != movement_id:
-                identity_conflicts.append("movement_id")
-            if record.warehouse is not None:
-                try:
-                    record_warehouse = _canonical_warehouse(record.warehouse)
-                except ValueError:
-                    record_warehouse = None
-                    identity_conflicts.append("warehouse (invalid in stockexit evidence)")
-                if record_warehouse is not None and record_warehouse != event.warehouse:
-                    identity_conflicts.append("warehouse")
-            if record.client_id is not None and record.client_id != event.client_id:
+            if record.order_id != order_id:
+                identity_conflicts.append("order_id")
+            try:
+                record_warehouse = _canonical_warehouse(record.warehouse)
+            except ValueError:
+                record_warehouse = None
+                identity_conflicts.append("warehouse (invalid in order evidence)")
+            if record_warehouse is not None and record_warehouse != event.warehouse:
+                identity_conflicts.append("warehouse")
+            if record.client_id != event.client_id:
                 identity_conflicts.append("client_id")
-            if record.quantity is not None and record.quantity != event.tags.get("quantity"):
-                identity_conflicts.append("quantity")
-            event_product = event.tags.get("product_id")
-            if record.product_id is not None and event_product is not None and str(record.product_id) != str(event_product):
-                identity_conflicts.append("product_id")
+            if isinstance(record.dispatch_count, bool) or record.dispatch_count < 1:
+                identity_conflicts.append("dispatch_count")
             if identity_conflicts:
                 issues.append(
                     QualityIssue(
-                        "stockexit_identity_conflict",
-                        "Stockexit identity contradicts telemetry: " + ", ".join(identity_conflicts),
+                        "commercial_order_identity_conflict",
+                        "Commercial-order identity contradicts telemetry: " + ", ".join(identity_conflicts),
                         (event.row_id,),
                         event.movement_key,
                     )
@@ -494,33 +510,9 @@ def transform_weekly_performance(
                 rejected.add(event.row_id)
                 conflict_movement_keys.add(event.movement_key)
                 continue
-            if record.client_id is None:
-                issues.append(
-                    QualityIssue(
-                        "stockexit_identity_unverified",
-                        "Stockexit client identity is unavailable; outbound classification was not treated as fully verified.",
-                        (event.row_id,),
-                        event.movement_key,
-                    )
-                )
-                rejected.add(event.row_id)
-                continue
-            if record.exit_type == "dispatch":
-                counters = record_counter(1)
-                counters[1] += 1
-                accepted.add(event.row_id)
-            elif record.exit_type == "loss":
-                accepted.add(event.row_id)
-            else:
-                issues.append(
-                    QualityIssue(
-                        "stockexit_type_unknown",
-                        "Stockexit exit_type is not a recognized dispatch or loss.",
-                        (event.row_id,),
-                        event.movement_key,
-                    )
-                )
-                rejected.add(event.row_id)
+            counters = record_counter(1)
+            counters[1] += 1
+            accepted.add(event.row_id)
         elif event.event_type == STOCK_THRESHOLD_TRIGGERED:
             counters = record_counter(2)
             counters[2] += 1
@@ -580,7 +572,7 @@ def transform_weekly_performance(
     coverage_pending = (
         "Coverage is unverified: stock_threshold_triggered has no confirmed producer/capture guarantee.",
         "Coverage is unverified: inventory_discrepancy_detected has no confirmed producer/capture guarantee.",
-        "A dispatch movement is not certified as one unique commercial order.",
+        "An outbound order lacks verified commercial-order identity and dispatch evidence.",
     )
     quality = QualityReport(
         accepted_event_ids=tuple(sorted(accepted)),
