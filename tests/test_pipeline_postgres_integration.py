@@ -505,12 +505,15 @@ def test_default_http_scheduler_runs_prefect_and_blocks_without_technical_covera
     client_id = f"http-scheduler-{namespace}"
     sku_id = int(namespace[:7], 16) + 1
     stockexit_id = sku_id
+    order_id = uuid4()
+    threshold_movement_id = uuid4()
+    count_id = uuid4()
     event_ids = tuple(uuid4() for _ in range(4))
     coverage_file = tmp_path / "http-coverage.json"
     coverage_file.write_text(
         json.dumps({
             "confirmed_event_types": sorted(REQUIRED_COVERAGE_EVENTS),
-            "dispatch_order_ids": [["http-movement", "http-order"]],
+            "dispatch_order_ids": [[str(stockexit_id), str(order_id)]],
             "lookup_complete": True,
             "source": SYNTHETIC_COVERAGE_SOURCE,
         }),
@@ -564,11 +567,16 @@ def test_default_http_scheduler_runs_prefect_and_blocks_without_technical_covera
         source_tables = connection.execute(
             text(
                 "SELECT to_regclass('sku') AS sku, "
-                "to_regclass('stockexit') AS stockexit"
+                "to_regclass('stockexit') AS stockexit, "
+                "to_regclass('commercial_order') AS commercial_order"
             )
         ).mappings().one()
     assert existing_events == existing_kpis == existing_runs == 0
-    assert source_tables == {"sku": "sku", "stockexit": "stockexit"}
+    assert source_tables == {
+        "sku": "sku",
+        "stockexit": "stockexit",
+        "commercial_order": None,
+    }
 
     try:
         fixture_events = (
@@ -589,9 +597,7 @@ def test_default_http_scheduler_runs_prefect_and_blocks_without_technical_covera
                 {
                     "warehouse": "los_angeles",
                     "client_id": client_id,
-                    "product_id": str(sku_id),
-                    "movement_id": str(stockexit_id),
-                    "quantity": 2,
+                    "order_id": str(order_id),
                 },
             ),
             (
@@ -601,6 +607,7 @@ def test_default_http_scheduler_runs_prefect_and_blocks_without_technical_covera
                     "warehouse": "los_angeles",
                     "client_id": client_id,
                     "product_id": str(sku_id),
+                    "movement_id": str(threshold_movement_id),
                     "quantity": 0,
                 },
             ),
@@ -611,22 +618,47 @@ def test_default_http_scheduler_runs_prefect_and_blocks_without_technical_covera
                     "warehouse": "los_angeles",
                     "client_id": client_id,
                     "product_id": str(sku_id),
+                    "count_id": str(count_id),
                     "quantity": 1,
                 },
             ),
         )
         with engine.begin() as connection:
             connection.execute(
-                text("INSERT INTO sku (id, client_id) VALUES (:id, :client_id)"),
-                {"id": sku_id, "client_id": client_id},
+                text(
+                    "CREATE TABLE commercial_order ("
+                    "id serial PRIMARY KEY, order_id uuid NOT NULL UNIQUE, "
+                    "client_id text NOT NULL, warehouse text NOT NULL)"
+                )
             )
             connection.execute(
                 text(
-                    "INSERT INTO stockexit "
-                    "(id, exit_type, warehouse, quantity, sku_id) "
-                    "VALUES (:id, 'dispatch', 'los_angeles', 2, :sku_id)"
+                    "ALTER TABLE stockexit ADD COLUMN commercial_order_id integer "
+                    "REFERENCES commercial_order (id)"
+                )
+            )
+            connection.execute(
+                text("INSERT INTO sku (id, client_id) VALUES (:id, :client_id)"),
+                {"id": sku_id, "client_id": client_id},
+            )
+            commercial_order_id = connection.execute(
+                text(
+                    "INSERT INTO commercial_order (order_id, client_id, warehouse) "
+                    "VALUES (:order_id, :client_id, 'los_angeles') RETURNING id"
                 ),
-                {"id": stockexit_id, "sku_id": sku_id},
+                {"order_id": order_id, "client_id": client_id},
+            ).scalar_one()
+            connection.execute(
+                text(
+                    "INSERT INTO stockexit "
+                    "(id, exit_type, warehouse, quantity, sku_id, commercial_order_id) "
+                    "VALUES (:id, 'dispatch', 'los_angeles', 2, :sku_id, :commercial_order_id)"
+                ),
+                {
+                    "id": stockexit_id,
+                    "sku_id": sku_id,
+                    "commercial_order_id": commercial_order_id,
+                },
             )
             for offset, (event_id, event_type, tags) in enumerate(fixture_events):
                 connection.execute(
@@ -703,6 +735,10 @@ def test_default_http_scheduler_runs_prefect_and_blocks_without_technical_covera
                 text("DELETE FROM stockexit WHERE id = :id"), {"id": stockexit_id}
             )
             connection.execute(text("DELETE FROM sku WHERE id = :id"), {"id": sku_id})
+            connection.execute(
+                text("ALTER TABLE stockexit DROP COLUMN IF EXISTS commercial_order_id")
+            )
+            connection.execute(text("DROP TABLE IF EXISTS commercial_order"))
         engine.dispose()
 
 

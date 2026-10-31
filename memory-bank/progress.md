@@ -1,5 +1,45 @@
 # Progress: TrackFlow
 
+## Parte 3 — subflows, tests unitarios y dashboard de negocio
+
+- Pipeline semanal refactorizado en subflows Prefect de extracción, cálculo por
+  almacén/cliente y publicación; el observador opcional conserva tratamiento no
+  crítico mediante estado explícito.
+- La transformación valida y deduplica una sola vez y usa tasks independientes
+  para volumen inbound, throughput outbound, frecuencia de quiebre y eventos de
+  discrepancia; las fórmulas y diagnósticos aprobados de Parte 2 se preservan.
+- Tests unitarios aislados añadidos en `tests/pipelines/test_pipeline.py`: 5 PASS.
+- Dashboard de negocio implementado en `/reporting`, consumiendo el GET semanal
+  autenticado existente y diferenciando carga, ausencia de publicación, 401,
+  403, publicación vacía y error del servicio.
+- Regresión focalizada validada: transformación 50 PASS, Prefect 13 PASS, CLI
+  23 PASS y reporting HTTP 13 PASS (este último requirió ejecución fuera del
+  sandbox por bloqueo ambiental de `TestClient`).
+- Frontend focalizado validado: ESLint PASS para `app/reporting/page.tsx`,
+  `lib/reportingApi.ts`, `types/reporting.ts` y `BackofficeHeader.tsx`; `tsc
+  --noEmit` PASS. `npm run build` pasó fuera del sandbox y generó la ruta
+  `/reporting`.
+- El `npm run lint` global continúa en FAIL por tres errores preexistentes fuera
+  del diff (`account/profile`, `login` y `AuthContext`) y un warning
+  preexistente; no se modificó esa deuda fuera de alcance.
+- QA PostgreSQL real completado sobre infraestructura aislada desechable: 7
+  pruebas de `tests/test_pipeline_postgres_integration.py` PASS y 1 prueba de
+  `tests/test_trackflow_e2e_postgres.py` PASS. Quedaron acreditadas publicación
+  correcta, idempotencia, quality gate, estados persistidos con IDs Prefect y
+  consulta HTTP real.
+- La fixture HTTP obsoleta se actualizó al contrato empresarial vigente:
+  `order_id` con `commercial_order` y dispatch enlazado, `movement_id` para el
+  cruce de umbral y `count_id` para discrepancias. Producción y fórmulas no se
+  modificaron.
+- Backend original y dashboard quedaron preparados para aceptación en
+  `http://127.0.0.1:8000` y `http://127.0.0.1:3000/reporting`, reutilizando la
+  autenticación real existente. La semana positiva es `2026-10-19` y la semana
+  publicada sin filas es `2026-10-12`.
+- La aceptación funcional manual continúa `PENDIENTE_VALIDACION_MANUAL`; la
+  preparación técnica anterior no la declara completada.
+- Continúan pendientes RQ-15 (aceptación externa de ruta/CLI), RQ-17
+  (certificación empresarial de cobertura) y la aceptación funcional manual.
+
 ## Estado actual
 
 - Parte 2 — Pipeline de Desempeño de Negocio: Fase 1 (núcleo de extracción y

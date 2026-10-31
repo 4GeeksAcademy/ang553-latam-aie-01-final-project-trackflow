@@ -149,6 +149,32 @@ class _ValidatedEvent:
         return (self.event_type, identity) if isinstance(identity, str) else None
 
 
+@dataclass(frozen=True)
+class PreparedWeeklyEvents:
+    """Validated and deduplicated events plus immutable base diagnostics."""
+
+    events: tuple[_ValidatedEvent, ...]
+    rejected_event_ids: tuple[str, ...]
+    duplicate_event_ids_consolidated: tuple[str, ...]
+    duplicate_movement_keys_consolidated: tuple[tuple[str, str], ...]
+    duplicate_movement_event_ids_consolidated: tuple[str, ...]
+    conflict_movement_keys: tuple[tuple[str, str], ...]
+    issues: tuple[QualityIssue, ...]
+    cross_week_verification_pending: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True)
+class MetricContribution:
+    """One independently calculated KPI counter at the approved grain."""
+
+    metric_index: int
+    values: tuple[tuple[AggregateKey, int, tuple[str, ...]], ...]
+    accepted_event_ids: tuple[str, ...] = ()
+    rejected_event_ids: tuple[str, ...] = ()
+    conflict_movement_keys: tuple[tuple[str, str], ...] = ()
+    issues: tuple[QualityIssue, ...] = ()
+
+
 def _row_id(value: Any) -> str:
     if isinstance(value, UUID):
         return str(value)
@@ -341,21 +367,13 @@ def _evidence_for_key(
     return False, False
 
 
-def transform_weekly_performance(
+def prepare_weekly_events(
     events: Sequence[Mapping[str, Any]],
     *,
-    commercial_order_evidence: CommercialOrderEvidence,
     movement_week_evidence: Mapping[tuple[str, str], MovementWeekEvidence] | None = None,
-) -> WeeklyTransformationResult:
-    """Validate, deduplicate, classify, and aggregate extracted telemetry rows.
-
-    ``commercial_order_evidence.lookup_complete`` distinguishes confirmed absence
-    from unavailable order verification. ``movement_week_evidence`` records complete
-    auxiliary checks for movement attribution across ISO weeks. No database or
-    current-client-registry access is performed.
-    """
+) -> PreparedWeeklyEvents:
+    """Validate and deduplicate rows once before independent KPI calculations."""
     issues: list[QualityIssue] = []
-    accepted: set[str] = set()
     rejected: set[str] = set()
     duplicate_event_ids: set[str] = set()
     duplicate_movement_keys: set[tuple[str, str]] = set()
@@ -445,82 +463,195 @@ def transform_weekly_performance(
             duplicate_movement_keys.add(key)
             duplicate_movement_event_ids.update(event.row_id for event in group[1:])
 
-    totals: dict[AggregateKey, list[int]] = {}
-    counter_event_ids: dict[AggregateKey, list[set[str]]] = {}
-    for event in sorted(consolidated, key=lambda item: (item.week_start, item.warehouse, item.client_id, item.row_id)):
+    return PreparedWeeklyEvents(
+        events=tuple(
+            sorted(
+                consolidated,
+                key=lambda item: (
+                    item.week_start,
+                    item.warehouse,
+                    item.client_id,
+                    item.row_id,
+                ),
+            )
+        ),
+        rejected_event_ids=tuple(sorted(rejected)),
+        duplicate_event_ids_consolidated=tuple(sorted(duplicate_event_ids)),
+        duplicate_movement_keys_consolidated=tuple(sorted(duplicate_movement_keys)),
+        duplicate_movement_event_ids_consolidated=tuple(
+            sorted(duplicate_movement_event_ids)
+        ),
+        conflict_movement_keys=tuple(sorted(conflict_movement_keys)),
+        issues=tuple(issues),
+        cross_week_verification_pending=tuple(sorted(pending_cross_week)),
+    )
+
+
+def _group_metric_values(
+    metric_index: int,
+    rows: Sequence[tuple[AggregateKey, int, str]],
+    *,
+    accepted_event_ids: Sequence[str] = (),
+    rejected_event_ids: Sequence[str] = (),
+    conflict_movement_keys: Sequence[tuple[str, str]] = (),
+    issues: Sequence[QualityIssue] = (),
+) -> MetricContribution:
+    values: dict[AggregateKey, int] = defaultdict(int)
+    contributors: dict[AggregateKey, set[str]] = defaultdict(set)
+    for key, value, event_id in rows:
+        values[key] += value
+        contributors[key].add(event_id)
+    return MetricContribution(
+        metric_index=metric_index,
+        values=tuple(
+            (key, values[key], tuple(sorted(contributors[key]))) for key in sorted(values)
+        ),
+        accepted_event_ids=tuple(sorted(accepted_event_ids)),
+        rejected_event_ids=tuple(sorted(rejected_event_ids)),
+        conflict_movement_keys=tuple(sorted(conflict_movement_keys)),
+        issues=tuple(issues),
+    )
+
+
+def calculate_inbound_volume(prepared: PreparedWeeklyEvents) -> MetricContribution:
+    """Calculate inbound units only, using already validated event quantities."""
+    rows = []
+    accepted = []
+    for event in prepared.events:
+        if event.event_type != INBOUND_ORDER_CREATED:
+            continue
         key = AggregateKey(event.warehouse, event.client_id, event.week_start)
+        rows.append((key, _integer_quantity(event.tags.get("quantity")), event.row_id))
+        accepted.append(event.row_id)
+    return _group_metric_values(0, rows, accepted_event_ids=accepted)
 
-        def record_counter(index: int) -> list[int]:
-            counters = totals.setdefault(key, [0, 0, 0, 0])
-            contributors = counter_event_ids.setdefault(key, [set(), set(), set(), set()])
-            contributors[index].add(event.row_id)
-            return counters
 
-        if event.event_type == INBOUND_ORDER_CREATED:
-            counters = record_counter(0)
-            counters[0] += _integer_quantity(event.tags.get("quantity"))
-            accepted.add(event.row_id)
-        elif event.event_type == OUTBOUND_ORDER_CREATED:
-            order_id = event.tags["order_id"]
-            record = commercial_order_evidence.records.get(order_id)
-            if record is None:
-                if commercial_order_evidence.lookup_complete:
-                    issues.append(
-                        QualityIssue(
-                            "commercial_order_missing",
-                            "No matching commercial order with a dispatch was found by the complete auxiliary lookup.",
-                            (event.row_id,),
-                            event.movement_key,
-                        )
-                    )
-                else:
-                    issues.append(
-                        QualityIssue(
-                            "outbound_order_verification_unavailable",
-                            "Commercial-order verification was unavailable; an order was not presumed.",
-                            (event.row_id,),
-                            event.movement_key,
-                        )
-                    )
-                rejected.add(event.row_id)
-                continue
-            identity_conflicts = []
-            if record.order_id != order_id:
-                identity_conflicts.append("order_id")
-            try:
-                record_warehouse = _canonical_warehouse(record.warehouse)
-            except ValueError:
-                record_warehouse = None
-                identity_conflicts.append("warehouse (invalid in order evidence)")
-            if record_warehouse is not None and record_warehouse != event.warehouse:
-                identity_conflicts.append("warehouse")
-            if record.client_id != event.client_id:
-                identity_conflicts.append("client_id")
-            if isinstance(record.dispatch_count, bool) or record.dispatch_count < 1:
-                identity_conflicts.append("dispatch_count")
-            if identity_conflicts:
+def calculate_outbound_throughput(
+    prepared: PreparedWeeklyEvents,
+    commercial_order_evidence: CommercialOrderEvidence,
+) -> MetricContribution:
+    """Count only outbound orders verified by authoritative dispatch evidence."""
+    rows = []
+    accepted: list[str] = []
+    rejected: list[str] = []
+    conflicts: list[tuple[str, str]] = []
+    issues: list[QualityIssue] = []
+    for event in prepared.events:
+        if event.event_type != OUTBOUND_ORDER_CREATED:
+            continue
+        order_id = event.tags["order_id"]
+        record = commercial_order_evidence.records.get(order_id)
+        if record is None:
+            if commercial_order_evidence.lookup_complete:
                 issues.append(
                     QualityIssue(
-                        "commercial_order_identity_conflict",
-                        "Commercial-order identity contradicts telemetry: " + ", ".join(identity_conflicts),
+                        "commercial_order_missing",
+                        "No matching commercial order with a dispatch was found by the complete auxiliary lookup.",
                         (event.row_id,),
                         event.movement_key,
                     )
                 )
-                rejected.add(event.row_id)
-                conflict_movement_keys.add(event.movement_key)
-                continue
-            counters = record_counter(1)
-            counters[1] += 1
-            accepted.add(event.row_id)
-        elif event.event_type == STOCK_THRESHOLD_TRIGGERED:
-            counters = record_counter(2)
-            counters[2] += 1
-            accepted.add(event.row_id)
-        elif event.event_type == INVENTORY_DISCREPANCY_DETECTED:
-            counters = record_counter(3)
-            counters[3] += 1
-            accepted.add(event.row_id)
+            else:
+                issues.append(
+                    QualityIssue(
+                        "outbound_order_verification_unavailable",
+                        "Commercial-order verification was unavailable; an order was not presumed.",
+                        (event.row_id,),
+                        event.movement_key,
+                    )
+                )
+            rejected.append(event.row_id)
+            continue
+        identity_conflicts = []
+        if record.order_id != order_id:
+            identity_conflicts.append("order_id")
+        try:
+            record_warehouse = _canonical_warehouse(record.warehouse)
+        except ValueError:
+            record_warehouse = None
+            identity_conflicts.append("warehouse (invalid in order evidence)")
+        if record_warehouse is not None and record_warehouse != event.warehouse:
+            identity_conflicts.append("warehouse")
+        if record.client_id != event.client_id:
+            identity_conflicts.append("client_id")
+        if isinstance(record.dispatch_count, bool) or record.dispatch_count < 1:
+            identity_conflicts.append("dispatch_count")
+        if identity_conflicts:
+            issues.append(
+                QualityIssue(
+                    "commercial_order_identity_conflict",
+                    "Commercial-order identity contradicts telemetry: " + ", ".join(identity_conflicts),
+                    (event.row_id,),
+                    event.movement_key,
+                )
+            )
+            rejected.append(event.row_id)
+            if event.movement_key is not None:
+                conflicts.append(event.movement_key)
+            continue
+        key = AggregateKey(event.warehouse, event.client_id, event.week_start)
+        rows.append((key, 1, event.row_id))
+        accepted.append(event.row_id)
+    return _group_metric_values(
+        1,
+        rows,
+        accepted_event_ids=accepted,
+        rejected_event_ids=rejected,
+        conflict_movement_keys=conflicts,
+        issues=issues,
+    )
+
+
+def calculate_stockout_frequency(prepared: PreparedWeeklyEvents) -> MetricContribution:
+    """Count threshold-crossing events at warehouse/client/week grain."""
+    rows = []
+    accepted = []
+    for event in prepared.events:
+        if event.event_type != STOCK_THRESHOLD_TRIGGERED:
+            continue
+        key = AggregateKey(event.warehouse, event.client_id, event.week_start)
+        rows.append((key, 1, event.row_id))
+        accepted.append(event.row_id)
+    return _group_metric_values(2, rows, accepted_event_ids=accepted)
+
+
+def calculate_discrepancy_events(prepared: PreparedWeeklyEvents) -> MetricContribution:
+    """Count discrepancy events; the final rate is derived during composition."""
+    rows = []
+    accepted = []
+    for event in prepared.events:
+        if event.event_type != INVENTORY_DISCREPANCY_DETECTED:
+            continue
+        key = AggregateKey(event.warehouse, event.client_id, event.week_start)
+        rows.append((key, 1, event.row_id))
+        accepted.append(event.row_id)
+    return _group_metric_values(3, rows, accepted_event_ids=accepted)
+
+
+def compose_weekly_performance(
+    prepared: PreparedWeeklyEvents,
+    contributions: Sequence[MetricContribution],
+) -> WeeklyTransformationResult:
+    """Compose independently calculated KPI counters and shared diagnostics."""
+    if tuple(item.metric_index for item in contributions) != (0, 1, 2, 3):
+        raise ValueError("all four KPI contributions are required in canonical order")
+
+    accepted: set[str] = set()
+    rejected = set(prepared.rejected_event_ids)
+    conflict_movement_keys = set(prepared.conflict_movement_keys)
+    issues = list(prepared.issues)
+    totals: dict[AggregateKey, list[int]] = {}
+    counter_event_ids: dict[AggregateKey, list[set[str]]] = {}
+    for contribution in contributions:
+        accepted.update(contribution.accepted_event_ids)
+        rejected.update(contribution.rejected_event_ids)
+        conflict_movement_keys.update(contribution.conflict_movement_keys)
+        issues.extend(contribution.issues)
+        for key, value, event_ids in contribution.values:
+            counters = totals.setdefault(key, [0, 0, 0, 0])
+            contributors = counter_event_ids.setdefault(key, [set(), set(), set(), set()])
+            counters[contribution.metric_index] = value
+            contributors[contribution.metric_index].update(event_ids)
 
     aggregates: list[WeeklyAggregate] = []
     integer_overflow = False
@@ -577,12 +708,34 @@ def transform_weekly_performance(
     quality = QualityReport(
         accepted_event_ids=tuple(sorted(accepted)),
         rejected_event_ids=tuple(sorted(rejected)),
-        duplicate_event_ids_consolidated=tuple(sorted(duplicate_event_ids)),
-        duplicate_movement_keys_consolidated=tuple(sorted(duplicate_movement_keys)),
-        duplicate_movement_event_ids_consolidated=tuple(sorted(duplicate_movement_event_ids)),
+        duplicate_event_ids_consolidated=prepared.duplicate_event_ids_consolidated,
+        duplicate_movement_keys_consolidated=prepared.duplicate_movement_keys_consolidated,
+        duplicate_movement_event_ids_consolidated=prepared.duplicate_movement_event_ids_consolidated,
         conflict_movement_keys=tuple(sorted(conflict_movement_keys)),
         issues=tuple(sorted(issues, key=lambda issue: (issue.code, issue.event_ids, issue.message))),
-        cross_week_verification_pending=tuple(sorted(pending_cross_week)),
+        cross_week_verification_pending=prepared.cross_week_verification_pending,
         coverage_pending=coverage_pending,
     )
     return WeeklyTransformationResult(tuple(aggregates), quality)
+
+
+def transform_weekly_performance(
+    events: Sequence[Mapping[str, Any]],
+    *,
+    commercial_order_evidence: CommercialOrderEvidence,
+    movement_week_evidence: Mapping[tuple[str, str], MovementWeekEvidence] | None = None,
+) -> WeeklyTransformationResult:
+    """Validate once, calculate four KPI counters independently, then compose."""
+    prepared = prepare_weekly_events(
+        events,
+        movement_week_evidence=movement_week_evidence,
+    )
+    return compose_weekly_performance(
+        prepared,
+        (
+            calculate_inbound_volume(prepared),
+            calculate_outbound_throughput(prepared, commercial_order_evidence),
+            calculate_stockout_frequency(prepared),
+            calculate_discrepancy_events(prepared),
+        ),
+    )

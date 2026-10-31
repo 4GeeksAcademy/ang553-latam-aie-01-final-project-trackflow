@@ -58,6 +58,12 @@ export function BackofficeHeader() {
             Telemetry
           </Link>
           <Link
+            href="/reporting"
+            className="text-sm font-medium text-slate-100 transition-colors hover:text-white"
+          >
+            Reporting
+          </Link>
+          <Link
             href="/account/profile"
             className="text-sm font-medium text-slate-100 transition-colors hover:text-white"
           >
