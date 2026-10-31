@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+
 from tinydb import Query
 
 from services.api.auth_models import UserCreate
@@ -27,3 +31,36 @@ def test_auth_tinydb_is_isolated_from_real_file(isolated_auth_db) -> None:
 
     assert len(stored_docs) == 1
     assert stored_docs[0]["email"] == "fixture-smoke@example.com"
+
+
+def test_auth_database_path_override_creates_only_isolated_store(
+    isolated_auth_db, tmp_path
+) -> None:
+    """A separate process can select a disposable auth store before import."""
+    isolated_path = (tmp_path / "acceptance-auth" / "auth.json").resolve()
+    assert isolated_path != isolated_auth_db.real_db_path
+    environment = os.environ.copy()
+    environment["TRACKFLOW_AUTH_DATABASE_PATH"] = str(isolated_path)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from services.api import auth_database; "
+                "assert auth_database._AUTH_DB_PATH == "
+                "__import__('pathlib').Path(__import__('os').environ"
+                "['TRACKFLOW_AUTH_DATABASE_PATH']).resolve(); "
+                "auth_database.auth_db.close()"
+            ),
+        ],
+        cwd=isolated_auth_db.real_db_path.parents[3],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout == ""
+    assert isolated_path.exists()

@@ -135,10 +135,11 @@ def list_users() -> list[UserResponse]:
 
 
 def update_user(user_id: str, payload: UserUpdate) -> UserResponse:
-    """Update a user's mutable fields. Raises ValueError if not found.
+    """Update non-credential user fields. Raises ValueError if not found.
 
-    If ``payload.password`` is provided, it is hashed with bcrypt before
-    storage as ``hashed_password``.
+    Password changes belong exclusively to ``change_password`` or
+    ``reset_password`` so they cannot bypass current-password/reset-token
+    verification through the generic user update contract.
     """
     doc = _find_user_doc_by_id(user_id)
     if doc is None:
@@ -151,8 +152,6 @@ def update_user(user_id: str, payload: UserUpdate) -> UserResponse:
         if existing and existing["id"] != user_id:
             raise ValueError(f"Email '{payload.email}' already in use")
         update_data["email"] = payload.email.strip().lower()
-    if payload.password is not None:
-        update_data["hashed_password"] = hash_password(payload.password)
     if payload.is_active is not None:
         update_data["is_active"] = payload.is_active
     if payload.role is not None:

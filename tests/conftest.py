@@ -15,6 +15,11 @@ from tinydb.table import Table
 # Required by services.api.auth_settings during module import.
 os.environ.setdefault("JWT_SECRET_KEY", "test-jwt-secret-key")
 
+# A developer or acceptance environment may deliberately point auth at a
+# persistent alternate store.  Pytest must never inherit that destination:
+# all test imports are guarded and every test receives its own temporary DB.
+os.environ.pop("TRACKFLOW_AUTH_DATABASE_PATH", None)
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _REAL_AUTH_DB_PATH = (_REPO_ROOT / "services/api/data/auth.json").resolve()
 _IMPORT_GUARD_DIR = Path(tempfile.mkdtemp(prefix="trackflow-auth-import-"))

@@ -6,12 +6,14 @@ import asyncio
 
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 from tinydb import Query
 
 from services.api import auth_services
 from services.api.auth_models import ChangePasswordRequest, UserCreate
-from services.api.auth_security import verify_password
+from services.api.auth_security import create_access_token, verify_password
 from services.api.auth_services import change_password, create_user
+from services.api.main import app
 from services.api.routes import auth as auth_route
 
 
@@ -128,3 +130,25 @@ def test_change_password_endpoint_maps_domain_valueerror_to_http_400() -> None:
     user_after = _get_user_doc(created.id)
     assert verify_password("RouterPass123", user_after["hashed_password"]) is True
     assert verify_password("RouterNewPass456", user_after["hashed_password"]) is False
+
+
+def test_put_user_rejects_password_and_preserves_existing_credentials() -> None:
+    """Generic user updates cannot bypass the dedicated password flows."""
+    created = create_user(
+        UserCreate(email="user-update-password@example.com", password="OriginalPass123")
+    )
+    token = create_access_token(created.id)
+    client = TestClient(app)
+    try:
+        response = client.put(
+            f"/users/{created.id}",
+            json={"password": "BypassAttempt456"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    finally:
+        client.close()
+
+    assert response.status_code == 422
+    after_user = _get_user_doc(created.id)
+    assert verify_password("OriginalPass123", after_user["hashed_password"]) is True
+    assert verify_password("BypassAttempt456", after_user["hashed_password"]) is False
