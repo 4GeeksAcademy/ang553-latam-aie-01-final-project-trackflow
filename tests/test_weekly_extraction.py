@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from contextlib import AbstractContextManager
 from datetime import date, datetime, timedelta, timezone
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
@@ -24,7 +24,7 @@ from pipelines.weekly_performance import (
     OUTBOUND_ORDER_CREATED,
     STOCK_THRESHOLD_TRIGGERED,
     MovementWeekEvidence,
-    StockExitRecord,
+    CommercialOrderRecord,
     transform_weekly_performance,
 )
 
@@ -48,8 +48,17 @@ def telemetry_row(
         "product_id": "42",
         "quantity": quantity,
     }
-    if movement_id is not None:
-        tags["movement_id"] = movement_id
+    identity = movement_id or f"identity-{suffix}"
+    if event_type == OUTBOUND_ORDER_CREATED:
+        tags = {
+            "warehouse": "los_angeles",
+            "client_id": CLIENT,
+            "order_id": str(UUID(bytes=uuid5(NAMESPACE_URL, identity).bytes, version=4)),
+        }
+    elif event_type == INVENTORY_DISCREPANCY_DETECTED:
+        tags["count_id"] = str(UUID(bytes=uuid5(NAMESPACE_URL, identity).bytes, version=4))
+    else:
+        tags["movement_id"] = identity
     return {
         "id": UUID(int=suffix),
         "timestamp": timestamp,
@@ -81,9 +90,9 @@ class FakeTransaction(AbstractContextManager):
 class FakeConnection(AbstractContextManager):
     dialect = type("Dialect", (), {"name": "postgresql"})()
 
-    def __init__(self, *, events=(), stockexits=(), query_error=None):
+    def __init__(self, *, events=(), commercial_orders=(), query_error=None):
         self.events = list(events)
-        self.stockexits = list(stockexits)
+        self.commercial_orders = list(commercial_orders)
         self.query_error = query_error
         self.executed = []
         self.transaction_sql = []
@@ -106,10 +115,10 @@ class FakeConnection(AbstractContextManager):
         if self.query_error is not None:
             raise self.query_error
 
-        if "FROM stockexit AS e" in sql:
-            allowed_ids = set(parameters["movement_ids"])
-            rows = [row for row in self.stockexits if row["movement_id"] in allowed_ids]
-        elif "tags->>'movement_id'" in sql:
+        if "FROM commercial_order AS o" in sql:
+            allowed_ids = set(parameters["order_ids"])
+            rows = [row for row in self.commercial_orders if row["order_id"] in allowed_ids]
+        elif "CASE" in sql and "tags->>'movement_id'" in sql:
             keys = {
                 (parameters[f"event_type_{i}"], parameters[f"movement_id_{i}"])
                 for i in range(len(parameters) // 2)
@@ -117,7 +126,14 @@ class FakeConnection(AbstractContextManager):
             rows = [
                 row
                 for row in self.events
-                if (row["event_type"], row["tags"].get("movement_id")) in keys
+                if (
+                    row["event_type"],
+                    row["tags"].get(
+                        "order_id" if row["event_type"] == OUTBOUND_ORDER_CREATED
+                        else "count_id" if row["event_type"] == INVENTORY_DISCREPANCY_DETECTED
+                        else "movement_id"
+                    ),
+                ) in keys
             ]
         else:
             event_types = set(parameters["event_types"])
@@ -177,11 +193,38 @@ def test_week_boundaries_are_half_open_start_included_next_monday_excluded():
 def test_empty_extraction_returns_empty_inputs_and_complete_evidence():
     result = extract_weekly_inputs(FakeEngine(), WEEK)
     assert result.events == ()
-    assert result.stockexit_evidence.records == {}
-    assert result.stockexit_evidence.lookup_complete is True
+    assert result.commercial_order_evidence.records == {}
+    assert result.commercial_order_evidence.lookup_complete is True
     assert result.movement_week_evidence == {}
     assert result.metadata.event_count == 0
     assert result.metadata.snapshot_consistent is True
+
+
+def test_dual_bind_reads_telemetry_from_reporting_and_orders_from_source():
+    outbound = telemetry_row(1, OUTBOUND_ORDER_CREATED, START, "10")
+    reporting_connection = FakeConnection(events=[outbound])
+    source_connection = FakeConnection(
+        commercial_orders=[
+            {
+                "order_id": outbound["tags"]["order_id"],
+                "warehouse": "LA",
+                "client_id": CLIENT,
+                "dispatch_count": 1,
+            }
+        ]
+    )
+
+    result = extract_weekly_inputs(
+        FakeEngine(reporting_connection),
+        WEEK,
+        inventory_bind=FakeEngine(source_connection),
+    )
+
+    order_id = outbound["tags"]["order_id"]
+    assert result.commercial_order_evidence.records[order_id].client_id == CLIENT
+    assert not any("FROM commercial_order" in sql for sql, _ in reporting_connection.executed)
+    assert any("FROM commercial_order" in sql for sql, _ in source_connection.executed)
+    assert result.metadata.snapshot_consistent is False
 
 
 def test_connection_error_is_identifiable_and_not_a_valid_empty_result():
@@ -209,118 +252,113 @@ def test_programming_error_is_not_mislabeled_as_database_failure():
     assert caught.value is failure
 
 
-def test_outbound_events_classify_dispatch_loss_and_missing_movement():
+def test_outbound_events_require_matching_orders_with_dispatches():
     rows = [
         telemetry_row(1, OUTBOUND_ORDER_CREATED, START, "10"),
         telemetry_row(2, OUTBOUND_ORDER_CREATED, START + timedelta(minutes=1), "11"),
         telemetry_row(3, OUTBOUND_ORDER_CREATED, START + timedelta(minutes=2), "12"),
     ]
-    exits = [
+    orders = [
         {
-            "movement_id": 10,
-            "exit_type": "dispatch",
+            "order_id": rows[0]["tags"]["order_id"],
             "warehouse": "LA",
-            "quantity": 3,
-            "sku_id": 42,
-            "client_id": None,
-            "product_id": 42,
+            "client_id": CLIENT,
+            "dispatch_count": 1,
         },
         {
-            "movement_id": 11,
-            "exit_type": "loss",
+            "order_id": rows[1]["tags"]["order_id"],
             "warehouse": "LA",
-            "quantity": 3,
-            "sku_id": 42,
-            "client_id": None,
-            "product_id": 42,
+            "client_id": CLIENT,
+            "dispatch_count": 2,
         },
     ]
-    result = extract_weekly_inputs(FakeEngine(FakeConnection(events=rows, stockexits=exits)), WEEK)
+    result = extract_weekly_inputs(
+        FakeEngine(FakeConnection(events=rows, commercial_orders=orders)), WEEK
+    )
 
-    assert result.stockexit_evidence.records == {
-        "10": StockExitRecord("10", "dispatch", "LA", None, "42", 3),
-        "11": StockExitRecord("11", "loss", "LA", None, "42", 3),
+    assert result.commercial_order_evidence.records == {
+        rows[0]["tags"]["order_id"]: CommercialOrderRecord(
+            rows[0]["tags"]["order_id"], "LA", CLIENT, 1
+        ),
+        rows[1]["tags"]["order_id"]: CommercialOrderRecord(
+            rows[1]["tags"]["order_id"], "LA", CLIENT, 2
+        ),
     }
-    assert result.stockexit_evidence.lookup_complete is True
+    assert result.commercial_order_evidence.lookup_complete is True
     transformed = transform_weekly_performance(
         result.events,
-        stockexit_evidence=result.stockexit_evidence,
+        commercial_order_evidence=result.commercial_order_evidence,
         movement_week_evidence=result.movement_week_evidence,
     )
-    assert transformed.aggregates == ()
-    assert transformed.quality.accepted_event_ids == ()
-    assert set(transformed.quality.rejected_event_ids) == {str(row["id"]) for row in rows}
-    assert any(issue.code == "stockexit_identity_unverified" for issue in transformed.quality.issues)
-    assert any(issue.code == "stockexit_movement_missing" for issue in transformed.quality.issues)
+    assert transformed.aggregates[0].outbound_orders_count == 2
+    assert set(transformed.quality.accepted_event_ids) == {
+        str(rows[0]["id"]), str(rows[1]["id"])
+    }
+    assert transformed.quality.rejected_event_ids == (str(rows[2]["id"]),)
+    assert transformed.quality.issues[0].code == "commercial_order_missing"
 
 
-def test_null_sku_client_id_from_extraction_is_not_a_verified_dispatch():
+def test_conflicting_order_client_from_extraction_is_rejected():
     row = telemetry_row(13, OUTBOUND_ORDER_CREATED, START, "13")
-    stockexit = {
-        "movement_id": 13,
-        "exit_type": "dispatch",
+    order = {
+        "order_id": row["tags"]["order_id"],
         "warehouse": "LA",
-        "quantity": 3,
-        "sku_id": 42,
-        "client_id": None,
-        "product_id": 42,
+        "client_id": "different-client",
+        "dispatch_count": 1,
     }
     result = extract_weekly_inputs(
-        FakeEngine(FakeConnection(events=[row], stockexits=[stockexit])), WEEK
+        FakeEngine(FakeConnection(events=[row], commercial_orders=[order])), WEEK
     )
 
     transformed = transform_weekly_performance(
         result.events,
-        stockexit_evidence=result.stockexit_evidence,
+        commercial_order_evidence=result.commercial_order_evidence,
         movement_week_evidence=result.movement_week_evidence,
     )
     assert transformed.aggregates == ()
     assert transformed.quality.rejected_event_ids == (str(row["id"]),)
-    assert transformed.quality.issues[0].code == "stockexit_identity_unverified"
+    assert transformed.quality.issues[0].code == "commercial_order_identity_conflict"
 
 
-def test_invalid_stockexit_movement_ids_are_not_coerced_and_mark_evidence_incomplete():
+def test_legacy_outbound_without_order_id_is_rejected_conservatively():
     row = telemetry_row(1, OUTBOUND_ORDER_CREATED, START, "001; DROP TABLE stockexit")
     connection = FakeConnection(events=[row])
+    row["tags"] = {"warehouse": "los_angeles", "client_id": CLIENT, "movement_id": "10", "quantity": 3}
     result = extract_weekly_inputs(FakeEngine(connection), WEEK)
-
-    assert result.stockexit_evidence.records == {}
-    assert result.stockexit_evidence.lookup_complete is False
-    assert result.metadata.stockexit_invalid_ids == ("001; DROP TABLE stockexit",)
-    assert not any("FROM stockexit" in sql for sql, _ in connection.executed)
+    assert result.commercial_order_evidence.records == {}
+    assert result.commercial_order_evidence.lookup_complete is True
+    assert not any("FROM commercial_order" in sql for sql, _ in connection.executed)
     transformed = transform_weekly_performance(
         result.events,
-        stockexit_evidence=result.stockexit_evidence,
+        commercial_order_evidence=result.commercial_order_evidence,
         movement_week_evidence=result.movement_week_evidence,
     )
-    assert any(issue.code == "outbound_classification_unavailable" for issue in transformed.quality.issues)
+    assert transformed.quality.rejected_event_ids == (str(row["id"]),)
+    assert "order_id" in transformed.quality.issues[0].message
 
 
-def test_multiple_valid_stockexit_ids_are_fetched_in_one_parameterized_query():
+def test_multiple_valid_order_ids_are_fetched_in_one_parameterized_query():
     rows = [
         telemetry_row(1, OUTBOUND_ORDER_CREATED, START, "10"),
         telemetry_row(2, OUTBOUND_ORDER_CREATED, START, "11"),
     ]
-    exits = [
+    orders = [
         {
-            "movement_id": movement_id,
-            "exit_type": exit_type,
+            "order_id": row["tags"]["order_id"],
             "warehouse": "LA",
-            "quantity": 3,
-            "sku_id": 42,
             "client_id": "cid",
-            "product_id": 42,
+            "dispatch_count": 1,
         }
-        for movement_id, exit_type in ((10, "dispatch"), (11, "loss"))
+        for row in rows
     ]
-    connection = FakeConnection(events=rows, stockexits=exits)
+    connection = FakeConnection(events=rows, commercial_orders=orders)
     result = extract_weekly_inputs(FakeEngine(connection), WEEK)
 
-    stock_queries = [(sql, params) for sql, params in connection.executed if "FROM stockexit AS e" in sql]
-    assert len(stock_queries) == 1
-    assert stock_queries[0][1] == {"movement_ids": [10, 11]}
-    assert set(result.stockexit_evidence.records) == {"10", "11"}
-    assert result.stockexit_evidence.records["10"].client_id == "cid"
+    order_queries = [(sql, params) for sql, params in connection.executed if "FROM commercial_order AS o" in sql]
+    assert len(order_queries) == 1
+    expected_ids = sorted(row["tags"]["order_id"] for row in rows)
+    assert order_queries[0][1] == {"order_ids": expected_ids}
+    assert set(result.commercial_order_evidence.records) == set(expected_ids)
 
 
 def test_duplicate_movement_across_weeks_preserves_timestamps_and_evidence():
@@ -332,7 +370,7 @@ def test_duplicate_movement_across_weeks_preserves_timestamps_and_evidence():
     result = extract_weekly_inputs(FakeEngine(FakeConnection(events=rows)), WEEK)
 
     inbound_key = (INBOUND_ORDER_CREATED, "same")
-    outbound_key = (OUTBOUND_ORDER_CREATED, "same")
+    outbound_key = (OUTBOUND_ORDER_CREATED, rows[2]["tags"]["order_id"])
     assert result.movement_week_evidence[inbound_key] == MovementWeekEvidence(
         frozenset({WEEK, date(2026, 10, 26)}), True
     )
@@ -392,7 +430,7 @@ def test_all_extractor_selects_are_read_only_and_phase_one_contract_compatible()
     assert result.metadata.event_count == len(result.events)
     transformed = transform_weekly_performance(
         result.events,
-        stockexit_evidence=result.stockexit_evidence,
+        commercial_order_evidence=result.commercial_order_evidence,
         movement_week_evidence=result.movement_week_evidence,
     )
     assert transformed.aggregates[0].inbound_units_count == 3

@@ -17,6 +17,7 @@ from services.api.telemetry_storage import (
     bulk_insert_telemetry,
     filter_tags,
     map_event_to_row,
+    map_outbox_event_to_row,
     persist_backend_telemetry,
     persist_backend_telemetry_best_effort,
 )
@@ -88,6 +89,34 @@ def test_map_event_to_row_has_exact_closed_mapping():
 
 def test_map_event_to_row_accepts_api_service():
     assert map_event_to_row(make_event(), service="api")["service"] == "api"
+
+
+def test_map_outbox_event_preserves_stable_uuid_and_filters_tags():
+    event_id = uuid4()
+    occurred_at = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+
+    row = map_outbox_event_to_row(
+        event_id=event_id,
+        occurred_at=occurred_at,
+        event_type="outbound_order_created",
+        tags={
+            "order_id": "550e8400-e29b-41d4-a716-446655440000",
+            "warehouse": "los_angeles",
+            "client_id": "client-1",
+            "movement_id": "must-drop",
+            "quantity": 9,
+            "secret": "drop-me",
+        },
+    )
+
+    assert row["id"] == event_id
+    assert row["timestamp"] == occurred_at
+    assert row["service"] == "api"
+    assert row["tags"] == {
+        "order_id": "550e8400-e29b-41d4-a716-446655440000",
+        "warehouse": "los_angeles",
+        "client_id": "client-1",
+    }
 
 
 def test_persist_backend_telemetry_maps_all_events_and_bulk_inserts_once(monkeypatch):
@@ -221,5 +250,10 @@ def test_allowlists_match_event_schema_without_drift():
         schema_allowlists[event_name] = frozenset(properties)
 
     assert schema_allowlists == EVENT_PROPERTY_ALLOWLISTS
+    outbound = schema["definitions"]["outbound_order_created"]["properties"][
+        "properties"
+    ]
+    assert outbound["required"] == ["warehouse", "client_id", "order_id"]
+    assert set(outbound["properties"]) == {"warehouse", "client_id", "order_id"}
     assert len(schema_allowlists) == 17
     assert schema_allowlists["auth_password_reset_completed"] == frozenset()

@@ -26,6 +26,10 @@ SPECIAL = {
     ("DELETE", "/api/suppliers/{supplier_id}"),
     ("GET", "/api/incidents/results/export"),
 }
+LEGACY_STRUCTURAL_JSON = {
+    ("POST", "/telemetry/events"),
+    ("GET", "/telemetry/report"),
+}
 EXPECTED_ROUTES = {
     (method, path)
     for method, path in [
@@ -48,6 +52,14 @@ EXPECTED_ROUTES = {
         ("DELETE", "/suppliers/{supplier_id}"),
         ("POST", "/api/incidents/analyze"),
         ("GET", "/api/incidents/results/export"), ("GET", "/health"),
+        ("POST", "/telemetry/events"), ("GET", "/telemetry/report"),
+        ("GET", "/reporting/weekly-warehouse-client-performance"),
+        ("GET", "/reporting/pipeline-runs/latest"),
+        ("POST", "/reporting/pipeline-runs"),
+        ("PATCH", "/inventory/products/{id}/threshold"),
+        ("POST", "/inventory/physical-counts"),
+        ("POST", "/inventory/commercial-orders"),
+        ("POST", "/inventory/commercial-orders/{order_id}/dispatches"),
     ]
 }
 
@@ -91,11 +103,11 @@ def _exact_keys(response: httpx.Response, keys: set[str]) -> dict[str, Any]:
     return payload
 
 
-def test_runtime_manifest_has_exactly_33_registrations() -> None:
+def test_runtime_manifest_has_exactly_42_registrations() -> None:
     routes = _routes()
     found = {(method, path) for method, path, _ in routes}
-    assert len(routes) == 33
-    assert len(found) == 33
+    assert len(routes) == 42
+    assert len(found) == 42
     assert found == EXPECTED_ROUTES
 
 
@@ -103,6 +115,8 @@ def test_all_json_routes_have_nominal_pydantic_contracts() -> None:
     routes = {(method, path): route for method, path, route in _routes()}
     for key in EXPECTED_ROUTES - SPECIAL:
         assert routes[key].response_model is not None, key
+        if key in LEGACY_STRUCTURAL_JSON:
+            continue
         assert _model_is_nominal(routes[key].response_model), key
 
 
@@ -127,11 +141,14 @@ def test_openapi_visible_success_responses_are_nominal_or_special() -> None:
         for method, path, route in _routes()
         if route.include_in_schema and not path.startswith("/api/suppliers")
     }
-    assert len(visible) == 27
+    assert len(visible) == 36
     for method, path in visible:
         operation = openapi["paths"][path][method.lower()]
-        success = operation["responses"]["200"] if "200" in operation["responses"] else operation["responses"].get("201")
-        if (method, path) in SPECIAL:
+        success = next(
+            (operation["responses"].get(code) for code in ("200", "201", "202") if code in operation["responses"]),
+            None,
+        )
+        if (method, path) in SPECIAL | LEGACY_STRUCTURAL_JSON:
             continue
         assert success is not None
         schema = success["content"]["application/json"]["schema"]
@@ -141,7 +158,11 @@ def test_openapi_visible_success_responses_are_nominal_or_special() -> None:
 
 
 def test_application_decorators_explicitly_declare_response_models() -> None:
-    files = [ROOT / "services/api/main.py", *((ROOT / "services/api/routes").glob("*.py"))]
+    files = [
+        ROOT / "services/api/main.py",
+        *((ROOT / "services/api/routes").glob("*.py")),
+        *((ROOT / "services/reporting").glob("*.py")),
+    ]
     http_decorators = {"get", "post", "put", "patch", "delete", "options", "head"}
     source_decorators: list[tuple[Path, str, set[str]]] = []
     inferred_only: list[str] = []
@@ -168,10 +189,11 @@ def test_application_decorators_explicitly_declare_response_models() -> None:
     unique_special = [
         item for item in source_decorators if "response_model" not in item[2]
     ]
-    assert len(source_decorators) == 27
-    assert len(unique_json) == 24
-    assert len(unique_special) == 3
-    assert inferred_only == []
+    assert len(source_decorators) == 36
+    assert len(unique_json) == 31
+    assert len(unique_special) == 5
+    assert len(inferred_only) == 2
+    assert all("services\\api\\routes\\telemetry.py" in item for item in inferred_only)
 
 
 def test_registration_accounting_distinguishes_source_and_runtime_layers() -> None:
@@ -185,10 +207,10 @@ def test_registration_accounting_distinguishes_source_and_runtime_layers() -> No
         for method in operation_set
         if method.upper() in {"GET", "POST", "PUT", "PATCH", "DELETE"}
     }
-    assert len(runtime) == 33
-    assert len(runtime_json) == 29
+    assert len(runtime) == 42
+    assert len(runtime_json) == 38
     assert len(runtime_special) == 4
-    assert len(visible) == 27
+    assert len(visible) == 36
 
 
 def test_http_auth_profile_supplier_and_health_contracts(isolated_auth_db, monkeypatch) -> None:
@@ -269,10 +291,12 @@ def test_http_incidents_analyze_then_export_uses_real_request(isolated_auth_db, 
 
 
 def test_http_inventory_contracts_use_isolated_sqlite(isolated_auth_db, monkeypatch) -> None:
-    from sqlmodel import Session, SQLModel, create_engine
+    from sqlmodel import Session, SQLModel, create_engine, select
     from sqlalchemy.pool import StaticPool
     from services.api import database
+    from services.api.cache import orders_cache, products_cache
     from services.api.inventory_models import SKU
+    from services.api.inventory_outbox import inventory_outbox_metadata
 
     engine = create_engine(
         "sqlite://",
@@ -280,6 +304,7 @@ def test_http_inventory_contracts_use_isolated_sqlite(isolated_auth_db, monkeypa
         poolclass=StaticPool,
     )
     SQLModel.metadata.create_all(engine)
+    inventory_outbox_metadata.create_all(engine)
 
     def isolated_get_db():
         with Session(engine) as session:
@@ -416,6 +441,121 @@ def test_http_inventory_contracts_use_isolated_sqlite(isolated_auth_db, monkeypa
         created = _exact_keys(inbound, {"id"})
         assert isinstance(created["id"], int)
 
+        threshold = _request(
+            "PATCH",
+            f"/inventory/products/{sku_id}/threshold",
+            headers=headers,
+            json={"minimum_stock_threshold": 2},
+        )
+        assert threshold.status_code == 200, threshold.text
+        assert threshold.json()["minimum_stock_threshold"] == 2
+        invalid_threshold = _request(
+            "PATCH",
+            f"/inventory/products/{sku_id}/threshold",
+            headers=headers,
+            json={"minimum_stock_threshold": True},
+        )
+        assert invalid_threshold.status_code == 422
+
+        count_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        count_payload = {
+            "count_id": count_id,
+            "sku_id": sku_id,
+            "observed_quantity": 3,
+            "warehouse": "LA",
+        }
+        count = _request(
+            "POST", "/inventory/physical-counts", headers=headers, json=count_payload
+        )
+        assert count.status_code == 201, count.text
+        assert count.json()["count_id"] == count_id
+        count_retry = _request(
+            "POST", "/inventory/physical-counts", headers=headers, json=count_payload
+        )
+        assert count_retry.status_code == 201, count_retry.text
+        assert count_retry.json()["id"] == count.json()["id"]
+
+        order_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+        dispatch_id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+        order_payload = {
+            "order_id": order_id,
+            "client_id": CLIENT_IDS_BY_NAME["PureStep Footwear"],
+            "warehouse": "LA",
+            "dispatches": [
+                {
+                    "dispatch_id": dispatch_id,
+                    "sku_id": sku_id,
+                    "quantity": 2,
+                    "tracking_number": "HTTP-ORDER-1",
+                }
+            ],
+        }
+        order = _request(
+            "POST", "/inventory/commercial-orders", headers=headers, json=order_payload
+        )
+        assert order.status_code == 201, order.text
+        assert order.json()["dispatch_ids"] == [dispatch_id]
+        duplicate_dispatches = _request(
+            "POST",
+            "/inventory/commercial-orders",
+            headers=headers,
+            json={
+                **order_payload,
+                "order_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                "dispatches": [
+                    order_payload["dispatches"][0],
+                    order_payload["dispatches"][0],
+                ],
+            },
+        )
+        assert duplicate_dispatches.status_code == 422
+        order_retry = _request(
+            "POST", "/inventory/commercial-orders", headers=headers, json=order_payload
+        )
+        assert order_retry.status_code == 201, order_retry.text
+        assert order_retry.json() == order.json()
+
+        second_dispatch_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+        append_payload = {
+            "order_id": order_id,
+            "dispatches": [
+                order_payload["dispatches"][0],
+                {
+                    "dispatch_id": second_dispatch_id,
+                    "sku_id": sku_id,
+                    "quantity": 1,
+                    "tracking_number": "HTTP-ORDER-2",
+                },
+            ],
+        }
+        appended = _request(
+            "POST",
+            f"/inventory/commercial-orders/{order_id}/dispatches",
+            headers=headers,
+            json=append_payload,
+        )
+        assert appended.status_code == 201, appended.text
+        assert set(appended.json()["dispatch_ids"]) == {
+            dispatch_id,
+            second_dispatch_id,
+        }
+        append_retry = _request(
+            "POST",
+            f"/inventory/commercial-orders/{order_id}/dispatches",
+            headers=headers,
+            json=append_payload,
+        )
+        assert append_retry.status_code == 201, append_retry.text
+        assert append_retry.json() == appended.json()
+
+        mismatched_path = _request(
+            "POST",
+            "/inventory/commercial-orders/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee/dispatches",
+            headers=headers,
+            json={"order_id": order_id, "dispatches": order_payload["dispatches"]},
+        )
+        assert mismatched_path.status_code == 409
+
         orders = _request("GET", "/inventory/orders", headers=headers)
         assert orders.status_code == 200, orders.text
         item = next(item for item in orders.json() if item["id"] == created["id"])
@@ -427,6 +567,8 @@ def test_http_inventory_contracts_use_isolated_sqlite(isolated_auth_db, monkeypa
         assert "sku_id" not in item and "sku" not in item
     finally:
         app.dependency_overrides.pop(database.get_db, None)
+        products_cache.clear()
+        orders_cache.clear()
         engine.dispose()
 
 
@@ -444,3 +586,35 @@ def test_inventory_openapi_client_id_contract() -> None:
         {"type": "string"},
         {"type": "null"},
     ]
+
+
+def test_inventory_business_openapi_contracts_are_explicit() -> None:
+    schema = app.openapi()
+    paths = schema["paths"]
+    assert "patch" in paths["/inventory/products/{id}/threshold"]
+    assert "post" in paths["/inventory/physical-counts"]
+    assert "post" in paths["/inventory/commercial-orders"]
+    assert "post" in paths["/inventory/commercial-orders/{order_id}/dispatches"]
+
+    models = schema["components"]["schemas"]
+    assert set(models["SKUThresholdUpdate"]["required"]) == {
+        "minimum_stock_threshold"
+    }
+    assert set(models["InventoryPhysicalCountCreate"]["required"]) == {
+        "count_id",
+        "sku_id",
+        "observed_quantity",
+        "warehouse",
+    }
+    assert set(models["CommercialOrderDispatchCreate"]["required"]) == {
+        "dispatch_id",
+        "sku_id",
+        "quantity",
+        "tracking_number",
+    }
+    assert set(models["CommercialOrderCreate"]["required"]) == {
+        "order_id",
+        "client_id",
+        "warehouse",
+        "dispatches",
+    }

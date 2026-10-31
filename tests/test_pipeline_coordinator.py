@@ -538,6 +538,28 @@ def test_confirmed_publication_is_one_transaction_and_not_production_certified()
     assert latest_run(Connection(store), target_week_start=WEEK).status == STATUS_SUCCEEDED
 
 
+def test_operational_checkpoint_coverage_can_publish_without_production_certification():
+    store, operational, business, run, granted = _pair()
+    coverage = _evidence(
+        source="operational_checkpoints",
+        dispatch_order_ids=(
+            ("dispatch-a", "order-1"),
+            ("dispatch-b", "order-1"),
+        ),
+    )
+    result = _publish(
+        store,
+        operational,
+        business,
+        run,
+        granted.fencing_token,
+        coverage=coverage,
+    )
+    assert result.status == STATUS_SUCCEEDED
+    assert result.coverage_source == "operational_checkpoints"
+    assert result.production_certified is False
+
+
 def test_identical_republish_does_not_change_id_or_computed_at():
     store, operational, business, run, granted = _pair()
     _publish(store, operational, business, run, granted.fencing_token)
@@ -886,6 +908,8 @@ def test_coordinator_does_not_use_an_alternate_fence_or_telemetry_write():
     reason="Pending isolated PostgreSQL. DATABASE_URL is not used.",
 )
 def test_real_postgresql_coordinator_is_not_silently_passed():
-    if os.getenv("TRACKFLOW_PUBLICATION_TEST_DATABASE_URL") == os.getenv("DATABASE_URL"):
-        pytest.skip("Refusing to reuse DATABASE_URL as the coordinator test database")
-    pytest.fail("Isolated PostgreSQL was declared, but this fake suite does not prove it")
+    from tests.test_pipeline_postgres_integration import (
+        _assert_coordinator_atomicity_and_recovery,
+    )
+
+    _assert_coordinator_atomicity_and_recovery()

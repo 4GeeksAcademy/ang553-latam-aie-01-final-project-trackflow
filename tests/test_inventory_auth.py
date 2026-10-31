@@ -47,6 +47,8 @@ def test_cors_exposes_inventory_error_code_header() -> None:
 
 def test_authenticated_inventory_gets_preserve_contract(isolated_auth_db) -> None:
     from services.api import database
+    from services.api.cache import orders_cache, products_cache
+    from services.api.inventory_outbox import inventory_outbox_metadata
 
     engine = create_engine(
         "sqlite://",
@@ -54,6 +56,7 @@ def test_authenticated_inventory_gets_preserve_contract(isolated_auth_db) -> Non
         poolclass=StaticPool,
     )
     SQLModel.metadata.create_all(engine)
+    inventory_outbox_metadata.create_all(engine)
 
     def isolated_get_db():
         with Session(engine) as session:
@@ -125,4 +128,6 @@ def test_authenticated_inventory_gets_preserve_contract(isolated_auth_db) -> Non
         assert unauthenticated_orders.status_code == 401
     finally:
         app.dependency_overrides.pop(database.get_db, None)
+        products_cache.clear()
+        orders_cache.clear()
         engine.dispose()

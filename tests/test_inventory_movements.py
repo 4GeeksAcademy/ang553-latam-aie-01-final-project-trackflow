@@ -14,6 +14,10 @@ import pytest
 from fastapi import HTTPException
 from sqlmodel import Session, SQLModel, create_engine, select
 from services.api.inventory_models import SKU, StockEntry, StockExit
+from services.api.inventory_outbox import (
+    inventory_event_outbox,
+    inventory_outbox_metadata,
+)
 from services.api.inventory_schemas import StockEntryCreate, StockExitCreate
 from services.api.inventory_service import (
     create_stock_entry,
@@ -37,6 +41,7 @@ def db_session() -> Session:
     """
     engine = create_engine("sqlite://", echo=False)
     SQLModel.metadata.create_all(engine)
+    inventory_outbox_metadata.create_all(engine)
     with Session(engine) as session:
         yield session
 
@@ -60,6 +65,15 @@ def _create_sku(
     session.commit()
     session.refresh(sku)
     return sku
+
+
+def _outbox_rows(session: Session) -> list[dict]:
+    return [
+        dict(row)
+        for row in session.execute(
+            select(inventory_event_outbox).order_by(inventory_event_outbox.c.occurred_at)
+        ).mappings()
+    ]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -125,13 +139,6 @@ class TestCreateStockEntry:
         db_session.commit()
         db_session.refresh(sku)
         monkeypatch.setattr(inventory_service, "capture_telemetry_events", captured.extend)
-        persisted = []
-        monkeypatch.setattr(
-            inventory_service,
-            "persist_backend_telemetry",
-            lambda _session, events: persisted.extend(events),
-        )
-
         entry = create_stock_entry(
             db_session,
             StockEntryCreate(
@@ -153,12 +160,20 @@ class TestCreateStockEntry:
             "movement_id": str(entry.id),
         }
         assert event.eventId.version == 4
-        assert event.timestamp.endswith("Z")
+        assert event.timestamp.tzinfo is not None
+        assert event.timestamp.utcoffset().total_seconds() == 0
         assert event.schemaVersion == "1.0"
         assert event.requestId == "550e8400-e29b-41d4-a716-446655440099"
         assert event.userId == "user-123"
         assert event.sessionId is None
-        assert persisted == [event]
+        outbox = _outbox_rows(db_session)
+        assert len(outbox) == 1
+        assert outbox[0]["event_id"] == event.eventId
+        assert outbox[0]["event_type"] == event.event_type
+        assert outbox[0]["source_table"] == "stockentry"
+        assert outbox[0]["source_pk"] == entry.id
+        assert outbox[0]["occurred_at"] == event.timestamp.replace(tzinfo=None)
+        assert outbox[0]["tags"] == event.properties
 
     def test_telemetry_sink_failure_preserves_entry(
         self, db_session: Session, monkeypatch: pytest.MonkeyPatch
@@ -167,18 +182,11 @@ class TestCreateStockEntry:
         sku.client_id = "client-123"
         db_session.add(sku)
         db_session.commit()
-        persisted = []
         monkeypatch.setattr(
             inventory_service,
             "capture_telemetry_events",
             lambda _events: (_ for _ in ()).throw(RuntimeError()),
         )
-        monkeypatch.setattr(
-            inventory_service,
-            "persist_backend_telemetry",
-            lambda _session, events: persisted.extend(events),
-        )
-
         entry = create_stock_entry(
             db_session,
             StockEntryCreate(sku_id=sku.id, quantity=3, reference="PO", warehouse="LA"),
@@ -187,10 +195,9 @@ class TestCreateStockEntry:
 
         assert entry.id is not None
         assert db_session.get(StockEntry, entry.id) is not None
-        assert len(persisted) == 1
-        assert persisted[0].event_type == "inbound_order_created"
+        assert _outbox_rows(db_session)[0]["event_type"] == "inbound_order_created"
 
-    def test_telemetry_persistence_failure_preserves_entry(
+    def test_outbox_failure_rolls_back_entry(
         self, db_session: Session, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         sku = _create_sku(db_session, sku_code="SKU-PERSISTENCE-FAILURE")
@@ -198,29 +205,25 @@ class TestCreateStockEntry:
         db_session.add(sku)
         db_session.commit()
 
-        captured = []
-        monkeypatch.setattr(inventory_service, "capture_telemetry_events", captured.extend)
         monkeypatch.setattr(
             inventory_service,
-            "persist_backend_telemetry",
-            lambda _session, _events: (_ for _ in ()).throw(
-                RuntimeError("telemetry persistence failed")
+            "enqueue_inventory_event",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("outbox insert failed")
             ),
         )
 
-        entry = create_stock_entry(
-            db_session,
-            StockEntryCreate(
-                sku_id=sku.id, quantity=3, reference="PO", warehouse="LA"
-            ),
-            user_uuid="u1",
-        )
+        with pytest.raises(RuntimeError, match="outbox insert failed"):
+            create_stock_entry(
+                db_session,
+                StockEntryCreate(
+                    sku_id=sku.id, quantity=3, reference="PO", warehouse="LA"
+                ),
+                user_uuid="u1",
+            )
 
-        assert entry.id is not None
-        assert db_session.get(StockEntry, entry.id) is not None
-        assert db_session.exec(select(StockEntry)).all() == [entry]
-        assert len(captured) == 1
-        assert captured[0].event_type == "inbound_order_created"
+        assert db_session.exec(select(StockEntry)).all() == []
+        assert _outbox_rows(db_session) == []
 
     def test_cache_failure_keeps_persisted_entry_and_event(
         self, db_session: Session, monkeypatch: pytest.MonkeyPatch
@@ -231,12 +234,6 @@ class TestCreateStockEntry:
         db_session.add(sku)
         db_session.commit()
         monkeypatch.setattr(inventory_service, "capture_telemetry_events", captured.extend)
-        persisted = []
-        monkeypatch.setattr(
-            inventory_service,
-            "persist_backend_telemetry",
-            lambda _session, events: persisted.extend(events),
-        )
         monkeypatch.setattr(
             "services.api.cache.invalidate_inventory_cache",
             lambda _session: (_ for _ in ()).throw(RuntimeError("cache failure")),
@@ -254,6 +251,7 @@ class TestCreateStockEntry:
         assert len(captured) == 1
         assert captured[0].event_type == "inbound_order_created"
         assert captured[0].properties["movement_id"] == str(persisted.id)
+        assert _outbox_rows(db_session)[0]["source_pk"] == persisted.id
 
     def test_legacy_client_id_skips_event_but_persists(
         self, db_session: Session, monkeypatch: pytest.MonkeyPatch
@@ -270,6 +268,7 @@ class TestCreateStockEntry:
         assert entry.id is not None
         assert db_session.get(StockEntry, entry.id) is not None
         assert captured == []
+        assert _outbox_rows(db_session) == []
 
     def test_commit_failure_emits_no_event(
         self, db_session: Session, monkeypatch: pytest.MonkeyPatch
@@ -289,6 +288,8 @@ class TestCreateStockEntry:
                 user_uuid="u1",
             )
         assert captured == []
+        assert db_session.exec(select(StockEntry)).all() == []
+        assert _outbox_rows(db_session) == []
 
     def test_refresh_failure_emits_no_event(
         self, db_session: Session, monkeypatch: pytest.MonkeyPatch
@@ -431,13 +432,6 @@ class TestCreateStockExit:
 
         captured = []
         monkeypatch.setattr(inventory_service, "capture_telemetry_events", captured.extend)
-        persisted = []
-        monkeypatch.setattr(
-            inventory_service,
-            "persist_backend_telemetry",
-            lambda _session, events: persisted.extend(events),
-        )
-
         exit_record = create_stock_exit(
             db_session,
             data=StockExitCreate(
@@ -457,18 +451,12 @@ class TestCreateStockExit:
         assert exit_record.tracking_number == "TRK-001"
         assert exit_record.warehouse == "LA"
         assert exit_record.user_uuid == "backend-user-abc"
-        assert len(captured) == 1
-        event = captured[0]
-        assert event.event_type == "outbound_order_created"
-        assert event.properties == {
-            "warehouse": "los_angeles",
-            "client_id": sku.client_id,
-            "product_id": str(sku.id),
-            "product_category": sku.category,
-            "quantity": 3,
-            "movement_id": str(exit_record.id),
-        }
-        assert persisted == [event]
+        assert captured == []
+        outbound = [
+            row for row in _outbox_rows(db_session)
+            if row["event_type"] == "outbound_order_created"
+        ]
+        assert outbound == []
         remaining = get_current_stock(db_session, sku_id=sku.id, warehouse="LA")
         assert remaining == 7
 
@@ -660,7 +648,7 @@ class TestCreateStockExit:
         assert db_session.exec(select(StockExit)).all() == []
         assert persisted == [event]
 
-    def test_outbound_telemetry_failure_preserves_exit(
+    def test_stockexit_does_not_emit_commercial_order_event(
         self, db_session: Session, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         sku = _create_sku(db_session, sku_code="SKU-EXT-TELEMETRY-FAIL")
@@ -674,8 +662,8 @@ class TestCreateStockExit:
         )
         monkeypatch.setattr(
             inventory_service,
-            "persist_backend_telemetry",
-            lambda _session, _events: (_ for _ in ()).throw(RuntimeError("telemetry failure")),
+            "capture_telemetry_events",
+            lambda _events: (_ for _ in ()).throw(RuntimeError("capture failure")),
         )
 
         exit_record = create_stock_exit(
@@ -693,6 +681,88 @@ class TestCreateStockExit:
         assert exit_record.id is not None
         assert db_session.get(StockExit, exit_record.id) is not None
         assert get_current_stock(db_session, sku_id=sku.id, warehouse="LA") == 3
+        assert not any(
+            row["event_type"] == "outbound_order_created"
+            for row in _outbox_rows(db_session)
+        )
+
+    def test_stockexit_does_not_call_commercial_order_outbox(
+        self, db_session: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sku = _create_sku(db_session, sku_code="SKU-EXT-OUTBOX-FAIL")
+        sku.client_id = "client-123"
+        db_session.add(sku)
+        db_session.commit()
+        create_stock_entry(
+            db_session,
+            StockEntryCreate(sku_id=sku.id, quantity=5, reference="PO", warehouse="LA"),
+            user_uuid="u1",
+        )
+        monkeypatch.setattr(
+            inventory_service,
+            "enqueue_inventory_event",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("outbox insert failed")
+            ),
+        )
+
+        exit_record = create_stock_exit(
+            db_session,
+            StockExitCreate(
+                sku_id=sku.id,
+                quantity=2,
+                exit_type="dispatch",
+                tracking_number="TRK-OUTBOX-FAIL",
+                warehouse="LA",
+            ),
+            user_uuid="u1",
+        )
+
+        assert db_session.get(StockExit, exit_record.id) is not None
+        assert not any(
+            row["event_type"] == "outbound_order_created"
+            for row in _outbox_rows(db_session)
+        )
+
+    def test_commit_failure_rolls_back_exit_without_changing_inbound_outbox(
+        self, db_session: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sku = _create_sku(db_session, sku_code="SKU-EXT-COMMIT-FAIL")
+        sku.client_id = "client-123"
+        db_session.add(sku)
+        db_session.commit()
+        entry = create_stock_entry(
+            db_session,
+            StockEntryCreate(sku_id=sku.id, quantity=5, reference="PO", warehouse="LA"),
+            user_uuid="u1",
+        )
+        inbound_outbox = _outbox_rows(db_session)
+        assert len(inbound_outbox) == 1
+        assert inbound_outbox[0]["source_table"] == "stockentry"
+        assert inbound_outbox[0]["source_pk"] == entry.id
+
+        monkeypatch.setattr(
+            db_session,
+            "commit",
+            lambda: (_ for _ in ()).throw(RuntimeError("commit failure")),
+        )
+
+        with pytest.raises(RuntimeError, match="commit failure"):
+            create_stock_exit(
+                db_session,
+                StockExitCreate(
+                    sku_id=sku.id,
+                    quantity=2,
+                    exit_type="dispatch",
+                    tracking_number="TRK-COMMIT-FAIL",
+                    warehouse="LA",
+                ),
+                user_uuid="u1",
+            )
+
+        assert db_session.exec(select(StockExit)).all() == []
+        assert _outbox_rows(db_session) == inbound_outbox
+        assert get_current_stock(db_session, sku_id=sku.id, warehouse="LA") == 5
 
     def test_insufficient_stock_sink_failure_preserves_rejection(
         self, db_session: Session, monkeypatch: pytest.MonkeyPatch

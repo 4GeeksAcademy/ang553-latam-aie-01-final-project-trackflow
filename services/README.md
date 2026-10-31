@@ -8,3 +8,14 @@ Each subfolder inside `services/` must correspond to **one specific service** (f
 - **Recommendation**: document in this file (or in sub-READMEs) the services you add, their objective, the technology used, and how to run them.
 
 > _Spanish version: [README.es.md](./README.es.md)._
+
+## Inventory business commands
+
+The inventory API supports persisted SKU thresholds, idempotent physical
+counts, and idempotent commercial orders with one or more stable dispatch
+identifiers. Their required telemetry is written to the transactional outbox
+in the same database transaction as the business record.
+
+The legacy `POST /inventory/orders/outbound` route remains a standalone stock
+movement. It may produce a threshold-crossing event, but it does **not** create
+a commercial order and does **not** produce `outbound_order_created`.

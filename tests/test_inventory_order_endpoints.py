@@ -31,6 +31,7 @@ from services.api.inventory_service import (
     create_stock_exit,
     get_current_stock,
 )
+from services.api.inventory_outbox import inventory_outbox_metadata
 from services.api.routes.inventory import (
     create_inbound_order,
     create_outbound_order,
@@ -56,6 +57,7 @@ def db_session() -> Session:
     """
     engine = create_engine("sqlite://", echo=False)
     SQLModel.metadata.create_all(engine)
+    inventory_outbox_metadata.create_all(engine)
     with Session(engine) as session:
         yield session
 
