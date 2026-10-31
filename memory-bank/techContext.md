@@ -1,5 +1,41 @@
 # Tech Context: TrackFlow
 
+## DEV-53 — persistencia de ejecuciones nocturnas
+
+- `infra/sql/job_runs.sql` es el DDL explícito y no se aplica mediante imports
+  ni `SQLModel.metadata.create_all()`.
+- `job_runs` reside conceptualmente en la base operacional y conserva intentos
+  históricos por `job_name` y `target_date`.
+- La exclusión y la idempotencia dependen exclusivamente de índices únicos
+  parciales PostgreSQL; no usan advisory locks, leases, expiración, fencing ni
+  una tabla de bloqueo adicional.
+- `services/job_runner` recibe un engine SQLAlchemy, no depende de FastAPI y
+  expone adquisición, consultas y transiciones terminales compare-and-set para
+  su reutilización por el futuro script nocturno.
+- El descubrimiento setuptools incluye `services.job_runner*`, de modo que el
+  servicio forma parte de instalaciones del proyecto y no depende solamente
+  del checkout del repositorio.
+- Un conflicto de unicidad esperado revierte primero la transacción perdedora y
+  consulta después `completed` para la fecha o `processing` para el trabajo en
+  una transacción válida.
+- Rollback y cierre son cleanup best-effort: sus fallos secundarios se registran
+  solo con operación, estado del commit y tipo de excepción, sin sustituir la
+  causa principal ni incluir el texto potencialmente sensible. Si `commit()`
+  retornó, un fallo posterior de cierre no invalida la adquisición confirmada;
+  se intenta además invalidar la conexión. Si `commit()` lanzó, no se presupone
+  éxito.
+- Los mensajes sin indicadores sensibles se normalizan a una línea y se limitan
+  a 500 caracteres. Los formatos reconocidos que pueden contener credenciales
+  (incluidos Bearer, URLs de base de datos y claves JSON sensibles) se sustituyen
+  completamente por un diagnóstico genérico conservador; no se afirma detectar
+  secretos arbitrarios sin etiqueta.
+- `created_at` y `started_at` usan el mismo instante UTC durante la adquisición.
+  Las transiciones terminales aplican como mínimo `started_at` si el reloj de la
+  aplicación retrocede, y PostgreSQL protege además el orden de timestamps.
+- La garantía cubre fallos controlables. `SIGKILL`, caída del host o pérdida de
+  energía pueden dejar un registro `processing`; su reconciliación seguirá
+  siendo manual y no se infiere por antigüedad.
+
 ## Stack tecnologico confirmado
 
 - TypeScript esta presente en la raiz del monorepo y en las aplicaciones principales.

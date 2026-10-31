@@ -1,5 +1,43 @@
 # Progress: TrackFlow
 
+## DEV-53 — Fase 1/1R/1S: persistencia y control de estados
+
+- Implementado el DDL explícito de `job_runs` para PostgreSQL con estados
+  `pending`, `processing`, `completed` y `failed`, integridad temporal y forma
+  de filas según el estado.
+- La exclusión usa únicamente dos índices únicos parciales: un solo
+  `processing` por `job_name` y un solo claim `processing|completed` por
+  `(job_name, target_date)`. Los intentos `failed` permanecen como historial y
+  permiten reintentos.
+- Añadido `services/job_runner/`, independiente de FastAPI, cron, CSV y el
+  pipeline semanal. La adquisición crea `pending` y cambia a `processing` en
+  una transacción; solo un commit exitoso concede el derecho a ejecutar.
+- Los conflictos esperados hacen rollback y consultan el estado ganador desde
+  una transacción nueva. Las transiciones terminales usan compare-and-set desde
+  `processing`; los errores persistidos siguen una política conservadora que
+  reemplaza por completo formatos sensibles reconocidos.
+- Fase 1R corrigió el manejo de fallos al abrir conexión o transacción, preserva
+  la causa SQLAlchemy y garantiza cierre/rollback cuando corresponde. También
+  alinea `created_at` con `started_at` y evita `finished_at < started_at` si el
+  reloj de aplicación retrocede.
+- Fase 1S evita que un fallo secundario de rollback sustituya la causa principal
+  y conserva el resultado adquirido cuando el commit fue confirmado aunque el
+  cierre posterior falle. Un error de commit continúa sin asumirse exitoso.
+- QA unitario: **34 PASS**.
+- QA PostgreSQL real sobre el contenedor autorizado, aislado en loopback y
+  `tmpfs`: **7 PASS**. Se verificaron concurrencia para fechas iguales y
+  diferentes, idempotencia después de `completed`, historial/reintento después
+  de `failed`, CAS inválido y rollback sin filas `pending` huérfanas.
+- Regresión focalizada de control transaccional: **54 PASS, 1 SKIP**. El skip
+  corresponde a una integración opcional del pipeline que requiere su propia
+  variable PostgreSQL y no acredita ni bloquea DEV-53 Fase 1.
+- La tabla de prueba quedó sin filas residuales. No se aplicó el DDL a bases de
+  despliegue ni se usó el contenedor PostgreSQL preservado.
+- DEV-53 continúa incompleto: exportación CSV, subprocess del pipeline,
+  scheduler externo, logging operacional y runbook pertenecen a fases
+  posteriores. Una terminación abrupta todavía puede dejar `processing` y no
+  existe takeover automático.
+
 ## Parte 3 — subflows, tests unitarios y dashboard de negocio
 
 - Pipeline semanal refactorizado en subflows Prefect de extracción, cálculo por
@@ -40,7 +78,10 @@
 - Continúan pendientes RQ-15 (aceptación externa de ruta/CLI), RQ-17
   (certificación empresarial de cobertura) y la aceptación funcional manual.
 
-## Estado actual
+## Estado histórico de Parte 2 (conservado)
+
+> Esta sección registra un estado intermedio anterior. El estado vigente se
+> documenta en las secciones más recientes situadas al inicio de este archivo.
 
 - Parte 2 — Pipeline de Desempeño de Negocio: Fase 1 (núcleo de extracción y
 	transformación) completada; el pipeline completo no está terminado.
