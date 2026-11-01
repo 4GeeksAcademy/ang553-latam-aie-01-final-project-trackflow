@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import asyncio
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -8,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
+import httpx
 
 import services.reporting.router as reporting
 from services.api.auth_models import Role, UserInDB
@@ -29,15 +30,34 @@ def user(role: Role) -> UserInDB:
     return UserInDB(id=str(uuid4()), email=f"{role.value}@example.com", hashed_password="hash", role=role)
 
 
-def client(role: Role, *, scheduler=None) -> TestClient:
+class ASGIClient:
+    def __init__(self, app: FastAPI):
+        self.app = app
+
+    def request(self, method: str, url: str, **kwargs):
+        async def send():
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=self.app),
+                base_url="http://testserver",
+            ) as session:
+                return await session.request(method, url, **kwargs)
+
+        return asyncio.run(send())
+
+    def get(self, url: str, **kwargs):
+        return self.request("GET", url, **kwargs)
+
+    def post(self, url: str, **kwargs):
+        return self.request("POST", url, **kwargs)
+
+
+def client(role: Role) -> ASGIClient:
     app = FastAPI()
     app.include_router(reporting.router)
     app.dependency_overrides[get_current_user] = lambda: user(role)
     app.dependency_overrides[reporting.get_reporting_engine] = lambda: Engine()
     app.dependency_overrides[reporting.get_pipeline_source_engine] = lambda: Engine()
-    if scheduler is not None:
-        app.dependency_overrides[reporting.get_scheduler] = lambda: scheduler
-    return TestClient(app)
+    return ASGIClient(app)
 
 
 def test_pipeline_source_dependency_requires_distinct_engine():
@@ -86,7 +106,7 @@ def test_gets_forbid_regular_user_and_unauthenticated():
     assert regular.get("/reporting/pipeline-runs/latest").status_code == 403
     app = FastAPI()
     app.include_router(reporting.router)
-    assert TestClient(app).get("/reporting/pipeline-runs/latest").status_code == 401
+    assert ASGIClient(app).get("/reporting/pipeline-runs/latest").status_code == 401
 
 
 def test_explicit_invalid_week_is_422_before_store(monkeypatch):
@@ -132,102 +152,55 @@ def test_post_requires_admin():
     assert client(Role.manager).post("/reporting/pipeline-runs", json={}).status_code == 403
 
 
-def test_post_durable_acceptance_precedes_scheduler_and_202_is_not_published(monkeypatch):
+def test_post_durable_acceptance_returns_task_identity_without_scheduling(monkeypatch):
     run_id = uuid4()
-    events = []
+    task_id = uuid4()
+    accepted = []
 
-    def accept(_connection, week):
-        events.append(("durable", week))
-        return run_id, True
+    def accept(_connection, week, requested_by):
+        accepted.append((week, requested_by))
+        return run_id, task_id, True
 
-    def schedule(_background, _engine, _source_engine, week, accepted_id):
-        events.append(("scheduled", week, accepted_id))
-
-    monkeypatch.setattr(reporting, "accept_pipeline_run", accept)
-    response = client(Role.admin, scheduler=schedule).post(
+    monkeypatch.setattr(reporting, "accept_async_task", accept)
+    response = client(Role.admin).post(
         "/reporting/pipeline-runs", json={"week_start": "2026-01-05"}
     )
     assert response.status_code == 202
     assert response.json() == {
+        "task_id": str(task_id),
         "run_id": str(run_id),
         "week_start": "2026-01-05",
-        "status": "accepted",
-        "published": False,
+        "status": "pending",
+        "status_url": f"/tasks/{task_id}",
     }
-    assert [event[0] for event in events] == ["durable", "scheduled"]
+    assert accepted[0][0] == date(2026, 1, 5)
+    assert isinstance(accepted[0][1], type(run_id))
 
 
-def test_post_duplicate_is_409_and_not_scheduled(monkeypatch):
-    monkeypatch.setattr(reporting, "accept_pipeline_run", lambda *_args: (uuid4(), False))
-    response = client(Role.admin, scheduler=lambda *_args: pytest.fail("scheduled")).post(
+def test_post_duplicate_is_409(monkeypatch):
+    monkeypatch.setattr(
+        reporting,
+        "accept_async_task",
+        lambda *_args: (uuid4(), uuid4(), False),
+    )
+    response = client(Role.admin).post(
         "/reporting/pipeline-runs", json={"week_start": "2026-01-05"}
     )
     assert response.status_code == 409
 
 
-def test_scheduler_failure_after_durable_acceptance_is_recoverable_503(monkeypatch):
-    run_id = uuid4()
-    attempts = iter(((run_id, True), (uuid4(), True)))
-    monkeypatch.setattr(reporting, "accept_pipeline_run", lambda *_args: next(attempts))
-    closed = []
+def test_post_durable_transaction_failure_is_safe_503(monkeypatch):
     monkeypatch.setattr(
         reporting,
-        "mark_scheduling_failed",
-        lambda _connection, failed_id, _now: closed.append(failed_id),
+        "accept_async_task",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("postgresql://user:secret@host/db")),
     )
-
-    def fail(*_args):
-        raise RuntimeError("scheduler unavailable")
-
-    response = client(Role.admin, scheduler=fail).post(
-        "/reporting/pipeline-runs", json={"week_start": "2026-01-05"}
-    )
-    assert response.status_code == 503
-    assert "retryable" in response.json()["detail"]
-    assert "scheduler unavailable" not in response.text
-    assert closed == [run_id]
-
-    retry = client(Role.admin, scheduler=lambda *_args: None).post(
-        "/reporting/pipeline-runs", json={"week_start": "2026-01-05"}
-    )
-    assert retry.status_code == 202
-
-
-def test_scheduler_failure_with_uncertain_status_requires_reconciliation(monkeypatch):
-    monkeypatch.setattr(reporting, "accept_pipeline_run", lambda *_args: (uuid4(), True))
-    monkeypatch.setattr(
-        reporting,
-        "mark_scheduling_failed",
-        lambda *_args: (_ for _ in ()).throw(RuntimeError("write uncertain")),
-    )
-    response = client(
-        Role.admin,
-        scheduler=lambda *_args: (_ for _ in ()).throw(RuntimeError("scheduler unavailable")),
-    ).post("/reporting/pipeline-runs", json={"week_start": "2026-01-05"})
-    assert response.status_code == 503
-    assert "reconciliation" in response.json()["detail"]
-    assert "retry" not in response.json()["detail"]
-
-
-def test_default_scheduler_reports_configuration_name_without_secret(monkeypatch):
-    run_id = uuid4()
-    closed = []
-    monkeypatch.setattr(reporting, "accept_pipeline_run", lambda *_args: (run_id, True))
-    monkeypatch.setattr(
-        reporting,
-        "mark_scheduling_failed",
-        lambda _connection, failed_id, _now: closed.append(failed_id),
-    )
-    monkeypatch.delenv("TRACKFLOW_PIPELINE_DEPENDENCY_FINGERPRINT", raising=False)
-
     response = client(Role.admin).post(
         "/reporting/pipeline-runs", json={"week_start": "2026-01-05"}
     )
-
     assert response.status_code == 503
-    assert "TRACKFLOW_PIPELINE_DEPENDENCY_FINGERPRINT" in response.json()["detail"]
-    assert "postgresql" not in response.text.lower()
-    assert closed == [run_id]
+    assert response.json()["detail"] == "durable acceptance unavailable"
+    assert "secret" not in response.text
 
 
 def test_openapi_has_nominal_contracts_and_expected_statuses():

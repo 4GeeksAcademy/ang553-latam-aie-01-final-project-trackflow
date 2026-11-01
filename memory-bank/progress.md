@@ -446,3 +446,48 @@ revisión y autorización arquitectónica.
 - Para levantar el backend desde Codespaces se debe ejecutar desde la raíz del
 	repositorio. El puerto 8000 se expone como Public solo temporalmente para E2E
 	y debe volver a Private al cerrar.
+
+## DEV-55 — Bloque B (fases 5–7)
+
+- Implementación en revisión: el POST de reporting acepta de forma transaccional
+  `pipeline_publication_runs` + `async_tasks` + `task_dispatch_outbox` y ya no
+  ejecuta Prefect desde FastAPI.
+- `GET /tasks/{task_id}` conserva separados estado público, Celery, estado
+  durable, resultado empresarial y publicación KPI.
+- Relay PostgreSQL→Celery independiente con `task_id` estable,
+  `FOR UPDATE SKIP LOCKED`, token/lease, backoff acotado y reconciliación.
+- Claims con attempt, token, epoch y CAS. Sólo un claim expirado en `preflight`
+  se recupera automáticamente; después de iniciar Prefect no se reejecutan
+  efectos inciertos.
+- Tres ejecuciones fallidas totales constituyen el contrato académico;
+  `max_retries=3` permanece únicamente como cota superior de Celery.
+- DLQ PostgreSQL idempotente; `blocked_quality` es éxito técnico y
+  `commit_uncertain` exige reconciliación con `published = null`.
+- DDL explícito en `infra/sql/reporting_async_tasks.sql`; nunca se aplica desde
+  el lifespan de FastAPI.
+- QA PostgreSQL real aislado: DDL, atomicidad/rollback, claims/fencing,
+  exclusión de relays y DLQ idempotente validados. La aceptación manual de
+  Fase 8 sigue pendiente.
+- Fase 7R: 21 POST reales con worker detenido devolvieron 202 y persistieron
+  run+tarea+outbox; las 20 mediciones precalentadas quedaron entre 46.549 y
+  99.325 ms (p95/p99 99.325 ms) y la primera aceptación midió 85.610 ms.
+- E2E dual-engine desechable: el caso positivo terminó `SUCCESS/succeeded`,
+  publicó un KPI y mantuvo un solo run; el caso de calidad terminó
+  `SUCCESS/blocked_quality`, `published=false`, un intento y sin DLQ.
+- Corrección Fase 7R: el cruce preflight→Prefect ahora exige claim no expirado;
+  el reconciliador sólo repara desde historial empresarial terminal cuando el
+  claim también expiró, evitando competir con un worker vivo.
+- Crashes QA: publicación incierta recuperada con el mismo `task_id`, dos
+  entregas y una sola ejecución; crash preflight recuperado en epoch 2; crash
+  tras `prefect_started` quedó `reconciliation_required` sin reejecución.
+- La ejecución positiva fría midió 71.106 s. El worker Compose exige ahora
+  `TRACKFLOW_WORKER_SHUTDOWN_GRACE_SECONDS`; QA usó soft/hard/visibility/grace
+  120/180/240/180 s. Producción sigue pendiente de calibración propia.
+- Flower protegido devolvió 401 sin autenticación y mostró SUCCESS, FAILURE y
+  dos retries para tareas correlacionadas; la fila SQL DLQ confirmó el tercer
+  fallo total como `retries_exhausted`.
+- Regresión final: 63 tests DEV-55/PostgreSQL, 167 de Prefect/DEV-53 y 704
+  globales (29 opt-in skipped, un CORS histórico deselected) pasaron. La suite
+  completa conserva un error de colección ajeno en `test_inventory_client_ids`
+  bajo el intérprete host y el CORS ya presente en `8bf7fda`.
+- Fase 8 y aceptación humana siguen pendientes; no se creó commit.

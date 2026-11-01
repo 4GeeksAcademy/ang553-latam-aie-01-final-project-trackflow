@@ -546,3 +546,25 @@
 - **Hito 3**: `apps/talent-pipeline-tracker/` confirma Next.js para interfaces operativas. Backend FastAPI con auth (AUTH-01/AUTH-02) implementado en `services/api/`.
 - **Hito 4**: Infraestructura AI-ready (`memory-bank/`, `AGENTS.md`, skills). Web publica y backoffice en `uis/`. Logica Hito 2 integrada visualmente sin duplicacion. Auth frontend/backend implementados.
 - **Hito 6**: Pipeline Pandas de telemetría implementado. GET /telemetry/report con cache 60s. Dashboard técnico en backoffice. Dataset real (31 eventos).
+
+## DEV-55 — contratos técnicos asíncronos
+
+- Redis es broker/backend de Celery; PostgreSQL es la fuente durable para
+  aceptación, dispatch, claims, estado y DLQ.
+- FastAPI no publica directamente en Redis: confirma run+tarea+outbox y
+  devuelve 202. `python -m services.task_queue.relay` publica después con el
+  mismo `task_id`.
+- La entrega es al menos una vez. El claim CAS y el fencing token/epoch evitan
+  dos entradas concurrentes a Prefect; no se promete exactly-once.
+- Los límites soft/hard, visibility timeout, retención, leases y cotas del
+  relay son configuración operacional explícita basada en medición aislada;
+  Compose no incorpora duraciones productivas inventadas.
+- El CAS preflight→Prefect exige token, epoch y `claim_expires_at` vigente. Un
+  historial de pipeline terminal no autoriza al reconciliador a cerrar una
+  tarea mientras el claim del worker siga vigente.
+- `TRACKFLOW_WORKER_SHUTDOWN_GRACE_SECONDS` es obligatorio al iniciar el worker
+  Compose y debe ser al menos el hard time limit. El fallback de interpolación
+  de Compose sólo permite analizar perfiles inactivos; no es un default de
+  ejecución aprobado.
+- Flower requiere autenticación y eventos Celery. La DLQ se demuestra por SQL
+  correlacionado, no por Flower.

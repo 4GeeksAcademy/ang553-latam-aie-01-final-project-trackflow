@@ -1,5 +1,6 @@
-"""TrackFlow's process-independent Celery task service."""
+"""TrackFlow's process-independent task service.
 
-from services.task_queue.celery_app import celery_app
-
-__all__ = ["celery_app"]
+Keep package import side-effect free so FastAPI can use the PostgreSQL store
+without installing or initializing Celery. Worker processes import
+``services.task_queue.celery_app`` explicitly.
+"""

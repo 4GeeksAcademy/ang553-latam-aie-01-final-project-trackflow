@@ -22,6 +22,8 @@ from prefect.cache_policies import NO_CACHE
 from prefect.runtime import flow_run, task_run
 from sqlalchemy import create_engine
 
+from pipelines.database_identity import sqlalchemy_postgresql_url
+
 from pipelines.concurrency import acquire_week_lease, record_lease_run_status
 from pipelines.coordinator import (
     ConfirmedLeaseRight,
@@ -768,11 +770,11 @@ def build_cli_runtime(
     source_engine = (
         None
         if source_url is None
-        else create_engine(source_url, pool_pre_ping=True)
+        else create_engine(sqlalchemy_postgresql_url(source_url), pool_pre_ping=True)
     )
     return replace(
         build_http_runtime(
-            create_engine(database_url, pool_pre_ping=True),
+            create_engine(sqlalchemy_postgresql_url(database_url), pool_pre_ping=True),
             values,
             source_engine=source_engine,
             clock=clock,

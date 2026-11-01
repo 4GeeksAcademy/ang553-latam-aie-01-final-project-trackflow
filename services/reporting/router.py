@@ -1,25 +1,22 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
-from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Annotated, Any, Callable
+from typing import Annotated, Any
+from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import create_engine
 
 from pipelines.database_identity import (
     DatabaseIsolationError,
     ensure_distinct_postgresql_databases,
+    sqlalchemy_postgresql_url,
 )
 
 from pipelines.pipeline import (
-    CliConfigurationError,
-    build_http_runtime,
     parse_closed_week,
-    run_weekly_pipeline,
 )
 from services.api.auth_models import Role, UserInDB
 from services.api.auth_security import get_current_user
@@ -29,16 +26,11 @@ from services.reporting.models import (
     PipelineRunResponse,
     WeeklyPerformanceResponse,
 )
-from services.reporting.store import (
-    accept_pipeline_run,
-    latest_pipeline_run,
-    mark_scheduling_failed,
-    weekly_report,
-)
+from services.reporting.store import latest_pipeline_run, weekly_report
+from services.task_queue.store import accept_async_task
 
 REPORTING_DATABASE_URL_ENV = "TRACKFLOW_REPORTING_DATABASE_URL"
 
-logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/reporting", tags=["reporting"])
 
 
@@ -51,7 +43,7 @@ def get_reporting_engine(request: Request):
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "reporting database unavailable")
     if not url.startswith(("postgresql://", "postgresql+psycopg2://")):
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "reporting requires PostgreSQL")
-    return create_engine(url, pool_pre_ping=True)
+    return create_engine(sqlalchemy_postgresql_url(url), pool_pre_ping=True)
 
 
 def get_pipeline_source_engine(
@@ -68,7 +60,7 @@ def get_pipeline_source_engine(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "pipeline source database unavailable",
             )
-        source = create_engine(url, pool_pre_ping=True)
+        source = create_engine(sqlalchemy_postgresql_url(url), pool_pre_ping=True)
     try:
         ensure_distinct_postgresql_databases(source, reporting_engine)
     except DatabaseIsolationError as exc:
@@ -89,24 +81,6 @@ def require_admin(user: Annotated[UserInDB, Depends(get_current_user)]) -> UserI
     if user.role is not Role.admin:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "admin role required")
     return user
-
-
-def schedule_accepted_run(
-    background: BackgroundTasks,
-    engine: Any,
-    source_engine: Any,
-    week_start,
-    run_id,
-) -> None:
-    runtime = replace(
-        build_http_runtime(engine, source_engine=source_engine),
-        accepted_run_id=run_id,
-    )
-    background.add_task(run_weekly_pipeline, runtime, week_start)
-
-
-def get_scheduler() -> Callable[..., None]:
-    return schedule_accepted_run
 
 
 def _weekly_json_response(model: WeeklyPerformanceResponse) -> Response:
@@ -182,11 +156,8 @@ def get_latest_run(
 )
 def request_pipeline_run(
     payload: PipelineRunRequest,
-    background: BackgroundTasks,
-    _user: Annotated[UserInDB, Depends(require_admin)],
+    user: Annotated[UserInDB, Depends(require_admin)],
     engine: Annotated[Any, Depends(get_reporting_engine)],
-    source_engine: Annotated[Any, Depends(get_pipeline_source_engine)],
-    scheduler: Annotated[Callable[..., None], Depends(get_scheduler)],
 ) -> PipelineRunAcceptedResponse:
     try:
         week_start = parse_closed_week(
@@ -197,32 +168,18 @@ def request_pipeline_run(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     try:
         with engine.begin() as connection:
-            run_id, created = accept_pipeline_run(connection, week_start)
+            run_id, task_id, created = accept_async_task(
+                connection,
+                week_start,
+                UUID(user.id),
+            )
     except Exception as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "durable acceptance unavailable") from exc
     if not created:
         raise HTTPException(status.HTTP_409_CONFLICT, "pipeline run already pending or running")
-    try:
-        scheduler(background, engine, source_engine, week_start, run_id)
-    except Exception as exc:
-        if isinstance(exc, CliConfigurationError):
-            logger.warning("pipeline scheduling configuration rejected: %s", exc)
-        try:
-            with engine.begin() as connection:
-                mark_scheduling_failed(connection, run_id, datetime.now(timezone.utc))
-        except Exception as persist_exc:
-            raise HTTPException(
-                status.HTTP_503_SERVICE_UNAVAILABLE,
-                "scheduling outcome requires reconciliation through pipeline-runs/latest",
-            ) from persist_exc
-        detail = (
-            f"scheduling configuration invalid before enqueue: {exc}; "
-            "run closed as retryable"
-            if isinstance(exc, CliConfigurationError)
-            else "scheduling failed before enqueue; run closed as retryable"
-        )
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail,
-        ) from exc
-    return PipelineRunAcceptedResponse(run_id=run_id, week_start=week_start)
+    return PipelineRunAcceptedResponse(
+        task_id=task_id,
+        run_id=run_id,
+        week_start=week_start,
+        status_url=f"/tasks/{task_id}",
+    )

@@ -31,6 +31,7 @@ from services.api.routes.suppliers import router as suppliers_router
 from services.api.routes.telemetry import router as telemetry_router
 from services.api.routes.users import router as users_router
 from services.reporting.router import router as reporting_router
+from services.task_queue.router import router as task_router
 
 logger = logging.getLogger(__name__)
 timing_logger = logging.getLogger("api.timing")
@@ -200,6 +201,7 @@ app.include_router(users_router)
 app.include_router(profiles_router)
 app.include_router(telemetry_router)
 app.include_router(reporting_router)
+app.include_router(task_router)
 
 
 # ── Health check ─────────────────────────────────────────────────────────────
