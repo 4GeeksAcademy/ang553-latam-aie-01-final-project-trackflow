@@ -22,12 +22,13 @@ def runtime(*, observer=None, state_sink=None):
 
 
 def test_prefect_3_task_contracts_are_safe_and_cache_is_exactly_one_hour():
+    from prefect.cache_policies import NO_CACHE
     from prefect.tasks import Task
 
-    tasks = [
+    uncached_tasks = [
         pipeline.extract_week_task,
         pipeline.relay_outbox_task,
-        pipeline.transform_week_task,
+        pipeline.audit_operational_coverage_task,
         pipeline.create_run_task,
         pipeline.acquire_lease_task,
         pipeline.fail_run_task,
@@ -35,7 +36,9 @@ def test_prefect_3_task_contracts_are_safe_and_cache_is_exactly_one_hour():
         pipeline.publish_week_task,
         pipeline.optional_observer_task,
     ]
-    assert len(tasks) == 9 and all(isinstance(item, Task) for item in tasks)
+    tasks = [*uncached_tasks, pipeline.transform_week_task]
+    assert len(tasks) == 10 and all(isinstance(item, Task) for item in tasks)
+    assert all(item.cache_policy == NO_CACHE for item in uncached_tasks)
     assert pipeline.extract_week_task.retries == 2
     assert pipeline.extract_week_task.retry_delay_seconds == 5
     assert pipeline.publish_week_task.retries == 0
@@ -43,6 +46,58 @@ def test_prefect_3_task_contracts_are_safe_and_cache_is_exactly_one_hour():
     assert pipeline.acquire_lease_task.retries == 0
     assert pipeline.transform_week_task.cache_expiration == timedelta(hours=1)
     assert pipeline.transform_week_task.cache_key_fn is pipeline.transformation_cache_key
+
+
+def test_engine_tasks_do_not_hash_sqlalchemy_runtime_inputs():
+    from prefect.cache_policies import NO_CACHE
+    from sqlalchemy import create_engine
+
+    engine = create_engine("sqlite://")
+    try:
+        for item in (
+            pipeline.extract_week_task,
+            pipeline.relay_outbox_task,
+            pipeline.audit_operational_coverage_task,
+            pipeline.create_run_task,
+            pipeline.acquire_lease_task,
+            pipeline.fail_run_task,
+            pipeline.quality_gate_task,
+            pipeline.publish_week_task,
+            pipeline.optional_observer_task,
+        ):
+            assert item.cache_policy == NO_CACHE
+            assert (
+                item.cache_policy.compute_key(
+                    task_ctx=None,
+                    inputs={"runtime": runtime(), "engine": engine},
+                    flow_parameters={},
+                )
+                is None
+            )
+    finally:
+        engine.dispose()
+
+
+def test_prefect_executes_engine_task_without_cache_serialization(monkeypatch, caplog):
+    from prefect import flow
+    from prefect.testing.utilities import prefect_test_harness
+    from sqlalchemy import create_engine
+
+    extracted = SimpleNamespace(metadata=SimpleNamespace(week_start=WEEK), events=())
+    monkeypatch.setattr(pipeline, "extract_weekly_inputs", lambda _engine, _week: extracted)
+    engine = create_engine("sqlite://")
+
+    @flow(name="trackflow-engine-cache-regression")
+    def invoke_engine_task():
+        return pipeline.extract_week_task(engine, WEEK)
+
+    try:
+        with prefect_test_harness():
+            assert invoke_engine_task() == extracted
+        assert "Unable to serialize unknown type" not in caplog.text
+        assert "cannot pickle '_thread.RLock' object" not in caplog.text
+    finally:
+        engine.dispose()
 
 
 def test_domain_subflows_and_metric_tasks_have_explicit_prefect_contracts():

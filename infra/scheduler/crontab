@@ -1,0 +1,1 @@
+15 0 * * * python -m scripts.nightly_export

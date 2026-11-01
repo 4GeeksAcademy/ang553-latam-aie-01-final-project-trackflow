@@ -48,6 +48,22 @@ services:
       - ./services:/app/services
       - ./scripts:/app/scripts
 
+  # ── Scheduler (DEV-53 nightly telemetry export) ───────────────────────────
+  scheduler:
+    profiles:
+      - scheduler
+    build:
+      context: .
+      dockerfile: infra/scheduler/Dockerfile
+    env_file:
+      - .env
+    environment:
+      - TZ=UTC
+    networks:
+      - trackflow-dev
+    volumes:
+      - telemetry-raw:/app/data/raw
+
 networks:
   trackflow-dev:
     driver: bridge
@@ -55,3 +71,4 @@ networks:
 volumes:
   website-node-modules:
   backoffice-node-modules:
+  telemetry-raw:

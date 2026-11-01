@@ -18,6 +18,7 @@ from typing import Any, Callable
 from uuid import UUID, uuid4
 
 from prefect import flow, task
+from prefect.cache_policies import NO_CACHE
 from prefect.runtime import flow_run, task_run
 from sqlalchemy import create_engine
 
@@ -132,7 +133,12 @@ def transformation_cache_key(_context: Any, parameters: dict[str, Any]) -> str:
     return sha256(repr(material).encode("utf-8")).hexdigest()
 
 
-@task(name="trackflow-relay-inventory-outbox", retries=2, retry_delay_seconds=5)
+@task(
+    name="trackflow-relay-inventory-outbox",
+    retries=2,
+    retry_delay_seconds=5,
+    cache_policy=NO_CACHE,
+)
 def relay_outbox_task(source_engine: Any, reporting_engine: Any) -> RelayResult:
     """Relay authentic movement events before taking the weekly snapshot."""
     result = relay_inventory_outbox(source_engine, reporting_engine)
@@ -142,7 +148,12 @@ def relay_outbox_task(source_engine: Any, reporting_engine: Any) -> RelayResult:
     return result
 
 
-@task(name="trackflow-audit-operational-coverage", retries=2, retry_delay_seconds=5)
+@task(
+    name="trackflow-audit-operational-coverage",
+    retries=2,
+    retry_delay_seconds=5,
+    cache_policy=NO_CACHE,
+)
 def audit_operational_coverage_task(
     source_engine: Any,
     reporting_engine: Any,
@@ -151,7 +162,12 @@ def audit_operational_coverage_task(
     return audit_operational_coverage(source_engine, reporting_engine, week_start)
 
 
-@task(name="trackflow-extract-week", retries=2, retry_delay_seconds=5)
+@task(
+    name="trackflow-extract-week",
+    retries=2,
+    retry_delay_seconds=5,
+    cache_policy=NO_CACHE,
+)
 def extract_week_task(
     engine: Any,
     week_start: date,
@@ -235,7 +251,7 @@ def calculate_discrepancy_metrics_task(prepared: PreparedWeeklyEvents) -> Metric
     return calculate_discrepancy_events(prepared)
 
 
-@task(name="trackflow-create-run")
+@task(name="trackflow-create-run", cache_policy=NO_CACHE)
 def create_run_task(runtime: PipelineRuntime, week_start: date) -> UUID:
     """Persist the run and its Prefect correlation before external work."""
     run_id = runtime.accepted_run_id or uuid4()
@@ -272,7 +288,7 @@ def create_run_task(runtime: PipelineRuntime, week_start: date) -> UUID:
     return run_id
 
 
-@task(name="trackflow-acquire-lease")
+@task(name="trackflow-acquire-lease", cache_policy=NO_CACHE)
 def acquire_lease_task(runtime: PipelineRuntime, week_start: date, run_id: UUID) -> PreparedRun:
     """Acquire a lease only after extraction and transformation have completed."""
     now = runtime.clock()
@@ -305,7 +321,7 @@ def acquire_lease_task(runtime: PipelineRuntime, week_start: date, run_id: UUID)
         )
 
 
-@task(name="trackflow-fail-run")
+@task(name="trackflow-fail-run", cache_policy=NO_CACHE)
 def fail_run_task(
     runtime: PipelineRuntime,
     week_start: date,
@@ -339,7 +355,7 @@ def fail_run_task(
     )
 
 
-@task(name="trackflow-quality-gate")
+@task(name="trackflow-quality-gate", cache_policy=NO_CACHE)
 def quality_gate_task(
     runtime: PipelineRuntime,
     week_start: date,
@@ -404,7 +420,7 @@ def quality_gate_task(
     return CoordinatorResult(week_start, run_id, STATUS_BLOCKED_QUALITY, errors=issues)
 
 
-@task(name="trackflow-publish-week")
+@task(name="trackflow-publish-week", cache_policy=NO_CACHE)
 def publish_week_task(
     runtime: PipelineRuntime,
     week_start: date,
@@ -439,7 +455,7 @@ def publish_week_task(
     return result
 
 
-@task(name="trackflow-optional-observer")
+@task(name="trackflow-optional-observer", cache_policy=NO_CACHE)
 def optional_observer_task(runtime: PipelineRuntime, week_start: date, run_id: UUID) -> None:
     """Non-critical observability hook; callers deliberately consume its State."""
     if runtime.optional_observer is not None:

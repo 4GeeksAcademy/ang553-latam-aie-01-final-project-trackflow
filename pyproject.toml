@@ -25,7 +25,7 @@ dependencies = [
 seed = "services.api.seed:main"
 
 [tool.setuptools.packages.find]
-include = ["services.api*", "services.telemetry*", "pipelines*"]
+include = ["services.api*", "services.telemetry*", "services.job_runner*", "pipelines*"]
 namespaces = true
 
 [dependency-groups]
