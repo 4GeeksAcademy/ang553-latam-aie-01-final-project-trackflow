@@ -1,5 +1,45 @@
 # Progress: TrackFlow
 
+## DEV-55 — Bloque A: Celery, Redis, Flower y tarea empresarial
+
+- Fases 2–4 implementadas en `feature/dev-55-async-tasks` sin modificar el
+  pipeline Prefect existente ni el endpoint HTTP de reporting.
+- Añadido `services/task_queue/` con una aplicación Celery central, Redis como
+  broker y backend, serialización exclusivamente JSON, estados `STARTED`,
+  eventos, ACK tardío, rechazo ante pérdida del worker y prefetch 1.
+- `trackflow.run_weekly_pipeline` recibe únicamente `task_id` implícito,
+  `run_id` y `week_start`, reconstruye el runtime CLI en el worker y reutiliza
+  `pipelines.pipeline.run_weekly_pipeline`. El resultado conserva estado y
+  contadores empresariales; los fallos expuestos por Celery usan un diagnóstico
+  acotado sin copiar mensajes potencialmente sensibles.
+- Docker Compose incorpora el perfil opt-in `async-tasks`: Redis 7.4.1 con
+  AOF, `noeviction`, volumen y healthcheck; worker separado de FastAPI; y
+  Flower en loopback:5555 con soporte de autenticación. El perfil `scheduler`
+  de DEV-53 permanece independiente.
+- QA focalizado final de tarea, seguridad Docker, Prefect y DEV-53:
+  **106 PASS** (incluye **10 PASS** de `test_task_queue.py`). Suite restante:
+  **667 PASS, 24 SKIP, 1 FAIL** heredado del baseline `35e695f` en el contrato
+  CORS de `test_inventory_auth.py`: el código, el test y las versiones
+  FastAPI/Starlette relevantes no cambian en el diff DEV-55. El commit base no
+  se ejecutó en un checkout separado. La colección global además continúa
+  bloqueada por la carga dinámica de `test_inventory_client_ids.py`; ocurre
+  tanto con Python 3.12 como 3.13.
+- QA Docker real: Redis, worker y Flower alcanzaron `healthy`; se verificaron
+  `noeviction`, AOF activo, worker conectado, tarea registrada, eventos
+  habilitados y recuperación de un resultado `FAILURE` seguro desde Redis. La
+  API Flower respondió 401 sin credenciales, confirmando su protección; no se
+  accedió al secreto. Los servicios QA quedaron detenidos, sin borrar el
+  volumen ni los contenedores.
+- Pendiente para Bloque B: adaptación del POST, GET de tareas, registro
+  PostgreSQL, outbox/relay, claims/fencing, retries definitivos, DLQ y
+  reconciliación. Compose deberá proporcionar al servicio `api` el mismo
+  `REDIS_URL` interno del worker sin activar Redis en el perfil ordinario. La
+  tarea empresarial no se ejecutó contra datos persistentes.
+
+> Las subsecciones DEV-53 siguientes preservan la cronología del desarrollo.
+> Frases como "DEV-53 continúa incompleto" describen aquel corte histórico y
+> no sustituyen el estado final documentado en las secciones DEV-53 posteriores.
+
 ## DEV-53 — Fase 1/1R/1S: persistencia y control de estados
 
 - Implementado el DDL explícito de `job_runs` para PostgreSQL con estados
@@ -406,3 +446,48 @@ revisión y autorización arquitectónica.
 - Para levantar el backend desde Codespaces se debe ejecutar desde la raíz del
 	repositorio. El puerto 8000 se expone como Public solo temporalmente para E2E
 	y debe volver a Private al cerrar.
+
+## DEV-55 — Bloque B (fases 5–7)
+
+- Implementación en revisión: el POST de reporting acepta de forma transaccional
+  `pipeline_publication_runs` + `async_tasks` + `task_dispatch_outbox` y ya no
+  ejecuta Prefect desde FastAPI.
+- `GET /tasks/{task_id}` conserva separados estado público, Celery, estado
+  durable, resultado empresarial y publicación KPI.
+- Relay PostgreSQL→Celery independiente con `task_id` estable,
+  `FOR UPDATE SKIP LOCKED`, token/lease, backoff acotado y reconciliación.
+- Claims con attempt, token, epoch y CAS. Sólo un claim expirado en `preflight`
+  se recupera automáticamente; después de iniciar Prefect no se reejecutan
+  efectos inciertos.
+- Tres ejecuciones fallidas totales constituyen el contrato académico;
+  `max_retries=3` permanece únicamente como cota superior de Celery.
+- DLQ PostgreSQL idempotente; `blocked_quality` es éxito técnico y
+  `commit_uncertain` exige reconciliación con `published = null`.
+- DDL explícito en `infra/sql/reporting_async_tasks.sql`; nunca se aplica desde
+  el lifespan de FastAPI.
+- QA PostgreSQL real aislado: DDL, atomicidad/rollback, claims/fencing,
+  exclusión de relays y DLQ idempotente validados. La aceptación manual de
+  Fase 8 sigue pendiente.
+- Fase 7R: 21 POST reales con worker detenido devolvieron 202 y persistieron
+  run+tarea+outbox; las 20 mediciones precalentadas quedaron entre 46.549 y
+  99.325 ms (p95/p99 99.325 ms) y la primera aceptación midió 85.610 ms.
+- E2E dual-engine desechable: el caso positivo terminó `SUCCESS/succeeded`,
+  publicó un KPI y mantuvo un solo run; el caso de calidad terminó
+  `SUCCESS/blocked_quality`, `published=false`, un intento y sin DLQ.
+- Corrección Fase 7R: el cruce preflight→Prefect ahora exige claim no expirado;
+  el reconciliador sólo repara desde historial empresarial terminal cuando el
+  claim también expiró, evitando competir con un worker vivo.
+- Crashes QA: publicación incierta recuperada con el mismo `task_id`, dos
+  entregas y una sola ejecución; crash preflight recuperado en epoch 2; crash
+  tras `prefect_started` quedó `reconciliation_required` sin reejecución.
+- La ejecución positiva fría midió 71.106 s. El worker Compose exige ahora
+  `TRACKFLOW_WORKER_SHUTDOWN_GRACE_SECONDS`; QA usó soft/hard/visibility/grace
+  120/180/240/180 s. Producción sigue pendiente de calibración propia.
+- Flower protegido devolvió 401 sin autenticación y mostró SUCCESS, FAILURE y
+  dos retries para tareas correlacionadas; la fila SQL DLQ confirmó el tercer
+  fallo total como `retries_exhausted`.
+- Regresión final: 63 tests DEV-55/PostgreSQL, 167 de Prefect/DEV-53 y 704
+  globales (29 opt-in skipped, un CORS histórico deselected) pasaron. La suite
+  completa conserva un error de colección ajeno en `test_inventory_client_ids`
+  bajo el intérprete host y el CORS ya presente en `8bf7fda`.
+- Fase 8 y aceptación humana siguen pendientes; no se creó commit.

@@ -4,6 +4,7 @@
 # Build context must be the repository root so that both
 #   services/   (FastAPI application code)
 #   scripts/    (incident-analysis package)
+#   pipelines/  (reporting validation and shared pipeline contracts)
 # are available inside the image.
 #
 # Build:
@@ -38,6 +39,7 @@ RUN uv pip install --system --no-cache -r /app/services/api/requirements.txt
 #   scripts/    — Incident-analysis package (imported by services.api.main)
 COPY services/ /app/services/
 COPY scripts/ /app/scripts/
+COPY pipelines/ /app/pipelines/
 
 # ── Runtime configuration ───────────────────────────────────────────────────
 EXPOSE 8000

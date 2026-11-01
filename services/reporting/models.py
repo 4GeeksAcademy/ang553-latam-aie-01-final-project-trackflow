@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
@@ -55,7 +56,27 @@ class PipelineRunRequest(BaseModel):
 
 
 class PipelineRunAcceptedResponse(BaseModel):
+    task_id: UUID
     run_id: UUID
     week_start: date
-    status: str = "accepted"
-    published: bool = False
+    status: Literal["pending"] = "pending"
+    status_url: str
+
+
+class AsyncTaskResponse(BaseModel):
+    task_id: UUID
+    run_id: UUID
+    task_name: str
+    week_start: date
+    status: Literal["pending", "started", "success", "failure"]
+    celery_state: str | None
+    execution_state: str
+    dispatch_status: str
+    pipeline_status: str | None
+    attempt_count: int
+    result: dict[str, Any] | None
+    error_code: str | None
+    error_message: str | None
+    published: bool | None
+    created_at: datetime
+    updated_at: datetime

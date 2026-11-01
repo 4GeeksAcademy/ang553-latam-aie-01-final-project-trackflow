@@ -19,13 +19,15 @@ dependencies = [
     "psycopg2-binary>=2.9.10,<3.0.0",
     "pandas>=2.2.0,<3.0.0",
     "prefect>=3.0.0,<4.0.0",
+    "celery[redis]>=5.5.0,<6.0.0",
+    "flower>=2.0.1,<3.0.0",
 ]
 
 [project.scripts]
 seed = "services.api.seed:main"
 
 [tool.setuptools.packages.find]
-include = ["services.api*", "services.telemetry*", "services.job_runner*", "pipelines*"]
+include = ["services.api*", "services.telemetry*", "services.job_runner*", "services.task_queue*", "pipelines*"]
 namespaces = true
 
 [dependency-groups]

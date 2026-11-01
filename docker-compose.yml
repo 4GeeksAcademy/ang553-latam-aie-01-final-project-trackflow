@@ -41,6 +41,10 @@ services:
       - "8000:8000"
     env_file:
       - .env
+    environment:
+      # Configuration is coherent with the relay/worker. The API persists to
+      # PostgreSQL/outbox and does not contact Redis before returning 202.
+      - REDIS_URL=redis://redis:6379/0
     networks:
       - trackflow-dev
     volumes:
@@ -64,6 +68,144 @@ services:
     volumes:
       - telemetry-raw:/app/data/raw
 
+  # ── Async task infrastructure (DEV-55 Block A, opt-in) ────────────────────
+  redis:
+    profiles:
+      - async-tasks
+    image: redis:7.4.1-alpine
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory-policy
+      - noeviction
+    ports:
+      - "127.0.0.1:6379:6379"
+    networks:
+      - trackflow-dev
+    volumes:
+      - celery-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  celery-worker:
+    profiles:
+      - async-tasks
+    build:
+      context: .
+      dockerfile: services/task_queue/Dockerfile
+    command:
+      - /bin/sh
+      - -ec
+      - >-
+        test -n "$$TRACKFLOW_TASK_SOFT_TIME_LIMIT_SECONDS" &&
+        test -n "$$TRACKFLOW_TASK_TIME_LIMIT_SECONDS" &&
+        test -n "$$TRACKFLOW_VISIBILITY_TIMEOUT_SECONDS" &&
+        test -n "$$TRACKFLOW_RESULT_EXPIRES_SECONDS" &&
+        test -n "$$TRACKFLOW_TASK_CLAIM_LEASE_SECONDS" &&
+        test -n "$$TRACKFLOW_TASK_HEARTBEAT_SECONDS" &&
+        test -n "$$TRACKFLOW_TASK_RETRY_MAX_BACKOFF_SECONDS" &&
+        test -n "$$TRACKFLOW_WORKER_SHUTDOWN_GRACE_SECONDS" &&
+        exec celery --app services.task_queue.celery_app:celery_app worker
+        --loglevel=INFO --events --hostname=trackflow-worker@%h
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - TRACKFLOW_TASK_SOFT_TIME_LIMIT_SECONDS=${TRACKFLOW_TASK_SOFT_TIME_LIMIT_SECONDS:-}
+      - TRACKFLOW_TASK_TIME_LIMIT_SECONDS=${TRACKFLOW_TASK_TIME_LIMIT_SECONDS:-}
+      - TRACKFLOW_VISIBILITY_TIMEOUT_SECONDS=${TRACKFLOW_VISIBILITY_TIMEOUT_SECONDS:-}
+      - TRACKFLOW_RESULT_EXPIRES_SECONDS=${TRACKFLOW_RESULT_EXPIRES_SECONDS:-}
+      - TRACKFLOW_TASK_CLAIM_LEASE_SECONDS=${TRACKFLOW_TASK_CLAIM_LEASE_SECONDS:-}
+      - TRACKFLOW_TASK_HEARTBEAT_SECONDS=${TRACKFLOW_TASK_HEARTBEAT_SECONDS:-}
+      - TRACKFLOW_TASK_RETRY_MAX_BACKOFF_SECONDS=${TRACKFLOW_TASK_RETRY_MAX_BACKOFF_SECONDS:-}
+      - TRACKFLOW_WORKER_SHUTDOWN_GRACE_SECONDS=${TRACKFLOW_WORKER_SHUTDOWN_GRACE_SECONDS:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - trackflow-dev
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - celery --app services.task_queue.celery_app:celery_app inspect ping --destination "trackflow-worker@$$HOSTNAME" --timeout 5 | grep -q pong
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    # The worker refuses to start when this value is absent. The 30-second
+    # interpolation fallback keeps ordinary profile-free Compose parsing valid;
+    # it is not an approved async-worker runtime default.
+    stop_grace_period: ${TRACKFLOW_WORKER_SHUTDOWN_GRACE_SECONDS:-30}s
+
+  task-relay:
+    profiles:
+      - async-tasks
+    build:
+      context: .
+      dockerfile: services/task_queue/Dockerfile
+    command:
+      - python
+      - -m
+      - services.task_queue.relay
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - TRACKFLOW_RELAY_POLL_SECONDS=${TRACKFLOW_RELAY_POLL_SECONDS:-}
+      - TRACKFLOW_RELAY_LEASE_SECONDS=${TRACKFLOW_RELAY_LEASE_SECONDS:-}
+      - TRACKFLOW_RELAY_MAX_BACKOFF_SECONDS=${TRACKFLOW_RELAY_MAX_BACKOFF_SECONDS:-}
+      - TRACKFLOW_RELAY_MAX_PUBLISH_ATTEMPTS=${TRACKFLOW_RELAY_MAX_PUBLISH_ATTEMPTS:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - trackflow-dev
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  flower:
+    profiles:
+      - async-tasks
+    build:
+      context: .
+      dockerfile: services/task_queue/Dockerfile
+    command:
+      - /bin/sh
+      - -ec
+      - >-
+        test -n "$$FLOWER_BASIC_AUTH" &&
+        exec celery --app services.task_queue.celery_app:celery_app flower
+        --port=5555 --address=0.0.0.0
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - FLOWER_BASIC_AUTH=${FLOWER_BASIC_AUTH:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+      celery-worker:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:5555:5555"
+    networks:
+      - trackflow-dev
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import socket; socket.create_connection(('127.0.0.1', 5555), 3).close()
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
 networks:
   trackflow-dev:
     driver: bridge
@@ -72,3 +214,4 @@ volumes:
   website-node-modules:
   backoffice-node-modules:
   telemetry-raw:
+  celery-redis-data:

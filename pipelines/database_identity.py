@@ -8,6 +8,13 @@ from typing import Any
 from sqlalchemy import text
 
 
+def sqlalchemy_postgresql_url(url: str) -> str:
+    """Select the installed psycopg2 driver without parsing or exposing secrets."""
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg2://" + url[len("postgresql://") :]
+    return url
+
+
 class DatabaseIsolationError(RuntimeError):
     """Safe failure raised when source/reporting isolation cannot be proven."""
 

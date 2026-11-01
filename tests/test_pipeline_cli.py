@@ -170,8 +170,8 @@ def test_cli_optional_source_builds_distinct_dual_engine_runtime(monkeypatch, tm
     assert configured.engine is engines[1][1]
     assert configured.source_engine is engines[0][1]
     assert [url for url, _engine in engines] == [
-        "postgresql://source.invalid/db",
-        "postgresql://reporting.invalid/db",
+        "postgresql+psycopg2://source.invalid/db",
+        "postgresql+psycopg2://reporting.invalid/db",
     ]
     assert configured.coverage.source == "operational_checkpoints"
     assert configured.coverage.lookup_complete is False
