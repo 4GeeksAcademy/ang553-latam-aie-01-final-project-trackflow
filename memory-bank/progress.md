@@ -38,6 +38,105 @@
   posteriores. Una terminación abrupta todavía puede dejar `processing` y no
   existe takeover automático.
 
+## DEV-53 — Fases 2-4: export nocturno, scheduler y QA automatizado
+
+- Implementado `scripts/nightly_export.py`: fecha objetivo estricta o ayer UTC,
+  adquisición mediante `services.job_runner`, export de `telemetry_events` en
+  intervalo UTC semiabierto y ejecución exacta de
+  `python -m pipelines.pipeline` sin `--week-start`.
+- Los CSV se publican sin overwrite mediante temporal en el mismo filesystem,
+  `flush`, `fsync`, cierre y hard link. Un archivo existente se valida y
+  reutiliza; uno corrupto bloquea la ejecución sin reemplazo.
+- Los códigos no cero del pipeline producen `failed`; el código 4 se describe
+  como resultado incierto. Las interrupciones controlables terminan y esperan
+  al hijo antes de liberar propiedad. El stdout/stderr del pipeline se hereda
+  para conservar diagnóstico seguro en logs del contenedor.
+- Añadido scheduler independiente de FastAPI con Supercronic, cron único
+  `15 0 * * *` UTC, usuario no root y volumen persistente en `/app/data/raw`.
+  No ejecuta el job al arrancar ni desde un healthcheck.
+- La imagen instala exactamente `uv.lock` con `uv sync --frozen --no-dev`.
+  Prefect se ejecuta sin UI y con timeout de arranque efímero de 120 segundos;
+  esto corrige el timeout observado con el default de 20 segundos dentro de la
+  imagen non-root.
+- La corrección pre-commit endurece la ventana de creación y la terminación del
+  subprocess: bloquea temporalmente `SIGINT`/`SIGTERM`, inicia una sesión POSIX,
+  espera el grupo completo de Prefect incluso si el padre ya terminó y tolera
+  interrupciones repetidas durante cleanup. La ventana pos-`wait()` también
+  queda dentro del mismo guard: una interrupción antes o durante la consulta del
+  grupo activa cleanup, y si no puede confirmarlo conserva `processing` en vez
+  de ejecutar el CAS a `failed`.
+- El servicio Compose `scheduler` es opt-in mediante el perfil `scheduler`.
+  `docker compose config --services` lista solo `api` e `interfaces`; con
+  `--profile scheduler` añade `scheduler`. El runbook manual documenta revisión
+  por UUID exacto, procesos, logs, CSV y commit incierto antes de un CAS
+  `processing`→`failed` y un único reintento.
+- QA unitario/estático final focalizado: **103 PASS** en nightly export,
+  infraestructura scheduler, job runner y CLI del pipeline. Build de
+  `trackflow-nightly-scheduler:dev53-qa`: **PASS**.
+- E2E real one-shot sobre dos bases PostgreSQL desechables distintas, el
+  contenedor autorizado y un volumen QA exclusivo: **1 PASS**. Acreditó éxito,
+  CSV, pipeline, estado `completed`, repetición idempotente, fallo controlado,
+  historial `failed`, reintento con reutilización del CSV y concurrencia del
+  job runner. El volumen y los contenedores QA fueron limpiados. Posteriormente,
+  el orquestador verificó en ambas bases propietario `trackflow_test`, cero
+  conexiones y cero tablas; las eliminó y confirmó cero coincidencias restantes.
+- Gate POSIX posterior al endurecimiento: imagen QA reconstruida **PASS**; probe
+  Linux con un padre y descendiente reales **PASS** bajo un init reaper
+  (`parent_exit=-15`, grupo inexistente tras cleanup). Sin reaper, un huérfano
+  zombie queda correctamente como cleanup no confirmado, sin prometer una
+  transición terminal. El E2E one-shot completo se repitió con la imagen nueva:
+  **1 PASS en 135.42 s**. El test eliminó sus contenedores, objetos y volumen;
+  después se verificaron cero conexiones/cero tablas, se eliminaron las dos
+  bases QA exactas y se confirmó cero coincidencias.
+- Probe Linux específico de la carrera pos-`wait()`: un padre real retornó 0
+  dejando un descendiente activo; `run_pipeline` limpió el grupo y confirmó
+  `group_exists_after_run_pipeline=False`. No se repitió el E2E completo porque
+  la corrección sólo amplía el manejo de interrupciones antes de la comprobación
+  existente y el camino normal ya había sido acreditado con la misma lógica de
+  cleanup.
+- La aceptación humana/operativa del scheduler y del artefacto final continúa
+  pendiente. `SIGKILL`, caída del host o pérdida de energía aún pueden dejar
+  `processing`; no existe lease, expiración ni takeover automático.
+
+## DEV-53 — primera ejecución real y corrección post-ejecución
+
+- La primera ejecución supervisada para `TARGET_DATE=2026-10-25`, job
+  `3ede5c14-d4a0-48d7-a9ec-b3533b5e63e5`, publicó y preserva un CSV válido de
+  6 filas. El subprocess semanal alcanzó Prefect y terminó `blocked_quality`;
+  por contrato, el `job_run` nocturno terminó `failed`. Durante esta ejecución
+  se observaron errores de serialización Prefect asociados a `Engine`/`RLock`.
+- La evidencia persistida confirma `records_processed=0`,
+  `aggregates_calculated=0`, `commit_result=not_attempted`,
+  `block_reason=empty_batch_not_certified` y el diagnóstico adicional
+  `coverage_insufficient`. No se publicaron KPI.
+- El bloqueo es legítimo: los movimientos históricos preceden los contratos de
+  orden, checkpoint y outbox, y reporting no recibió telemetría canónica para
+  esa semana. No se fabricó evidencia ni se relajó el quality gate.
+- Corregido el ruido de caché de Prefect: las tasks que reciben engines/runtime
+  o realizan efectos usan `NO_CACHE`; la transformación pura conserva su clave
+  determinista y expiración de una hora.
+- La recuperación tras un intento `failed` no requirió cambio productivo: un
+  nuevo intento adquiere otra fila, valida y reutiliza el CSV inmutable y vuelve
+  a ejecutar el pipeline. `completed` se omite; `processing` incierto continúa
+  requiriendo reconciliación manual.
+- QA post-ejecución: 178 unitarias de pipeline PASS (3 skips de escenarios
+  opcionales), 72 pruebas de nightly/job runner PASS (9 integraciones opt-in
+  omitidas sin sus URLs), 7 integraciones de publicación PostgreSQL PASS y 4
+  integraciones del pipeline dual/outbox PASS en un contenedor tmpfs nuevo y
+  desechable, eliminado al terminar.
+- La segunda ejecución real autorizada, job
+  `0c571877-0cca-42ad-ae3d-6b44e7a2a130`, reutilizó el CSV existente con su
+  SHA-256 sin cambios y no reprodujo los errores `Engine`/`RLock`. El pipeline
+  volvió a `blocked_quality` por cobertura histórica insuficiente y no produjo
+  publicación KPI productiva.
+- Validación final Linux posterior a `NO_CACHE`: imagen scheduler construida con
+  el código actual y E2E one-shot **1 PASS en 204.78 s** sobre dos bases nuevas
+  en PostgreSQL `tmpfs` y un volumen CSV exclusivo. Acreditó publicación
+  positiva, `skipped_completed`, fallo controlado, recuperación con CSV
+  idéntico, exclusión concurrente y ausencia de los diagnósticos de
+  serialización `Engine`/`RLock`. Supercronic validó el cron `15 0 * * *`, la
+  imagen ejecutó como `10001:10001` y todos los recursos E2E fueron eliminados.
+
 ## Parte 3 — subflows, tests unitarios y dashboard de negocio
 
 - Pipeline semanal refactorizado en subflows Prefect de extracción, cálculo por

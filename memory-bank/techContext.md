@@ -36,6 +36,69 @@
   energía pueden dejar un registro `processing`; su reconciliación seguirá
   siendo manual y no se infiere por antigüedad.
 
+## DEV-53 — runtime nocturno y scheduler
+
+- El entry point soportado es `python -m scripts.nightly_export`; la ejecución
+  directa por ruta de archivo no forma parte del contrato.
+- `DATABASE_URL` debe usar `postgresql` o `postgresql+psycopg2` y se valida
+  antes de crear engine o adquirir un job. `TARGET_DATE` acepta únicamente
+  `YYYY-MM-DD`; sin valor usa ayer en UTC.
+- El export contiene `id,timestamp,service,event_type,level,value,message,tags`,
+  usa `[día, día+1)` y `ORDER BY timestamp,id`. Fechas, decimales y cualquier
+  JSONB serializable —incluidos `NULL` y arrays— tienen representación estable.
+- La publicación final usa hard link atómico y nunca reemplaza un destino. El
+  CSV completo se conserva si el pipeline falla y puede reutilizarse en el
+  reintento después de validarlo.
+- El subprocess aprobado es exactamente el intérprete actual con
+  `-m pipelines.pipeline`; no recibe `--week-start`. Hereda stdout/stderr del
+  contenedor y usa stdin cerrado. Sólo código cero permite `completed`.
+- En Linux el launcher crea una sesión POSIX y protege con una máscara temporal
+  de `SIGINT`/`SIGTERM` las ventanas de `Popen` y cleanup. El hook pre-exec se
+  limita a desbloquear esas señales en el hijo del scheduler; no ejecuta lógica
+  de aplicación. Tras cualquier retorno del padre se confirma que el grupo ya
+  no exista. Cleanup no confirmado produce un error explícito, mantiene el
+  claim en `processing` y requiere el runbook manual; no se infiere seguridad
+  ante `SIGKILL`, pérdida del host o energía.
+- El guard de `run_pipeline` abarca desde la referencia válida de `Popen` hasta
+  la confirmación pos-`wait()` del grupo. `KeyboardInterrupt` o
+  `ControlledInterruption` antes o durante esa comprobación ejecutan cleanup
+  una vez; tras confirmar la ausencia del grupo no se repite cleanup ni se
+  vuelve a señalizar un PID potencialmente reutilizado.
+- La confirmación POSIX considera que un grupo con zombies aún existe. Esto es
+  deliberadamente conservador: un runtime sin reaper exige reconciliación
+  manual. El scheduler mantiene a Supercronic como PID 1, y el E2E real del
+  pipeline Prefect en la imagen confirmó que el camino normal no deja un grupo
+  residual; el probe adversarial acreditó cleanup completo con un init reaper.
+- El scheduler vive en `infra/scheduler/`, es independiente de FastAPI y usa
+  Supercronic con `15 0 * * *` UTC. Compose monta el volumen nombrado
+  `telemetry-raw` en `/app/data/raw` y no declara dependencia de arranque con
+  `api`. El servicio pertenece al perfil opt-in `scheduler`; el stack normal no
+  lo activa.
+- La imagen usa Python 3.12, usuario `10001:10001`, `uv 0.12.5` y
+  `uv sync --frozen --no-dev`. El `PATH` prioriza `/app/.venv/bin`.
+  `services/api/data` se excluye del contenido mutable, se recrea vacío y
+  escribible para imports TinyDB non-root.
+- Prefect no sirve UI en el scheduler y permite 120 segundos para iniciar su
+  API efímera. El default de 20 segundos fue insuficiente en Docker aunque el
+  flow era correcto.
+- Las suites mutables nunca reutilizan automáticamente `DATABASE_URL`. Usan
+  URLs dedicadas, verifican loopback, `tmpfs`, contenedor exacto, identidad de
+  base y separación por OID antes de escribir.
+- En Prefect 3, la política de caché por defecto intenta serializar parámetros.
+  Las tasks que reciben `Engine`/`PipelineRuntime` o realizan efectos
+  persistentes declaran `NO_CACHE`, evitando serializar pools y `RLock`. La task
+  pura de transformación conserva la caché de una hora con clave basada en
+  semana, extracción, fingerprint y versión de reglas.
+- Un intento nocturno `failed` no conserva el claim parcial de fecha. El
+  siguiente intento crea una fila nueva, valida el CSV existente antes de
+  reutilizarlo y no vuelve a consultar telemetría ni reemplaza el archivo.
+  `completed` sigue siendo idempotente y `processing` no se recupera
+  automáticamente.
+- El E2E del scheduler exige por variables explícitas una imagen, contenedor
+  PostgreSQL y volumen con nombres QA nuevos y acotados; rechaza los dos
+  contenedores históricos preservados. Cada one-shot también falla si aparecen
+  los mensajes de serialización de `Engine` o `_thread.RLock`.
+
 ## Stack tecnologico confirmado
 
 - TypeScript esta presente en la raiz del monorepo y en las aplicaciones principales.
