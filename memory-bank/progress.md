@@ -1,5 +1,45 @@
 # Progress: TrackFlow
 
+## DEV-55 — Bloque A: Celery, Redis, Flower y tarea empresarial
+
+- Fases 2–4 implementadas en `feature/dev-55-async-tasks` sin modificar el
+  pipeline Prefect existente ni el endpoint HTTP de reporting.
+- Añadido `services/task_queue/` con una aplicación Celery central, Redis como
+  broker y backend, serialización exclusivamente JSON, estados `STARTED`,
+  eventos, ACK tardío, rechazo ante pérdida del worker y prefetch 1.
+- `trackflow.run_weekly_pipeline` recibe únicamente `task_id` implícito,
+  `run_id` y `week_start`, reconstruye el runtime CLI en el worker y reutiliza
+  `pipelines.pipeline.run_weekly_pipeline`. El resultado conserva estado y
+  contadores empresariales; los fallos expuestos por Celery usan un diagnóstico
+  acotado sin copiar mensajes potencialmente sensibles.
+- Docker Compose incorpora el perfil opt-in `async-tasks`: Redis 7.4.1 con
+  AOF, `noeviction`, volumen y healthcheck; worker separado de FastAPI; y
+  Flower en loopback:5555 con soporte de autenticación. El perfil `scheduler`
+  de DEV-53 permanece independiente.
+- QA focalizado final de tarea, seguridad Docker, Prefect y DEV-53:
+  **106 PASS** (incluye **10 PASS** de `test_task_queue.py`). Suite restante:
+  **667 PASS, 24 SKIP, 1 FAIL** heredado del baseline `35e695f` en el contrato
+  CORS de `test_inventory_auth.py`: el código, el test y las versiones
+  FastAPI/Starlette relevantes no cambian en el diff DEV-55. El commit base no
+  se ejecutó en un checkout separado. La colección global además continúa
+  bloqueada por la carga dinámica de `test_inventory_client_ids.py`; ocurre
+  tanto con Python 3.12 como 3.13.
+- QA Docker real: Redis, worker y Flower alcanzaron `healthy`; se verificaron
+  `noeviction`, AOF activo, worker conectado, tarea registrada, eventos
+  habilitados y recuperación de un resultado `FAILURE` seguro desde Redis. La
+  API Flower respondió 401 sin credenciales, confirmando su protección; no se
+  accedió al secreto. Los servicios QA quedaron detenidos, sin borrar el
+  volumen ni los contenedores.
+- Pendiente para Bloque B: adaptación del POST, GET de tareas, registro
+  PostgreSQL, outbox/relay, claims/fencing, retries definitivos, DLQ y
+  reconciliación. Compose deberá proporcionar al servicio `api` el mismo
+  `REDIS_URL` interno del worker sin activar Redis en el perfil ordinario. La
+  tarea empresarial no se ejecutó contra datos persistentes.
+
+> Las subsecciones DEV-53 siguientes preservan la cronología del desarrollo.
+> Frases como "DEV-53 continúa incompleto" describen aquel corte histórico y
+> no sustituyen el estado final documentado en las secciones DEV-53 posteriores.
+
 ## DEV-53 — Fase 1/1R/1S: persistencia y control de estados
 
 - Implementado el DDL explícito de `job_runs` para PostgreSQL con estados

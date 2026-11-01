@@ -24,7 +24,25 @@ env/
 # ── Environment files (sensitive) ──────────────────────────────────────────
 .env
 .env.*
-!.env.example
+env.example
+
+# ── Local databases and runtime-owned service data ─────────────────────────
+services/api/data/
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+
+# ── Local certificates and private keys ─────────────────────────────────────
+*.key
+*.pem
+*.p12
+*.pfx
+
+# ── Generated/raw business artifacts not required by backend images ────────
+data/raw/*
+!data/raw/README.md
+!data/raw/README.es.md
 
 # ── Node / frontend artefacts (not needed by backend build) ─────────────────
 node_modules/
@@ -53,5 +71,5 @@ Thumbs.db
 # Ignore the UI directory — not needed by backend build
 uis/
 
-# Ignore other service Dockerfiles (only services/Dockerfile matters for this)
+# Ignore nested Docker context rules; service Dockerfiles remain explicit inputs.
 services/.dockerignore
