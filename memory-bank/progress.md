@@ -1,5 +1,36 @@
 # Progress: TrackFlow
 
+## Predicción mensual de ventas — implementación técnica
+
+- Implementación independiente añadida en `pipelines/sales_forecast.py`; el
+  pipeline semanal `pipelines/pipeline.py` permanece intacto.
+- Dataset canónico validado en `pipelines/raw/trackflow_sales.csv`: 120 meses,
+  mercado consolidado y SHA-256
+  `2B8C782EFE182AA001DB8044689E3D65E98B2CC17649B598CEDB665E7D2F4C33`.
+- Split cronológico fijo: 96 meses originales de entrenamiento (2016-2023),
+  24 de prueba (2024-2025) y 84 ejemplos efectivos tras 12 meses de historial.
+- `RandomForestRegressor` determinista y pronóstico recursivo de 24 meses sin
+  targets futuros; baseline estacional causal y banda descriptiva calibrada
+  únicamente mediante backtests temporales internos a 2016-2023.
+- Métricas y artefactos reales generados en `artifacts/sales_forecast/`.
+  Random Forest: MSE `18473941158.679684` EUR², RMSE `135918.87712411283` EUR,
+  RMSE% `10.462758562757822`; el baseline estacional obtuvo menor RMSE
+  (`123915.51155718694` EUR), limitación conservada explícitamente.
+- PSI, Gini y K² se implementaron como interpretaciones operativas documentadas
+  pendientes de validación académica.
+- Correctivo R1 completado: validación de finitos, unidades enteras y coherencia
+  de ingreso medio; ejecución segura con CSV externo sin exponer rutas; prueba
+  E2E anti-fuga con dos targets de prueba distintos; diagnósticos anuales, bias,
+  mayores errores y cobertura; evidencia reproducible de bins PSI y backtests.
+- La banda descriptiva cubrió 15/24 meses (62.5%). El bias RF
+  `actual - prediction` fue `-39605.41` EUR; RMSE anual: `114073.19` EUR en
+  2024 y `154710.02` EUR en 2025. Mayor error absoluto: `313912.40` EUR en
+  noviembre de 2025.
+- Suite focalizada: 29 pruebas PASS. Incluye split, contratos de datos,
+  causalidad de features, anti-fuga unitaria y E2E, reproducibilidad, métricas,
+  diagnósticos y consistencia cruzada de artefactos.
+- No se realizaron commit, staging, push, merge ni PR.
+
 ## DEV-55 — Bloque A: Celery, Redis, Flower y tarea empresarial
 
 - Fases 2–4 implementadas en `feature/dev-55-async-tasks` sin modificar el
