@@ -1,5 +1,37 @@
 # Progress: TrackFlow
 
+## Evaluación temporal del modelo de regresión — Correctivo R1 completado
+
+- Evaluación independiente implementada bajo `pipelines/eval/`; reutiliza el
+  Random Forest y las funciones causales existentes sin modificar
+  `pipelines/sales_forecast.py` ni el pipeline semanal.
+- Cinco folds expansivos exactos sobre 2016–2023, cada uno con 12 meses de
+  validación recursiva; 2024–2025 permanece excluido de selección y diagnóstico.
+- MAE de validación: `EUR 83,868.01 ± EUR 11,164.85`; RMSE de validación:
+  `EUR 97,859.15 ± EUR 9,522.25` (desviación estándar muestral entre folds).
+- Baseline estacional: MAE `EUR 70,918.54 ± EUR 29,456.80` y RMSE
+  `EUR 81,102.93 ± EUR 28,129.30`. El modelo mejora el MAE en 3/5 folds,
+  pero su MAE medio es 18.26% mayor que el baseline.
+- Correctivo R1: curva principal reconstruida con validación fija en 2023 y
+  cinco ventanas recientes y continuas de 36/48/60/72/84 meses, todas cerradas
+  en diciembre de 2022. La ventana mayor obtuvo el mejor MAE fijo
+  (`EUR 98,484.94`), 8.98% menor que la ventana de 36 meses; la relación no es
+  monotónica (`r=-0.272`) y las cinco ventanas superan el MAE del baseline 2023.
+- Diagnóstico principal conservado como overfitting, ahora sustentado por la
+  brecha persistente bajo validación fija y contrastado con la estabilidad
+  temporal. La evidencia es mixta y no separa sobreajuste, recursividad,
+  estacionalidad ni extrapolación. Mayor regularización queda solo como
+  experimento correctivo no garantizado; no se modificó el modelo.
+- La cifra contextual aproximada de EUR 9 millones anuales está respaldada por
+  `CONTEXT.md` y `projectbrief.md`, pero sin periodo. No se reconcilia con el
+  CSV, que suma EUR 9,384,261.30 en 2016 y EUR 14,418,668.57 en 2023.
+- Artefactos reproducibles: `fold_metrics.json`, `learning_curve.png` y
+  `evaluation_report.md`; entry point `scripts/evaluate_sales_forecast.py`.
+- QA R1: compilación pertinente PASS; 11 pruebas focalizadas PASS; regresión
+  combinada de forecasting 40 PASS; ejecución real del script PASS.
+- Pendiente: aceptación humana y académica; la ruta autorizada
+  `pipelines/eval/` no acredita aceptación de la ruta académica alternativa.
+
 ## Predicción mensual de ventas — implementación técnica
 
 - Implementación independiente añadida en `pipelines/sales_forecast.py`; el
