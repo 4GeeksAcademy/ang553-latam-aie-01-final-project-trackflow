@@ -36,3 +36,18 @@ attempted.
 Abrupt termination such as `SIGKILL`, host failure, or power loss cannot run
 cleanup and may leave a `processing` job. Fase 2 deliberately provides no lease,
 expiry, or automatic takeover; manual reconciliation remains required.
+
+## Sales forecasting experiment
+
+From the repository root run:
+
+```powershell
+uv run python scripts/train_sales_forecast.py
+```
+
+The script resolves the repository and canonical CSV independently of the
+caller's working directory. It validates the data, trains the Random Forest,
+produces a leakage-safe recursive forecast for 2024-2025, compares it with the
+seasonal baseline, and regenerates the documented files in
+`artifacts/sales_forecast/`. Dependencies come from
+`pyproject.toml`/`uv.lock`; do not use `pip install`.

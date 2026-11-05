@@ -132,3 +132,33 @@ The active implementation is exclusively `pipelines/pipeline.py`; no wrapper or
 copy exists under `data/`. This differs from the historical path in A1. Formal
 evaluator acceptance of the active path and command remains pending under
 RQ-15.
+
+## Monthly consolidated revenue forecast
+
+`pipelines/sales_forecast.py` is an independent, reusable forecasting module;
+it does not import or alter the weekly Prefect pipeline above. It validates the
+canonical dataset at `pipelines/raw/trackflow_sales.csv`, uses the fixed
+2016-2023/2024-2025 chronological split, and recursively generates all 24 test
+predictions from the December 2023 origin. Contemporary shipment and average
+revenue fields are validation-only because together they reveal the target.
+
+The model is a deterministic `RandomForestRegressor` (`random_state=42`) using
+calendar features, causal revenue lags, and shifted historical rolling
+statistics. A same-month-prior-year recursive forecast is reported as the
+baseline. The variability band uses empirical 10th/90th percentiles of errors
+from recursive temporal backtests wholly inside 2016-2023; it is descriptive,
+not a calibrated probabilistic interval.
+
+The calibration origins are December 2020, December 2021 and December 2022,
+with horizons of 24, 24 and 12 months. Their overlapping windows produce 60
+errors over 36 unique target months. Backtest fits use 150 trees while the final
+fixed model uses 300. `metrics.json` records these origins, model sizes, PSI bin
+edges/counts, yearly errors, mean bias, largest absolute errors and observed
+band coverage so each diagnostic can be reproduced from the predictions CSV.
+PSI is computed only on consolidated monthly revenue; it must not be read as a
+comparison between countries or TrackFlow warehouses.
+
+The academic location `data/raw/trackflow_sales.csv` is intentionally not used:
+the user-authorized canonical path for this milestone is the existing
+`pipelines/raw/trackflow_sales.csv`. This repository exception is not evidence
+of academic approval.

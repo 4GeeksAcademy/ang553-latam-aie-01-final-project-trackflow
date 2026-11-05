@@ -1,0 +1,294 @@
+{
+  "dataset": {
+    "path": "pipelines/raw/trackflow_sales.csv",
+    "sha256": "2B8C782EFE182AA001DB8044689E3D65E98B2CC17649B598CEDB665E7D2F4C33",
+    "rows": 120,
+    "market": "consolidated"
+  },
+  "split": {
+    "training_original_rows": 96,
+    "test_rows": 24,
+    "training_effective_rows": 84
+  },
+  "model": {
+    "algorithm": "RandomForestRegressor",
+    "bootstrap": true,
+    "ccp_alpha": 0.0,
+    "criterion": "squared_error",
+    "max_depth": 6,
+    "max_features": 0.8,
+    "max_leaf_nodes": null,
+    "max_samples": null,
+    "min_impurity_decrease": 0.0,
+    "min_samples_leaf": 2,
+    "min_samples_split": 2,
+    "min_weight_fraction_leaf": 0.0,
+    "monotonic_cst": null,
+    "n_estimators": 300,
+    "n_jobs": 1,
+    "oob_score": false,
+    "random_state": 42,
+    "verbose": 0,
+    "warm_start": false
+  },
+  "features": [
+    "month_sin",
+    "month_cos",
+    "is_november",
+    "is_december",
+    "is_february",
+    "time_index",
+    "revenue_lag_1",
+    "revenue_lag_2",
+    "revenue_lag_3",
+    "revenue_lag_6",
+    "revenue_lag_12",
+    "revenue_mean_3",
+    "revenue_std_3",
+    "revenue_mean_6",
+    "revenue_std_6",
+    "revenue_mean_12",
+    "revenue_std_12"
+  ],
+  "forecast": {
+    "method": "recursive_24_month",
+    "origin": "2023-12-31",
+    "uses_test_targets": false
+  },
+  "variability_band": {
+    "type": "descriptive empirical 10th-90th error quantiles",
+    "calibration_scope": "temporal recursive backtests within 2016-2023 only",
+    "backtest_error_count": 60,
+    "lower_error_quantile_eur": -123414.91922587917,
+    "upper_error_quantile_eur": 154712.57699734528,
+    "probabilistic_coverage_guaranteed": false,
+    "backtest_origins": [
+      {
+        "origin": "2020-12-01",
+        "forecast_start": "2021-01-01",
+        "forecast_end": "2022-12-01",
+        "error_count": 24
+      },
+      {
+        "origin": "2021-12-01",
+        "forecast_start": "2022-01-01",
+        "forecast_end": "2023-12-01",
+        "error_count": 24
+      },
+      {
+        "origin": "2022-12-01",
+        "forecast_start": "2023-01-01",
+        "forecast_end": "2023-12-01",
+        "error_count": 12
+      }
+    ],
+    "unique_target_month_count": 36,
+    "windows_overlap": true,
+    "backtest_n_estimators": 150,
+    "final_model_n_estimators": 300
+  },
+  "metrics": {
+    "random_forest": {
+      "mse_eur2": 18473941158.679684,
+      "rmse_eur": 135918.87712411283,
+      "rmse_percent_mean_actual": 10.462758562757822,
+      "mae_eur": 116124.08998179017,
+      "psi_train_vs_test_revenue": 10.516107754916565,
+      "normalized_gini": 0.907567614443065,
+      "k2_residuals": 12.536008939579379,
+      "k2_pvalue": 0.0018960083525802326
+    },
+    "seasonal_baseline": {
+      "mse_eur2": 15355054004.47933,
+      "rmse_eur": 123915.51155718694,
+      "rmse_percent_mean_actual": 9.538763908559886,
+      "mae_eur": 103201.42250000003,
+      "psi_train_vs_test_revenue": 10.516107754916565,
+      "normalized_gini": 0.7274194585063986,
+      "k2_residuals": 0.47468203316472785,
+      "k2_pvalue": 0.78872227477665
+    },
+    "definitions_status": {
+      "mse": "contractually unambiguous",
+      "psi": "operational interpretation pending academic validation",
+      "gini": "operational interpretation pending academic validation",
+      "k2": "operational D'Agostino-Pearson interpretation pending academic validation"
+    }
+  },
+  "metric_details": {
+    "psi": {
+      "value": 10.516107754916565,
+      "requested_bin_count": 5,
+      "effective_bin_count": 5,
+      "bin_edges_eur": [
+        "-Infinity",
+        820461.65,
+        908619.88,
+        992241.88,
+        1110225.74,
+        "Infinity"
+      ],
+      "training_counts": [
+        19,
+        19,
+        19,
+        19,
+        20
+      ],
+      "test_counts": [
+        0,
+        0,
+        0,
+        1,
+        23
+      ],
+      "smoothing": 1e-06,
+      "reference": "training revenue_eur (2016-2023)",
+      "comparison": "test revenue_eur (2024-2025)"
+    }
+  },
+  "diagnostics": {
+    "random_forest": {
+      "overall": {
+        "count": 24,
+        "mse_eur2": 18473941158.679684,
+        "rmse_eur": 135918.87712411283,
+        "mae_eur": 116124.08998179017,
+        "mean_bias_actual_minus_prediction_eur": -39605.413292416655
+      },
+      "by_year": {
+        "2024": {
+          "count": 12,
+          "mse_eur2": 13012692026.98947,
+          "rmse_eur": 114073.18715188713,
+          "mae_eur": 102033.74130643498,
+          "mean_bias_actual_minus_prediction_eur": -47339.953304619274
+        },
+        "2025": {
+          "count": 12,
+          "mse_eur2": 23935190290.369904,
+          "rmse_eur": 154710.02000636514,
+          "mae_eur": 130214.43865714537,
+          "mean_bias_actual_minus_prediction_eur": -31870.87328021403
+        }
+      },
+      "largest_absolute_errors": [
+        {
+          "month": "2025-11-01",
+          "actual_revenue_eur": 1739132.01,
+          "prediction_eur": 1425219.6095478174,
+          "error_actual_minus_prediction_eur": 313912.4004521826,
+          "absolute_error_eur": 313912.4004521826
+        },
+        {
+          "month": "2025-12-01",
+          "actual_revenue_eur": 1700717.6,
+          "prediction_eur": 1424568.6081905947,
+          "error_actual_minus_prediction_eur": 276148.9918094054,
+          "absolute_error_eur": 276148.9918094054
+        },
+        {
+          "month": "2024-12-01",
+          "actual_revenue_eur": 1603521.02,
+          "prediction_eur": 1423371.033518928,
+          "error_actual_minus_prediction_eur": 180149.98648107192,
+          "absolute_error_eur": 180149.98648107192
+        },
+        {
+          "month": "2024-10-01",
+          "actual_revenue_eur": 1163583.17,
+          "prediction_eur": 1342192.201270753,
+          "error_actual_minus_prediction_eur": -178609.03127075313,
+          "absolute_error_eur": 178609.03127075313
+        },
+        {
+          "month": "2025-08-01",
+          "actual_revenue_eur": 1244265.94,
+          "prediction_eur": 1408344.2598322616,
+          "error_actual_minus_prediction_eur": -164078.31983226165,
+          "absolute_error_eur": 164078.31983226165
+        }
+      ]
+    },
+    "seasonal_baseline": {
+      "overall": {
+        "count": 24,
+        "mse_eur2": 15355054004.47933,
+        "rmse_eur": 123915.51155718694,
+        "mae_eur": 103201.42250000003,
+        "mean_bias_actual_minus_prediction_eur": 97517.33916666669
+      },
+      "by_year": {
+        "2024": {
+          "count": 12,
+          "mse_eur2": 4769232119.593501,
+          "rmse_eur": 69059.62727667665,
+          "mae_eur": 59349.72500000001,
+          "mean_bias_actual_minus_prediction_eur": 47981.55833333335
+        },
+        "2025": {
+          "count": 12,
+          "mse_eur2": 25940875889.365158,
+          "rmse_eur": 161061.71453627694,
+          "mae_eur": 147053.12000000002,
+          "mean_bias_actual_minus_prediction_eur": 147053.12000000002
+        }
+      },
+      "largest_absolute_errors": [
+        {
+          "month": "2025-11-01",
+          "actual_revenue_eur": 1739132.01,
+          "prediction_eur": 1468073.17,
+          "error_actual_minus_prediction_eur": 271058.8400000001,
+          "absolute_error_eur": 271058.8400000001
+        },
+        {
+          "month": "2025-03-01",
+          "actual_revenue_eur": 1359677.14,
+          "prediction_eur": 1153693.44,
+          "error_actual_minus_prediction_eur": 205983.69999999995,
+          "absolute_error_eur": 205983.69999999995
+        },
+        {
+          "month": "2025-12-01",
+          "actual_revenue_eur": 1700717.6,
+          "prediction_eur": 1494874.34,
+          "error_actual_minus_prediction_eur": 205843.26,
+          "absolute_error_eur": 205843.26
+        },
+        {
+          "month": "2025-01-01",
+          "actual_revenue_eur": 1306044.31,
+          "prediction_eur": 1123796.35,
+          "error_actual_minus_prediction_eur": 182247.95999999996,
+          "absolute_error_eur": 182247.95999999996
+        },
+        {
+          "month": "2025-02-01",
+          "actual_revenue_eur": 1158868.49,
+          "prediction_eur": 987056.79,
+          "error_actual_minus_prediction_eur": 171811.69999999995,
+          "absolute_error_eur": 171811.69999999995
+        }
+      ]
+    },
+    "variability_band": {
+      "count": 24,
+      "inside_count": 15,
+      "coverage_fraction": 0.625,
+      "by_year": {
+        "2024": {
+          "count": 12,
+          "inside_count": 8,
+          "coverage_fraction": 0.6666666666666666
+        },
+        "2025": {
+          "count": 12,
+          "inside_count": 7,
+          "coverage_fraction": 0.5833333333333334
+        }
+      },
+      "interpretation": "descriptive only; no probabilistic coverage guarantee"
+    }
+  }
+}
