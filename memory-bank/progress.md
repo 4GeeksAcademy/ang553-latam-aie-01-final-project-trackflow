@@ -978,3 +978,49 @@ revisión y autorización arquitectónica.
   the combined API/agent suite passes 22 tests under Python 3.12.14. The
   required/optional contract is confirmed, and both `uv lock --check` and
   `git diff --check` pass.
+
+## Milestone 8 — RAG gateway resilience revision
+
+- `rag-hybrid-v3.1-resilience` adds an 80-second monotonic query budget below
+  the local 90-second Next.js proxy boundary. Embeddings receive at most two
+  selectively admitted attempts; Qdrant and generation remain single-call.
+- Retry classification uses controlled error category and HTTP status. Only
+  timeouts, network failures, 429 and 500/502/503/504 qualify. Backoff, jitter,
+  gateway pacing and bounded `Retry-After` all consume the shared budget.
+- Successful query embeddings may be reused from a process-local, bounded
+  LRU/TTL cache with exact derived identity and single-flight concurrency.
+  Errors, invalid vectors, answers and provider bodies are never cached.
+- Sanitized graph traces now report cache/retry/deadline metadata and external
+  request counts under the existing `run_id`; CORS exposes the run header.
+- The corpus, prompt, models, semantic threshold, frozen results and historical
+  manifests remain unchanged. No Qdrant reindex was made.
+- Offline QA passes 94 resilience/LangGraph/RAG tests with the four known
+  Windows CRLF byte-hash checks explicitly deselected, plus 17 non-HTTP
+  serialization checks. In the supported Python 3.12 container, the complete
+  RAG API suite passes 13/13 and serialization passes 19/20; its sole failure
+  is a pre-existing assertion that requires a Windows backslash path while the
+  container is Linux. The Python 3.13 ASGI suites still hang on their first
+  request and were stopped rather than reported as passing.
+- The final Python 3.12 API image builds and runs locally. API health, Backoffice
+  login and Knowledge Base return successfully; Qdrant remains healthy with 14
+  unique 1024-dimension Cosine points and valid TrackFlow payload contracts.
+- Manual acceptance is complete. Black Friday runs
+  `598082eb-9be1-4fcd-8027-2f52f01b4cbb` and
+  `c58afad0-bd18-4ce4-a186-cbd23d549824` share fingerprint `34151fcc97eb` and
+  prove `miss` (one embedding request) then `hit` (zero embedding requests).
+  Both retained the same two commercial sources, with one Qdrant call and one
+  generation call per query. Their HTTP durations were 13,628.7 ms and
+  15,129.3 ms respectively; generation variability made the cache hit slower
+  end to end, so total latency is not cache evidence. The unsupported transport
+  case returned HTTP 200 with `insufficient_context=true`, no generation and no
+  technical error. No retry, deadline exhaustion or sensitive trace content was
+  observed in the accepted live runs; retry/deadline behavior remains covered
+  by deterministic offline tests.
+- Final closeout added explicit integration coverage for a persistent embedding
+  failure reaching LangGraph as `retry_exhausted`, plus HTTP coverage proving
+  `retry_exhausted` and `deadline_exhausted` return sanitized 503 responses with
+  the same correlated run ID. The focused resilience suite passes 36/36 and the
+  supported Python 3.12 RAG API suite passes 13/13.
+- Documented deadline limitation: synchronous `httpx` read timeouts measure
+  inactivity between chunks. The 80-second budget controls admission and phase
+  allocation but cannot hard-interrupt an adversarial slow-trickle response.

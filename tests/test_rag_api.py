@@ -198,16 +198,18 @@ def test_query_supports_controlled_abstention_for_admin():
 
 
 @pytest.mark.parametrize(
-    ("category", "status_code"),
+    ("category", "status_code", "outcome"),
     [
-        ("timeout", None),
-        ("http_error", 429),
-        ("network_error", None),
-        ("validation_error", None),
-        ("provider_error", None),
+        ("timeout", None, "technical_error"),
+        ("http_error", 429, "technical_error"),
+        ("network_error", None, "technical_error"),
+        ("validation_error", None, "technical_error"),
+        ("provider_error", None, "technical_error"),
+        ("retry_exhausted", 503, "retry_exhausted"),
+        ("deadline_exhausted", None, "deadline_exhausted"),
     ],
 )
-def test_provider_failure_is_sanitized(category, status_code):
+def test_provider_failure_is_sanitized(category, status_code, outcome):
     service = FakeRAGService(
         RAGProviderError(
             "Bearer secret-token postgresql://user:secret@host/db",
@@ -222,7 +224,7 @@ def test_provider_failure_is_sanitized(category, status_code):
     assert response.status_code == 503
     trace = assert_correlated_trace(response, agent)
     assert trace["status"] == "failed"
-    assert trace["outcome"] == "technical_error"
+    assert trace["outcome"] == outcome
     assert trace["error"] == {"category": category, "status_code": status_code}
     assert response.json() == {"detail": "knowledge service unavailable"}
     assert "secret" not in response.text

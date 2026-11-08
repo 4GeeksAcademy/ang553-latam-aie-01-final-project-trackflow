@@ -188,6 +188,24 @@ class RAGService:
             )
         return vector
 
+    def resilience_trace(self) -> dict[str, object]:
+        trace: dict[str, object] = {}
+        external_calls = 0
+        for name, component in (
+            ("embedding", self.embedding_provider),
+            ("qdrant", self.vector_store),
+            ("generation", self.generation_provider),
+        ):
+            exporter = getattr(component, "trace", None)
+            if callable(exporter):
+                component_trace = dict(exporter())
+                trace[name] = component_trace
+                calls = component_trace.get("external_calls", 0)
+                if isinstance(calls, int):
+                    external_calls += calls
+        trace["external_calls"] = external_calls
+        return trace
+
     def setup(self, chunks: Sequence[KnowledgeChunk] | None = None) -> SetupResult:
         selected = list(load_knowledge_chunks() if chunks is None else chunks)
         if not selected:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from typing import Mapping
@@ -30,6 +31,18 @@ class RAGSettings:
     min_request_interval_seconds: float = 0.0
     min_score: float | None = None
     expected_vector_size: int | None = None
+    total_budget_seconds: float = 80.0
+    embedding_attempt_timeout_seconds: float = 25.0
+    embedding_min_retry_timeout_seconds: float = 22.0
+    generation_timeout_seconds: float = 20.0
+    qdrant_timeout_seconds: float = 5.0
+    response_reserve_seconds: float = 3.0
+    retry_backoff_seconds: float = 0.5
+    retry_max_backoff_seconds: float = 2.0
+    retry_jitter_seconds: float = 0.25
+    retry_after_cap_seconds: float = 5.0
+    embedding_cache_capacity: int = 256
+    embedding_cache_ttl_seconds: float = 600.0
 
 
 def load_settings(values: Mapping[str, str] | None = None) -> RAGSettings:
@@ -44,7 +57,7 @@ def load_settings(values: Mapping[str, str] | None = None) -> RAGSettings:
         timeout = float(source.get("RAG_REQUEST_TIMEOUT_SECONDS", "30"))
     except ValueError as exc:
         raise RAGConfigurationError("RAG_REQUEST_TIMEOUT_SECONDS must be numeric") from exc
-    if timeout <= 0:
+    if not math.isfinite(timeout) or timeout <= 0:
         raise RAGConfigurationError("RAG_REQUEST_TIMEOUT_SECONDS must be positive")
     try:
         min_request_interval = float(
@@ -54,7 +67,7 @@ def load_settings(values: Mapping[str, str] | None = None) -> RAGSettings:
         raise RAGConfigurationError(
             "RAG_REQUEST_INTERVAL_SECONDS must be numeric"
         ) from exc
-    if min_request_interval < 0:
+    if not math.isfinite(min_request_interval) or min_request_interval < 0:
         raise RAGConfigurationError(
             "RAG_REQUEST_INTERVAL_SECONDS must not be negative"
         )
@@ -81,6 +94,57 @@ def load_settings(values: Mapping[str, str] | None = None) -> RAGSettings:
         raise RAGConfigurationError("Both RAG model identifiers are required")
     if embedding_model == generation_model:
         raise RAGConfigurationError("Embedding and generation models must be different")
+
+    def positive_float(name: str, default: str) -> float:
+        try:
+            value = float(source.get(name, default))
+        except ValueError as exc:
+            raise RAGConfigurationError(f"{name} must be numeric") from exc
+        if not math.isfinite(value) or value <= 0:
+            raise RAGConfigurationError(f"{name} must be positive")
+        return value
+
+    def nonnegative_float(name: str, default: str) -> float:
+        try:
+            value = float(source.get(name, default))
+        except ValueError as exc:
+            raise RAGConfigurationError(f"{name} must be numeric") from exc
+        if not math.isfinite(value) or value < 0:
+            raise RAGConfigurationError(f"{name} must not be negative")
+        return value
+
+    try:
+        cache_capacity = int(source.get("RAG_EMBEDDING_CACHE_CAPACITY", "256"))
+    except ValueError as exc:
+        raise RAGConfigurationError("RAG_EMBEDDING_CACHE_CAPACITY must be an integer") from exc
+    if cache_capacity < 0:
+        raise RAGConfigurationError("RAG_EMBEDDING_CACHE_CAPACITY must not be negative")
+
+    total_budget = positive_float("RAG_TOTAL_BUDGET_SECONDS", "80")
+    generation_timeout = positive_float("RAG_GENERATION_TIMEOUT_SECONDS", "20")
+    qdrant_timeout = positive_float("RAG_QDRANT_TIMEOUT_SECONDS", "5")
+    response_reserve = positive_float("RAG_RESPONSE_RESERVE_SECONDS", "3")
+    embedding_attempt_timeout = positive_float(
+        "RAG_EMBEDDING_ATTEMPT_TIMEOUT_SECONDS", "25"
+    )
+    embedding_min_retry_timeout = positive_float(
+        "RAG_EMBEDDING_MIN_RETRY_TIMEOUT_SECONDS", "22"
+    )
+    if embedding_min_retry_timeout > embedding_attempt_timeout:
+        raise RAGConfigurationError(
+            "RAG_EMBEDDING_MIN_RETRY_TIMEOUT_SECONDS must not exceed "
+            "RAG_EMBEDDING_ATTEMPT_TIMEOUT_SECONDS"
+        )
+    if (
+        generation_timeout
+        + qdrant_timeout
+        + response_reserve
+        + embedding_min_retry_timeout
+        > total_budget
+    ):
+        raise RAGConfigurationError(
+            "RAG stage reservations exceed the total query budget"
+        )
     return RAGSettings(
         base_url=source.get("FOUR_GEEKS_BASE_URL", DEFAULT_BASE_URL).rstrip("/"),
         api_key=api_key,
@@ -92,4 +156,20 @@ def load_settings(values: Mapping[str, str] | None = None) -> RAGSettings:
         min_request_interval_seconds=min_request_interval,
         min_score=min_score,
         expected_vector_size=expected_vector_size,
+        total_budget_seconds=total_budget,
+        embedding_attempt_timeout_seconds=embedding_attempt_timeout,
+        embedding_min_retry_timeout_seconds=embedding_min_retry_timeout,
+        generation_timeout_seconds=generation_timeout,
+        qdrant_timeout_seconds=qdrant_timeout,
+        response_reserve_seconds=response_reserve,
+        retry_backoff_seconds=nonnegative_float("RAG_RETRY_BACKOFF_SECONDS", "0.5"),
+        retry_max_backoff_seconds=positive_float(
+            "RAG_RETRY_MAX_BACKOFF_SECONDS", "2"
+        ),
+        retry_jitter_seconds=nonnegative_float("RAG_RETRY_JITTER_SECONDS", "0.25"),
+        retry_after_cap_seconds=positive_float("RAG_RETRY_AFTER_CAP_SECONDS", "5"),
+        embedding_cache_capacity=cache_capacity,
+        embedding_cache_ttl_seconds=positive_float(
+            "RAG_EMBEDDING_CACHE_TTL_SECONDS", "600"
+        ),
     )

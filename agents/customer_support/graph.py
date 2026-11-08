@@ -58,6 +58,9 @@ def _recorded_node(name: str, operation):
         try:
             updates, transition = operation(state, runtime.context)
         except Exception as exc:
+            resilience = getattr(
+                runtime.context.service, "resilience_trace", lambda: {}
+            )()
             runtime.context.tracer.record_node(
                 runtime.context.run_id,
                 node=name,
@@ -66,9 +69,11 @@ def _recorded_node(name: str, operation):
                 transition=None,
                 state=_state_summary(state),
                 error=exc,
+                resilience=resilience,
             )
             raise
         combined = cast(SupportState, {**state, **updates})
+        resilience = getattr(runtime.context.service, "resilience_trace", lambda: {})()
         runtime.context.tracer.record_node(
             runtime.context.run_id,
             node=name,
@@ -76,6 +81,7 @@ def _recorded_node(name: str, operation):
             started=started,
             transition=transition,
             state=_state_summary(combined),
+            resilience=resilience,
         )
         return updates
 
@@ -197,7 +203,13 @@ class CustomerSupportAgent:
             self.tracer.finish(selected_run_id, outcome=outcome)
             return SupportExecution(selected_run_id, result)
         except Exception as exc:
-            self.tracer.finish(selected_run_id, outcome="technical_error", error=exc)
+            category = getattr(exc, "category", None)
+            outcome = (
+                category
+                if category in {"retry_exhausted", "deadline_exhausted"}
+                else "technical_error"
+            )
+            self.tracer.finish(selected_run_id, outcome=outcome, error=exc)
             raise
         finally:
             # Checkpoints contain graph state, including content. They are useful only
