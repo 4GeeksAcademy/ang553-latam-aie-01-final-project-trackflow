@@ -941,3 +941,40 @@ revisión y autorización arquitectónica.
 - The next roadmap item is Milestone 8 (Agents), recommended as a separate
   `feature/agents-customer-support` branch only after the user-owned RAG commit
   and Draft PR. No agent implementation has started.
+
+## Milestone 8 — LangGraph agent, Part 1
+
+- The approved Part 1 implementation now wraps the unchanged `RAGService`
+  retrieval and generation operations in a compiled `StateGraph`. Retrieval is
+  executed once, its exact selected context is passed to generation, and the
+  existing `QueryResult`, source deduplication, abstention and technical-error
+  behavior remain observable at the authenticated `/knowledge/query` endpoint.
+- The graph uses an in-process `InMemorySaver` only. Every execution receives a
+  UUID `run_id`/`thread_id`; content-bearing checkpoints are deleted after both
+  terminal and failed runs. Sanitized traces are bounded to 100 runs/one hour
+  by default and retain only node order, transitions, timings, counts, booleans
+  and controlled error category/status.
+- Three deterministic compiled-graph evaluations pass with local fakes:
+  answered with the authentic high-demand source and policy facts, retrieval
+  abstention without generation, and generation abstention. These evaluations
+  verify architecture and do not claim live-model accuracy. Focused graph/API
+  QA passes 21 tests, including equivalence against `RAGService.query()` for all
+  three outcomes and retrieval/generation error propagation.
+- `langgraph 1.2.20` is locked through `uv`; the FastAPI image builds and imports
+  the graph and route successfully without starting services. No gateway call,
+  DDL, reindex, Git write or live service startup occurred. A wider offline RAG
+  run passed 86 tests and retained seven pre-existing Windows byte-hash failures
+  caused by CRLF-sensitive historical evaluation artifacts; no frozen RAG file
+  was changed.
+- The observability correction preassigns one UUID per entered API execution and
+  reuses it as `run_id`, LangGraph `thread_id`, and the HTTP correlation header
+  for both 200 responses and controlled in-execution 503 responses. A 503 raised
+  before route execution remains sanitized without a fictitious run ID. The
+  focused independent API, agent, and global-contract review passes 32 tests.
+- Python 3.10 compatibility no longer depends on `typing.Required`: a total
+  input `TypedDict` makes only `question` required, while the derived graph state
+  keeps `context`, `answer`, and `result` optional. An authorized uv-managed
+  Python 3.10.21 installation passes graph import/compilation and 11 agent tests;
+  the combined API/agent suite passes 22 tests under Python 3.12.14. The
+  required/optional contract is confirmed, and both `uv lock --check` and
+  `git diff --check` pass.
