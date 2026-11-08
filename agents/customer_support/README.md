@@ -22,6 +22,19 @@ only node order, transitions, timings, counts, booleans, and sanitized error
 category/status. They never include questions, answers, chunks, vectors, prompts,
 credentials, JWTs, or exception messages.
 
+## Gateway resilience revision
+
+`rag-hybrid-v3.1-resilience` preserves the graph topology and frozen retrieval
+and generation semantics. Each live query has an 80-second monotonic backend
+budget. Query embeddings use a process-local 256-entry, 10-minute LRU cache and
+at most two selectively admitted attempts; Qdrant and generation are still
+executed no more than once. Cache, retry, timeout and external-call metadata
+are attached to the existing content-free node trace. The cache is not
+persisted and is not shared by workers or replicas.
+
+See `docs/rag/rag-gateway-resilience.md` for configuration, privacy limits and
+the localhost acceptance runbook.
+
 Run deterministic academic evaluations without a gateway or Qdrant:
 
 ```powershell

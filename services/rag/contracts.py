@@ -28,10 +28,14 @@ class RAGProviderError(RAGError):
         *,
         category: str = "provider_error",
         status_code: int | None = None,
+        retry_after_seconds: float | None = None,
+        retry_after_invalid: bool = False,
     ) -> None:
         super().__init__(message)
         self.category = category
         self.status_code = status_code
+        self.retry_after_seconds = retry_after_seconds
+        self.retry_after_invalid = retry_after_invalid
 
 
 class CollectionMismatchError(RAGError):

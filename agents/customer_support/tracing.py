@@ -76,6 +76,7 @@ class TraceRecorder:
         transition: str | None,
         state: Mapping[str, object],
         error: BaseException | None = None,
+        resilience: Mapping[str, object] | None = None,
     ) -> None:
         with self._lock:
             active = self._active[run_id]
@@ -89,6 +90,8 @@ class TraceRecorder:
             }
             if error is not None:
                 event["error"] = sanitized_error(error)
+            if resilience:
+                event["resilience"] = dict(resilience)
             active["events"].append(event)
 
     def finish(
