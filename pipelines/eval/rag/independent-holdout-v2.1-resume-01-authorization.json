@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "approved": true,
+  "execution_kind": "resume_interrupted_holdout_v2.1",
+  "target_system_version": "rag-hybrid-v3",
+  "evaluation_version": "trackflow-independent-holdout-v2.1-2026-11-07",
+  "parent_result": "independent-holdout-v2.1-results.json",
+  "parent_result_sha256": "10367faa8fb5835f2a2dc09fa4a65b3caf5e3d878c8b3c48e9d3a6d49fa841b0",
+  "binding": "independent-holdout-v2.1-binding.json",
+  "binding_sha256": "c269a13124f72561c07c3fcd555ed84f9f62bf2adc8fa828ebf2c2266667c207",
+  "authorized_at": "2026-11-07T22:46:44.7984450Z",
+  "authorized_by": "TrackFlow responsible user — explicit resume authorization",
+  "authorization_source": "Explicit holdout v2.1 resume authorization in the current Codex conversation.",
+  "maximum_one_execution": true,
+  "budget": {
+    "embedding_requests_maximum": 14,
+    "generation_requests_maximum": 14,
+    "external_requests_maximum": 28,
+    "minimum_interval_seconds": 2.0,
+    "automatic_retries": 0
+  },
+  "conditions": {
+    "skip_completed_cases": ["ihv2-p01", "ihv2-p02"],
+    "resume_from_case": "ihv2-p03",
+    "stop_on_first_technical_error": true,
+    "preserve_parent_result": true,
+    "separate_attempt_artifact": true,
+    "no_system_or_evaluation_mutation": true
+  }
+}

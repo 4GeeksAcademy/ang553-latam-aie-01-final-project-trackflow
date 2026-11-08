@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "system_version": "rag-hybrid-v3",
+  "status": "sealed_v2.1_pending_review_and_execution_authorization",
+  "primary_retrieval": {
+    "min_score": 0.57,
+    "k": 3
+  },
+  "complementary_retrieval": {
+    "candidate_must_be_in_semantic_top_k": true,
+    "maximum_per_established_document": 1,
+    "lexical_evidence_required": true
+  },
+  "lexical_verification": {
+    "semantic_candidate_limit": 3,
+    "minimum_distinct_content_overlaps": 2,
+    "requires_corpus_discriminative_overlap": true,
+    "maximum_chunk_document_frequency": 2,
+    "best_verified_candidate_can_establish_document": true
+  },
+  "historical_baseline": {
+    "artifact": "evaluation-results.json",
+    "input_sha256": "31b3057a1af3ef6bcaaa4f142dc51997e37011c03572d7b074e7e3f6f9fa7dd0",
+    "recall_at_3": 0.9,
+    "applies_to": "threshold-only retrieval version",
+    "recomputed_for_current_version": false
+  },
+  "offline_regression_scope": [
+    "primary threshold remains unchanged",
+    "lexical verification is restricted to semantic top three candidates",
+    "at most one complementary candidate per established document",
+    "cross-document candidates remain excluded",
+    "inactive-inventory context retains every material condition",
+    "Sunday-delivery and out-of-corpus cases can abstain",
+    "Black Friday and approval cases avoid cross-document contamination",
+    "generation ignores tangential complementary terms"
+  ],
+  "metrics_available_without_external_calls": [
+    "deterministic corpus chunk and point ID integrity",
+    "offline context-selection contract checks",
+    "API authentication and sanitized failure behavior",
+    "historical-output fidelity review clearly labeled as historical"
+  ],
+  "metrics_not_available_without_external_calls": [
+    "current-version Recall@3 on fresh query embeddings",
+    "current-version negative abstention rate",
+    "current-version real generation fidelity and latency"
+  ],
+  "prospective_holdout": {
+    "target_system_version": "rag-hybrid-v3",
+    "evaluation_version": "trackflow-independent-holdout-v2.1-2026-11-07",
+    "input_artifact": "independent-holdout-v2.1.json",
+    "input_sha256": "99a37a949d1b5adc5c01704778eef43c9611981a3541fb7e42af50c0171edc71",
+    "rubric_artifact": "independent-holdout-v2.1-rubric.json",
+    "rubric_sha256": "d05d1fe6e5a970816c3a201307fa05876fc03f1661c5662e3392eeb90d0cca5d",
+    "positive_questions": 12,
+    "negative_questions": 4,
+    "executed": false,
+    "results_artifact": null,
+    "runner": "run_independent_holdout.py",
+    "binding": "independent-holdout-v2.1-binding.json",
+    "review_template": "independent-holdout-v2.1-review-template.json",
+    "external_request_budget": {
+      "embedding_requests": 16,
+      "generation_requests_maximum": 16,
+      "automatic_retries": 0,
+      "minimum_interval_seconds": 2
+    }
+  },
+  "independent_holdout_requirements": {
+    "authorship": "Prepared by a separate evaluator who reported no access to RAG code, prompts, prior questions, prior results, logs or system outputs, while disclosing exposure to general repository context. Strict package-only isolation is not claimed. A truthful hash-bound review record and explicit execution authorization are still required, and the system must not be tuned from these questions.",
+    "minimum_positive_questions": 10,
+    "cover_all_four_documents": true,
+    "include_high_demand_case": true,
+    "include_negative_abstention_cases": true,
+    "measure": [
+      "primary Recall@3",
+      "combined primary/complementary context precision",
+      "negative abstention",
+      "commercial fidelity",
+      "technical error rate and latency"
+    ]
+  },
+  "review_gate": {
+    "attributable_approval_required": true,
+    "timezone_aware_review_date_required": true,
+    "complete_contract_checks_required": true,
+    "strict_independence_required_by_academy_briefing": false,
+    "strict_independence_optional": true,
+    "limited_review_label": "prospective_with_independence_limitations",
+    "limited_review_requires_explicit_acknowledgement": true,
+    "independent_label_requires_declared_basis": true
+  }
+}

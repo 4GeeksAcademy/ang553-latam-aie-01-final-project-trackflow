@@ -11,6 +11,10 @@ const nextConfig: NextConfig = {
   },
   experimental: {
     turbopackFileSystemCacheForDev: false,
+    // A RAG query performs one bounded embedding request and, when context is
+    // available, one bounded generation request. Next's 30 s proxy default can
+    // therefore close a healthy request before FastAPI returns.
+    proxyTimeout: 90_000,
   },
   async rewrites() {
     return [
@@ -41,6 +45,10 @@ const nextConfig: NextConfig = {
       {
         source: "/telemetry/:path*",
         destination: `${backendUrl}/telemetry/:path*`,
+      },
+      {
+        source: "/knowledge/:path*",
+        destination: `${backendUrl}/knowledge/:path*`,
       },
     ];
   },

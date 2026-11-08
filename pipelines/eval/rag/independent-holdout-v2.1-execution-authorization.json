@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "target_system_version": "rag-hybrid-v3",
+  "evaluation_version": "trackflow-independent-holdout-v2.1-2026-11-07",
+  "authorized_at": "2026-11-07T22:32:12.4000356Z",
+  "authorized_by": "TrackFlow responsible user — explicit human authorization",
+  "authorization_source": "Explicit live-evaluation authorization in the current Codex conversation.",
+  "review_record": "independent-holdout-v2.1-review-approved.json",
+  "review_record_sha256": "ca65d30b62805278bc86b7ba1ba70776007a340e64b21e43bf62330e07d25c8d",
+  "binding": "independent-holdout-v2.1-binding.json",
+  "binding_sha256": "c269a13124f72561c07c3fcd555ed84f9f62bf2adc8fa828ebf2c2266667c207",
+  "maximum_one_execution": true,
+  "budget": {
+    "embedding_requests_maximum": 16,
+    "generation_requests_maximum": 16,
+    "external_requests_maximum": 32,
+    "minimum_interval_seconds": 2.0,
+    "automatic_retries": 0
+  },
+  "conditions": {
+    "sequential_requests": true,
+    "stop_on_first_technical_error": true,
+    "preserve_partial_results": true,
+    "refuse_result_overwrite": true,
+    "no_metric_improvement_retries": true,
+    "no_system_or_evaluation_mutation": true
+  }
+}

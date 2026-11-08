@@ -21,7 +21,7 @@ services:
       - api
     environment:
       # Server-side backend URL for Next.js rewrites (Docker DNS)
-      - API_BACKEND_URL=${API_BACKEND_URL}
+      - API_BACKEND_URL=${API_BACKEND_URL:-http://api:8000}
     volumes:
       # Bind mounts de código fuente (host → container)
       - ./uis/website:/app/uis/website
@@ -45,12 +45,25 @@ services:
       # Configuration is coherent with the relay/worker. The API persists to
       # PostgreSQL/outbox and does not contact Redis before returning 202.
       - REDIS_URL=redis://redis:6379/0
+      # RAG remains dormant until the opt-in Qdrant service is started and a
+      # server-side 4Geeks key is configured.
+      - FOUR_GEEKS_BASE_URL=${FOUR_GEEKS_BASE_URL:-https://llm.4geeks.ai/v1}
+      - FOUR_GEEKS_API_KEY=${FOUR_GEEKS_API_KEY:-}
+      - RAG_EMBEDDING_MODEL=${RAG_EMBEDDING_MODEL:-online/openrouter/perplexity/pplx-embed-v1-0.6b}
+      - RAG_GENERATION_MODEL=${RAG_GENERATION_MODEL:-online/openrouter/deepseek/deepseek-v4-flash}
+      # Always use Docker DNS in-container; the host-side CLI uses 127.0.0.1.
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-trackflow_knowledge}
+      - RAG_VECTOR_SIZE=${RAG_VECTOR_SIZE:-1024}
+      - RAG_REQUEST_INTERVAL_SECONDS=${RAG_REQUEST_INTERVAL_SECONDS:-2}
+      - RAG_MIN_SCORE=${RAG_MIN_SCORE:-0.57}
     networks:
       - trackflow-dev
     volumes:
       # Bind mounts de código fuente (host → container)
       - ./services:/app/services
       - ./scripts:/app/scripts
+      - ./docs/company-knowledge-base:/app/docs/company-knowledge-base:ro
 
   # ── Scheduler (DEV-53 nightly telemetry export) ───────────────────────────
   scheduler:
@@ -206,6 +219,27 @@ services:
       retries: 5
       start_period: 20s
 
+  # RAG vector store (Milestone 7, opt-in). The version is pinned so a normal
+  # Compose run never drifts to an unreviewed Qdrant release.
+  qdrant:
+    profiles:
+      - rag
+    image: qdrant/qdrant:v1.20.0
+    ports:
+      - "127.0.0.1:6333:6333"
+    networks:
+      - trackflow-dev
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "bash -c ':> /dev/tcp/127.0.0.1/6333'"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
 networks:
   trackflow-dev:
     driver: bridge
@@ -215,3 +249,4 @@ volumes:
   backoffice-node-modules:
   telemetry-raw:
   celery-redis-data:
+  qdrant-data:

@@ -24,18 +24,18 @@ dependencies = [
     "prefect>=3.0.0,<4.0.0",
     "celery[redis]>=5.5.0,<6.0.0",
     "flower>=2.0.1,<3.0.0",
+    "httpx>=0.28.1,<1.0.0",
 ]
 
 [project.scripts]
 seed = "services.api.seed:main"
 
 [tool.setuptools.packages.find]
-include = ["services.api*", "services.telemetry*", "services.job_runner*", "services.task_queue*", "pipelines*"]
+include = ["services.api*", "services.telemetry*", "services.job_runner*", "services.task_queue*", "services.rag*", "pipelines*"]
 namespaces = true
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28.1",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
 ]

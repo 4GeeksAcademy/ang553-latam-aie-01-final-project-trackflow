@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "gen-carrier-international-la",
+      "source_document": "carrier-coverage",
+      "section": "united-states-coverage",
+      "material_requirements": [
+        {"name": "reliable international carrier", "any_patterns": ["\\bDHL\\b"]}
+      ]
+    },
+    {
+      "id": "gen-carrier-exception",
+      "source_document": "carrier-coverage",
+      "section": "selection-and-exceptions",
+      "material_requirements": [
+        {"name": "manual choice denied", "any_patterns": ["\\bNo\\b", "does\\s+not\\s+manually\\s+choose"]},
+        {"name": "exception requires approval", "any_patterns": ["except(?:ion)?[^.]*approv", "approv[^.]*exception"]},
+        {"name": "Carlos Vega authority", "any_patterns": ["Carlos\\s+Vega"]}
+      ]
+    },
+    {
+      "id": "gen-storage-long-term",
+      "source_document": "storage-pricing",
+      "section": "long-term-inventory",
+      "material_requirements": [
+        {"name": "more than 180 days", "any_patterns": ["(?:more than|over)\\s+180 days", "181(?:st)? day", "day\\s+181"]},
+        {"name": "no-movement eligibility", "any_patterns": ["no movement", "without movement", "no sales(?: or| and) outbound"]},
+        {"name": "starts on day 181", "any_patterns": ["(?:day|on day)\\s+181", "181(?:st)? day"]},
+        {"name": "150 percent over standard rate", "any_patterns": ["150%\\s+over the standard rate", "150 percent\\s+over the standard rate"]}
+      ]
+    },
+    {
+      "id": "gen-storage-preferential",
+      "source_document": "storage-pricing",
+      "section": "preferential-rates",
+      "material_requirements": [
+        {"name": "Miguel Torres approval", "any_patterns": ["Miguel Torres[^.]*approv", "approv[^.]*Miguel Torres", "go through\\s+Miguel Torres"]},
+        {"name": "more than 50 cubic meters", "any_patterns": ["more than\\s+50 cubic meters", "over\\s+50 cubic meters"]},
+        {"name": "average monthly volume", "any_patterns": ["average monthly volume"]}
+      ]
+    }
+  ]
+}

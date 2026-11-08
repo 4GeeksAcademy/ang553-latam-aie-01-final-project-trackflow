@@ -1,5 +1,32 @@
 # Progress: TrackFlow
 
+## Milestone 7 — final functional correction and live-test preparation
+
+- Historical generation inputs and outputs were re-audited without model
+  calls. The generation runner supplied the full approved chunk directly, so
+  `gen-storage-long-term` was not a retrieval or context-preparation failure;
+  DeepSeek omitted the no-movement eligibility condition despite receiving it.
+- The general generation instruction now requires all material commercial
+  qualifiers (eligibility/trigger, movement/inactivity, scope, exceptions,
+  approvals, periods and figures) and internally consistent yes/no openings.
+- A new deterministic offline review remains separate from frozen artifacts.
+  It recognizes equivalent wording, passes the three genuine literal false
+  negatives and rejects the long-term-storage omission: 3/4.
+- Focused RAG/API/global-contract QA: 39 PASS. Historical Recall@3 remains
+  9/10 (90%) at the frozen threshold 0.57; no real embedding or generation
+  request was made.
+- Official Docker startup exposed and corrected two local-runtime defects:
+  Windows CRLF in `uis/start.sh` is normalized inside the image, and Compose
+  now defaults the interface rewrite target to `http://api:8000` instead of an
+  empty value. The private generic PostgreSQL URL was switched only to the
+  already-installed `psycopg2` driver; destination and credentials were
+  preserved.
+- Qdrant, FastAPI and interfaces are running for human acceptance. Qdrant is
+  healthy with 14 canonical points (Cosine, 1024); `/health`, `/login` and the
+  Knowledge Base page are reachable; the unauthenticated frontend auth proxy
+  returns 401. Browser automation cannot reach host localhost, so visual and
+  interactive answer acceptance remains pending for the user.
+
 ## Evaluación temporal del modelo de regresión — Correctivo R1 completado
 
 - Evaluación independiente implementada bajo `pipelines/eval/`; reutiliza el
@@ -510,6 +537,161 @@ revisión y autorización arquitectónica.
 	repositorio. El puerto 8000 se expone como Public solo temporalmente para E2E
 	y debe volver a Private al cerrar.
 
+## Milestone 7 — RAG Knowledge Base, Block A
+
+- Provider-neutral RAG core implemented under `services/rag/` with separate
+  setup, embedding, retrieval, generation and query responsibilities.
+- Four canonical TrackFlow documents produce 14 deterministic semantic chunks
+  with contractual payloads and stable point IDs.
+- Simulated setup is idempotent, reconciles stale points and refuses to replace
+  an incompatible collection.
+- The 4Geeks and Qdrant HTTP contracts are implemented with `httpx`. Block A
+  used mocks only; Block B mentoring verified the real embeddings endpoint for
+  all 14 chunks at 1024 dimensions.
+- `POST /knowledge/query` is protected for `admin`/`manager`; `user` receives
+  403 and unauthenticated requests receive 401.
+- Backoffice Knowledge Base page and opt-in Qdrant Compose profile implemented.
+- Evaluation artifact separates 3 calibration, 10 final positive and 3
+  negative cases. Recall@3 remains unmeasured.
+- Live queries remain gated until `RAG_MIN_SCORE` is calibrated in Block B.
+- B2-R1 aligned the verified model identifiers without the obsolete
+  `litellm/` prefix across private configuration, examples and Compose.
+- Host-side indexing uses `http://127.0.0.1:6333`; the API container uses the
+  fixed Docker DNS URL `http://qdrant:6333`. Collection remains
+  `trackflow_knowledge`, vector size 1024 and Qdrant is still opt-in.
+- The apparent ASGI test hang was caused by the Windows sandbox blocking the
+  internal socket used to create an asyncio event loop, before FastAPI ran.
+  Tests passed outside that restriction: 31 focused RAG/API/serialization
+  tests.
+- B2-R2 added an explicitly sequential real-indexing adapter with a minimum
+  two-second pause, zero HTTP retries, redirects disabled, sanitized status
+  reporting and accumulated numeric usage.
+- Real indexing completed with 14 embedding requests and 891 prompt/total
+  tokens: `trackflow_knowledge` is green with Cosine distance, 1024 dimensions
+  and exactly 14 canonical points distributed 3/4/3/4. All payloads, source
+  texts and deterministic IDs matched; no duplicates, missing IDs or foreign
+  points were found. The 14 IDs persisted after a Qdrant container restart.
+- Final B2-R2 QA passed 32 focused RAG/API/serialization tests. Qdrant remains
+  running under the opt-in `rag` profile; no retrieval evaluation or generation
+  call was performed.
+- Finalization froze the evaluation input at SHA-256
+  `31b3057a1af3ef6bcaaa4f142dc51997e37011c03572d7b074e7e3f6f9fa7dd0`.
+  Calibration selected `RAG_MIN_SCORE=0.57` exclusively from three positive
+  calibration queries (3/3 at rank 1).
+- Real retrieval evaluation passed 9/10 = 90% Recall@3. The only miss was the
+  international-carrier-from-Los-Angeles question, whose expected chunk did not
+  clear the frozen threshold. Black Friday retrieved its expected section at
+  rank 1 with score 0.7490.
+- Real negatives produced retrieval-only abstention for 2/3 cases. Sunday
+  delivery retrieved a related high-demand chunk, so the generation contract
+  now uses an exact `INSUFFICIENT_CONTEXT` sentinel mapped to a fixed public
+  abstention with no sources; this is tested offline but not yet verified with
+  DeepSeek.
+- Evaluation used 16 real embedding requests and 183 total tokens: calibration
+  3/38, final 10/122, negatives 3/23. No corpus embeddings were regenerated.
+- Gateway throttling now applies after every embedding or generation request;
+  generation status/count/usage are sanitized. Backend focused QA passes 33
+  tests; targeted frontend lint and TypeScript pass; production build passes
+  outside the sandbox process restriction.
+- After explicit approval, DeepSeek completed the frozen eleven-case rubric.
+  Manual source comparison passed 11/11, including exact SLA, returns, carrier,
+  storage, approval and insufficient-context behavior. Usage was 3,483 total
+  tokens with provider-reported cost `0.00064068956`.
+- The twelfth and final authorized generation ran through an authenticated real
+  API E2E with isolated in-memory users, Qdrant and the gateway: manager 200,
+  user 403, missing/invalid JWT 401, one embedding and one generation. The Black
+  Friday answer used the expected source and preserved the no-guarantee rule.
+- Pending human acceptance: visual/browser review without another model call,
+  and confirmation of the commercial team's production role assignments.
+- Local backoffice login diagnosis confirmed that the form and Next.js proxy
+  were submitting correctly: `/auth/login` returned 200, but `/auth/me`
+  immediately returned 401 because the private `JWT_SECRET_KEY` value retained
+  an extra closing quote. The private delimiter was corrected without changing
+  the secret itself, the API container was recreated, and token validation now
+  returns 200 both directly and through the interfaces proxy. Invalid
+  fictitious credentials remain rejected with 401; the existing active admin
+  account was not modified and human credential entry remains pending.
+- Post-human RAG diagnosis proved that Next.js's 30-second default proxy timeout
+  caused the visible Sunday-delivery 500: the proxy emitted `ECONNRESET` at
+  30 seconds while FastAPI completed with 200 after 36.628 seconds. The
+  backoffice now uses a bounded 90-second proxy timeout, validated by a
+  35.261-second offline proxy test. The exact inactive-inventory query has no
+  persisted historical candidates or scores, so its cause remains pending a
+  human retest. Retrieval behavior and the frozen 0.57 threshold are unchanged;
+  sanitized candidate/outcome logs now make retrieval versus generation
+  abstention distinguishable without storing questions, chunks or prompts.
+- Definitive observability diagnosis found that the API container had loaded
+  the new RAG code, but `rag.query` inherited the root `WARNING` level, so every
+  diagnostic `INFO` event was discarded. The logger now owns an INFO stream
+  handler, and the middleware request UUID is propagated into RAG queries.
+  Offline Docker output confirms correlated retrieval and outcome events;
+  provider failures are classified by retrieval/generation stage without
+  logging exception bodies. The exact inactive-inventory execution remains
+  unrecoverable because its filtered events and query vector were never
+  persisted. No retrieval policy, corpus, threshold or frozen result changed.
+- A subsequent human retry returned 503 after 30.515 s; the correlated RAG
+  event was `technical_error` during retrieval at 30.465 s, not an abstention.
+  The historical event predates substage logging, so it cannot prove whether
+  embedding or Qdrant timed out. A same-container Qdrant read/query using an
+  already stored vector returned 200 in 117 ms, making the external embedding
+  request the leading explanation without treating it as retroactive proof.
+  Retrieval now emits sanitized embedding/Qdrant start, success and error
+  events with duration and safe categories (`timeout`, `http_error`,
+  `network_error`, `validation_error`). The 30-second provider timeout and zero
+  retries remain unchanged; technical failures still return 503.
+- The next instrumented human run proved the contextual-retrieval weakness:
+  storage standard rates cleared the primary threshold at `0.6174929`, while
+  the answer-bearing long-term-inventory section ranked second at `0.55981266`
+  and was excluded, producing a legitimate generation abstention from
+  incomplete context. Retrieval now retains `RAG_MIN_SCORE=0.57` for primary
+  evidence and may add only semantic top-k candidates from an already
+  established source document as explicitly labeled complementary context.
+  Complementary evidence cannot establish relevance, cross-document candidates
+  remain excluded, and no full-document expansion occurs. Offline RAG/API
+  regression passes; no gateway call, corpus change or Qdrant mutation was
+  performed. The historical 9/10 Recall@3 remains evidence for the prior
+  threshold-only version; the current method needs an independent, versioned
+  reevaluation before receiving an academic metric.
+- A real long-term-inventory retest then completed embedding (8098.8 ms) and
+  Qdrant retrieval (184.8 ms) with the expected primary/complementary storage
+  sections, but generation ended in HTTP 503 after 40134.7 ms. The effective
+  gateway timeout remains 30 seconds with a two-second minimum interval and no
+  retries. The duration strongly supports, but does not prove, a generation
+  timeout because the historical event retained neither category nor provider
+  status; 429 or saturation are not asserted. Generation now logs sanitized
+  start/success/error substages plus category, optional provider status and
+  duration, and repeats the safe diagnosis in the final technical outcome.
+  Empty or malformed successful responses are validation errors. Offline QA
+  covers timeout, HTTP 429/500, network, validation, provider errors, privacy,
+  API 503 and authentication without any gateway call. Corpus, 14 Qdrant
+  points, threshold, models and frozen academic evidence remain unchanged.
+- Final RAG closeout verified that the SLA compensation base is expressly 5%
+  of that country's monthly fee after two consecutive country-level months
+  below 90%; high-demand conditions are separate and tangential to a pure
+  compensation question. The generation contract now answers the concrete
+  question, uses complementary evidence only when materially necessary, avoids
+  unsupported economic inference, and does not claim exhaustiveness from
+  partial context.
+- Contextual retrieval is versioned as `rag-contextual-v2`: primary threshold
+  remains 0.57 and only the highest-ranked below-threshold candidate per
+  established document can be complementary. It cannot establish relevance.
+  The versioned evaluation plan preserves the historical 90% and marks a fresh
+  independent holdout as required for current Recall@3, abstention and real
+  fidelity metrics.
+- The carrier human query conclusively failed at embedding with a sanitized
+  timeout near 30 seconds and never reached Qdrant. The provider-side cause is
+  unknown; no rate-limit or saturation claim is made. Timeouts, retries, model
+  and consumption remain unchanged. The Backoffice now presents HTTP 503 as
+  temporary provider unavailability rather than insufficient knowledge.
+- Final dependency review found a direct critical npm advisory in Next.js
+  16.2.7, with 16.4.5 reported as the fixed release. Repository policy requires
+  explicit approval to change `package.json`, so the upgrade remains blocking.
+  The Python lock is consistent; `pip-audit` was unavailable and was not
+  installed. An earlier expanded Compose diagnostic exposed private values in
+  session output, so gateway and database credentials require rotation before
+  sharing. One PostgreSQL telemetry persistence failure was counted separately
+  and has no demonstrated RAG dependency; that subsystem was not changed.
+
 ## DEV-55 — Bloque B (fases 5–7)
 
 - Implementación en revisión: el POST de reporting acepta de forma transaccional
@@ -554,3 +736,208 @@ revisión y autorización arquitectónica.
   completa conserva un error de colección ajeno en `test_inventory_client_ids`
   bajo el intérprete host y el CORS ya presente en `8bf7fda`.
 - Fase 8 y aceptación humana siguen pendientes; no se creó commit.
+- Security handoff upgraded the explicitly authorized Backoffice packages to
+  Next.js and eslint-config-next `16.4.5`. The effective container version
+  passes focused ESLint, TypeScript, production build, routes/rewrites and the
+  retained 90-second proxy setting; `npm audit --omit=dev` is clean.
+- A subsequent explicit authorization aligned `uis/website` on Next.js and
+  eslint-config-next `16.4.5` while retaining React/React DOM `19.2.4`.
+  Website production audit moved from one critical, four high and one moderate
+  finding to zero. The shared interfaces image was rebuilt, both named
+  `node_modules` volumes were refreshed without deletion, and only the
+  interfaces service was recreated. Website lint/typecheck/build and
+  Backoffice focused lint/typecheck/build pass; global Backoffice lint retains
+  three errors and one warning in unrelated historical files. Both effective
+  runtimes report Next.js `16.4.5`; API and Qdrant were not restarted.
+- The user-owned gateway and PostgreSQL rotation steps are documented without
+  exposing or changing private values. `rag-contextual-v2` now has a
+  prospective, hash-bound independent set (12 positive, four negative) and a
+  separate material-fact rubric. It has not been executed and no metric was
+  inferred; independent review plus explicit authorization for up to 16
+  embeddings and 16 generations remains required.
+- Final human precision evidence showed that same-document expansion admitted
+  a tangential high-demand SLA fragment, while both relevant Aragón carrier
+  fragments were present in semantic top three but below 0.57. Retrieval now
+  applies deterministic local lexical verification only to semantic top-three
+  candidates: two content overlaps plus a corpus-discriminative cue are
+  required. The threshold, `k`, corpus, vectors and Qdrant remain unchanged.
+  Lexical evidence may establish one primary document and add at most one
+  verified complement; generic single-token overlap cannot expand context.
+- Sanitized logs prove the repeated carrier fingerprint came from two distinct
+  API requests about 19 seconds apart, not an internal retry, but cannot prove
+  whether the browser submissions were intentional. The sealed v2 holdout and
+  hashes remain unchanged and were not used for rule selection. This method
+  change requires independent system-version registration before evaluation;
+  no historical or prospective metric was inherited.
+- Final evaluation preparation registers the unchanged semantic + lexical
+  method as `rag-hybrid-v3`. A guarded runner defaults to offline hash
+  validation, requires a hash-bound independent approval record plus an
+  explicit 32-request acknowledgement, executes sequentially with the existing
+  two-second interval and zero retries, persists after each case, and refuses
+  to overwrite results. No gateway request was made.
+- Holdout structure, references and rubric facts pass offline review, but the
+  implementation-side agent authored and inspected the questions. Six positive
+  intents overlap earlier calibration/generation topics, so strict independence
+  is not established even though exact wording is unique. The review template
+  remains unapproved; execution requires human adjudication or a new set from
+  an isolated evaluator.
+- Safe credential inspection identifies Supabase and confirms that
+  `DATABASE_URL`, both `TRACKFLOW_PIPELINE_*_DATABASE_URL` variables and
+  `TRACKFLOW_REPORTING_DATABASE_URL` currently share the password. Rotation is
+  user-owned and still pending; no secret value was displayed or changed.
+- Supabase post-rotation recovery is now verified. The four private PostgreSQL
+  URLs use one Session Pooler identity and role password, with `postgres` as the
+  operational source and `trackflow_reporting` as the analytical destination.
+  Both databases pass live read-only identity/OID checks, SQLModel inventory
+  reads and container-side connectivity. A telemetry insert was verified inside
+  an isolated transaction and rolled back with no persistent row.
+- Controlled restart of `api`, `interfaces` and `qdrant` preserved data and
+  configuration. Qdrant remains at 14 unique 1024-dimension Cosine points whose
+  IDs and payloads exactly match the current deterministic corpus chunks.
+  Scheduler and async profiles stayed stopped; their optional async PostgreSQL
+  tables are not provisioned and must not be started as functional services.
+- An obsolete host Uvicorn owned IPv4 port 8000 while Docker owned IPv6. After
+  confirming its TrackFlow command, the old process was stopped; IPv4, IPv6 and
+  `localhost` now expose the same current 31-route API. The `.env` JWT
+  representation was normalized without changing or displaying the active
+  secret, and Compose quiet validation passes.
+- Permanent recovery instructions are documented in
+  `docs/operations/supabase-and-local-startup-runbook.md`; a manual Project
+  Learnings note is prepared alongside it. Broad offline QA produced 486 pass,
+  two skips and one unrelated CORS preflight failure. The historical
+  `test_inventory_client_ids.py` loader also fails collection under Python 3.13
+  and remains explicitly uncounted.
+- `rag-hybrid-v3` is now bound to a SHA-256 freeze manifest covering retrieval,
+  prompt, configuration, API/UI integration, corpus, evaluation runner, tests
+  and dependency locks. The ignored private environment is excluded; its
+  4Geeks key is present but rotation cannot be proven from local state.
+- The existing 12-positive/four-negative holdout remains byte-for-byte sealed
+  and validates offline, but is classified as secondary regression evidence
+  because it was authored and inspected from the implementation side. A
+  minimal independent-evaluator package now contains only the four canonical
+  documents and academic criteria. A new isolated set and review record are
+  required before real execution; no gateway request or metric was produced.
+- Freeze QA completed with 49/49 RAG core tests and 11/11 RAG API tests. The
+  evaluator runner now records top-three precision plus semantic-primary,
+  lexical-primary and complementary recovery separately; real-answer fidelity
+  remains deliberately pending independent adjudication.
+- Custodial validation of the externally authored v2 holdout confirmed both
+  reported hashes, the 12/4 split, rubric correspondence, grounded commercial
+  facts and genuinely absent negative answers. Execution remains blocked
+  because all expected references use Markdown paths and top-level headings
+  rather than the 14 contractual Qdrant document/section pairs; the
+  multi-document case also needs three chunk references. The sealed v2 files
+  were not edited and the runner was not rebound. A corrected, newly hashed
+  version is required; no gateway request was made.
+- The evaluator-supplied v2.1 correction now passes custodial validation: both
+  reported hashes match, all 16 IDs and facts remain unchanged from v2, all 14
+  declared reference pairs are canonical, and `ihv2-p12` requires the correct
+  three chunks. Earlier v2 artifacts remain untouched.
+- A hash-bound v2.1 binding configures the guarded runner without changing the
+  evaluated RAG. Instrumentation now reports question-level Recall@3 separately
+  from per-reference and complete-reference coverage, so the three-source case
+  records 3/3 independently of its single Recall@3 contribution. The second
+  freeze changed only runner, validator, current evaluation plan and tests;
+  all 29 manifest hashes match.
+- Final offline preflight passed 50 core/evaluation tests and 11 API/auth tests.
+  The blank review template is rejected as designed, no result exists, Qdrant
+  remains healthy at 14 points, and no gateway call was made. Live execution is
+  ready only after a truthful completed review record and explicit authorization
+  for at most 16 embeddings plus 16 generations.
+- The TrackFlow user explicitly approved the v2.1 questions, contractual
+  references and fidelity rubric after human review. A separate review record
+  preserves that the reviewer participated in the project and is not
+  independent from implementation; it also preserves the author-exposure,
+  intent-overlap and California/Los-Angeles limitations. The approval does not
+  authorize gateway consumption. The current runner's stricter independence
+  gate will therefore reject this honest record until separately adjudicated;
+  no evaluation was executed.
+- Traceability correction: the earlier `approved=true` review record was
+  incorrectly attributed to the TrackFlow user. It is preserved byte-for-byte
+  and a hash-bound amendment marks it superseded and unusable for execution.
+  The replacement template is pending a new explicit user decision and already
+  declares `independent=false` plus all known limitations.
+- The runner gate now requires an attributable reviewer, timezone-aware date,
+  approval source, complete checks and a truthful review classification. Strict
+  independence is optional: a non-independent review is accepted only under
+  `prospective_with_independence_limitations` with explicit acknowledgement;
+  an independent label requires a declared basis. Focused gate/RAG QA passes
+  51 tests. No holdout execution or gateway call occurred.
+- The self-identified TrackFlow responsible user then supplied a new explicit
+  human `APPROVED` statement and acknowledged the documented independence
+  limitations. A separate hash-bound record passes the gate as
+  `prospective_with_independence_limitations`; it remains
+  `execution_authorized=false`. Review approval is complete, but no gateway
+  consumption or live holdout execution is authorized yet.
+- A later explicit one-run authorization permitted at most 16 embeddings and
+  16 generations. The real v2.1 run stopped correctly at the first technical
+  error after three embeddings and three generations: `ihv2-p03` generation
+  timed out with no provider HTTP status. Two positive cases completed, both
+  with the expected section at semantic rank 1; their 2/2 partial Recall@3 is
+  not the required 12-case academic metric. No negative or multisource case ran.
+- Custodial fidelity passes `ihv2-p01` and fails `ihv2-p02`, whose answer kept
+  the 5% country-fee basis but omitted the 90% country-level SLA and the
+  two-month trigger. Provider usage was 110 embedding tokens and 1,176
+  generation tokens, with reported generation cost `0.00012468456`. No retry
+  or second execution occurred; final evaluation status is BLOCKED.
+- Follow-up adjudication preserves the frozen `p02` FAIL and 1/3 score. Its
+  direct answer is commercially correct for compensation and fee base, and the
+  two-month premise already appears in the question, but the 90% threshold is
+  omitted and the frozen rubric still requires all three facts.
+- The original runner cannot resume and refuses to overwrite its result. A new
+  evaluation-only continuation tool, outside the 29 frozen-system files,
+  validates the immutable parent hash, skips completed `p01/p02`, and resumes
+  from incomplete `p03`. Because exact `p03` context was not persisted, it must
+  rerun the full case rather than perform generation-only recovery. Maximum new
+  budget is 14 embeddings plus 14 generations (28 total), with a new explicit
+  authorization, zero retries and separate attempt-2 reporting. Offline resume
+  QA passes four tests; no external request was made.
+- The authorized attempt-2 continuation stopped at its first operation: the
+  `ihv2-p03` embedding timed out after approximately 30.6 seconds with no HTTP
+  status or usage response. It made one embedding request and no generation
+  request; the immutable parent and all 29 frozen hashes remain unchanged.
+- Gateway diagnosis found no local payload-size, retry, redirect or client-close
+  defect. Attempt 1 timed out in DeepSeek generation after a successful 6.7 s
+  embedding and local retrieval; attempt 2 timed out in the embedding model.
+  Both align with the shared 30 s `httpx` boundary, but provider saturation,
+  rate limiting and upstream causes remain unproven because neither failure
+  returned an HTTP response.
+- Evaluation-only immutable stage checkpoints now bind successful embeddings,
+  retrieval traces, generations and later fidelity adjudication to the case,
+  question, holdout/rubric/binding, freeze manifest and corpus hashes. The
+  adapter wraps the unchanged frozen RAG and refuses overwrite. Ten focused
+  checkpoint/resume tests and 62 offline RAG/API regressions pass. No historical
+  result was altered and no gateway call occurred during this diagnosis.
+
+## Milestone 7 — technical closure for Draft PR
+
+- Active RAG development is closed by user decision. The implemented system
+  remains `rag-hybrid-v3` over four canonical documents, 14 deterministic
+  chunks and the green `trackflow_knowledge` Qdrant collection (1024/Cosine).
+  Retrieval, prompts, models, threshold, corpus and historical artifacts were
+  not changed during closure.
+- Holdout v2.1 remains incomplete: attempt 1 completed `p01/p02` and timed out
+  during `p03` generation; attempt 2 timed out during the `p03` embedding. Total
+  consumption is four embeddings plus three generations. `p01` fidelity passed,
+  `p02` retains its frozen FAIL, and final v3 Recall@3 is not calculable. The
+  historical threshold-only 9/10 = 90% is not relabeled as current evidence.
+- Final offline closure QA passes 83 Python tests covering RAG, checkpoints,
+  API, JWT, roles and serialization. Website full lint and TypeScript pass;
+  Backoffice milestone-focused lint and full TypeScript pass; both Next.js
+  16.4.5 production builds pass. Offline production npm audits report zero
+  findings and `uv lock --check` passes.
+- Backoffice global lint still reports three errors and one warning in
+  historical non-RAG profile/login/AuthContext/inventory files. A Python
+  vulnerability scanner is not installed. These are disclosed limitations and
+  were not modified as part of the RAG closeout.
+- Compose validation passes. API, Website, login and Knowledge Base respond
+  locally, and Qdrant remains healthy with exactly 14 points. No external model
+  request, reindex, holdout run, Git staging, commit, push or PR occurred.
+- The exact 18 tracked plus 76 untracked delivery files, mandatory exclusions,
+  proposed commit, complete Draft PR text and Milestone 8 transition are
+  recorded in `docs/rag/pre-pr-handoff.md`. Website now ignores `.env*` and
+  `*.tsbuildinfo` to prevent QA artifacts or private frontend settings from
+  entering staging.
+- The next roadmap item is Milestone 8 (Agents), recommended as a separate
+  `feature/agents-customer-support` branch only after the user-owned RAG commit
+  and Draft PR. No agent implementation has started.

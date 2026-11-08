@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "evaluation_version": "trackflow-independent-holdout-v2-2026-11-07",
+  "target_system_version": "rag-hybrid-v3",
+  "created_at": "2026-11-07T14:25:05-07:00",
+  "retrieval_rubric": {
+    "positive_raw_semantic_recall_at_3": "Por caso positivo, asignar 1 si al menos un par exacto source_document/section esperado aparece en los tres primeros resultados semánticos brutos; en otro caso, 0.",
+    "positive_selected_evidence_coverage": "Medir por separado la proporción de pares esperados seleccionados como evidencia primaria semántica, primaria léxica o complementaria. Un caso con varias referencias solo tiene cobertura completa si recupera todos sus pares esperados.",
+    "top_three_precision": "Juzgar cada uno de los tres resultados contra la intención congelada del caso y reportar la fracción relevante; no considerar relevante una coincidencia meramente tangencial.",
+    "negative_retrieval_abstention": "Asignar 1 solo si no se selecciona evidencia como fundamento suficiente para contestar el dato ausente; en otro caso, 0.",
+    "error_handling": "Un error técnico, timeout o respuesta de proveedor fallida se registra como error y nunca como recuperación fallida correcta ni como abstención."
+  },
+  "fidelity_rubric": {
+    "fact_scoring": "Puntuar cada hecho requerido como 1 si está expresado correctamente, 0 si falta, es incorrecto o queda materialmente ambiguo.",
+    "positive_case_pass": "El caso pasa fidelidad solo si cumple todos los hechos requeridos, no contradice las fuentes y no añade afirmaciones comerciales no respaldadas.",
+    "negative_case_pass": "El caso negativo pasa solo si declara que el dato no está documentado o que no puede determinarse con las fuentes, sin inventar una respuesta ni sustituirla por un error técnico.",
+    "unsupported_claims": "Registrar por separado cualquier cifra, plazo, tarifa, alcance, excepción, autoridad de aprobación o garantía comercial no sustentada.",
+    "reporting": "Reportar recuperación, fidelidad, abstenciones, falsos positivos, falsos negativos y errores técnicos por separado; no combinarlos en una sola puntuación favorable."
+  },
+  "cases": [
+    {
+      "id": "ihv2-p01",
+      "required_facts": [
+        "El envío estándar dentro del mismo país tarda de 3 a 5 días laborables.",
+        "El envío internacional entre Estados Unidos y España tarda de 7 a 12 días laborables.",
+        "El plazo internacional está sujeto a aduanas y TrackFlow no controla las retenciones aduaneras."
+      ]
+    },
+    {
+      "id": "ihv2-p02",
+      "required_facts": [
+        "El SLA contractual es 90% de entregas a tiempo al mes, medido por país.",
+        "La compensación se activa cuando un país queda por debajo del 90% durante dos meses consecutivos.",
+        "La compensación es el 5% de la cuota mensual de ese país."
+      ]
+    },
+    {
+      "id": "ihv2-p03",
+      "required_facts": [
+        "TrackFlow no garantiza el SLA durante fechas declaradas de alta demanda.",
+        "Black Friday está incluido entre esas fechas.",
+        "Los plazos pueden ampliarse hasta un 40% adicional.",
+        "La ampliación debe comunicarse proactivamente a los clientes con antelación."
+      ]
+    },
+    {
+      "id": "ihv2-p04",
+      "required_facts": [
+        "El consumidor final solicita la devolución mediante el portal de la marca.",
+        "TrackFlow genera automáticamente la etiqueta si el motivo encaja en las reglas configuradas por el cliente.",
+        "Al llegar al almacén, un operario inspecciona el producto.",
+        "Las clasificaciones posibles son apto para reventa, apto para reacondicionamiento o no apto (desecho)."
+      ]
+    },
+    {
+      "id": "ihv2-p05",
+      "required_facts": [
+        "Como regla general, la marca cliente cubre el coste del envío de devolución.",
+        "TrackFlow cubre el coste cuando la causa es un error de TrackFlow.",
+        "Producto dañado durante el transporte y entrega equivocada son los ejemplos documentados de error de TrackFlow."
+      ]
+    },
+    {
+      "id": "ihv2-p06",
+      "required_facts": [
+        "Una devolución comprada en un país y devuelta en otro no está cubierta por el proceso automatizado estándar.",
+        "La devolución requiere gestión manual.",
+        "La gestión corresponde al equipo de Sofía Ramos, responsable de devoluciones."
+      ]
+    },
+    {
+      "id": "ihv2-p07",
+      "required_facts": [
+        "UPS destaca por la mejor tarifa para paquetes pesados de más de 5 kg.",
+        "Un paquete de 7 kg entra en esa categoría documentada.",
+        "UPS tiene cobertura nacional completa en Estados Unidos."
+      ]
+    },
+    {
+      "id": "ihv2-p08",
+      "required_facts": [
+        "MRW ofrece las tarifas más competitivas para paquetes pequeños de menos de 2 kg.",
+        "SEUR ofrece la mejor cobertura en zonas rurales de Aragón.",
+        "La respuesta distingue la recomendación por peso de la recomendación por destino."
+      ]
+    },
+    {
+      "id": "ihv2-p09",
+      "required_facts": [
+        "El sistema selecciona el transportista según destino, peso, tipo de producto y urgencia.",
+        "El account manager no elige manualmente el transportista en el flujo normal.",
+        "Una excepción requiere aprobación de Carlos Vega, Head of Carrier Operations."
+      ]
+    },
+    {
+      "id": "ihv2-p10",
+      "required_facts": [
+        "El almacenamiento se cobra por volumen ocupado, no por número de unidades.",
+        "La tarifa estándar de Los Ángeles es 18 USD por metro cúbico al mes.",
+        "La tarifa estándar de Zaragoza es 16 EUR por metro cúbico al mes.",
+        "Los primeros 30 días de un producto nuevo en inventario no generan cargo de almacenamiento."
+      ]
+    },
+    {
+      "id": "ihv2-p11",
+      "required_facts": [
+        "El inventario con más de 180 días sin movimiento, definido como sin ventas ni salidas, queda sujeto a la tarifa de inventario de larga duración.",
+        "La tarifa documentada es un 150% sobre la tarifa estándar.",
+        "La tarifa empieza a aplicarse el día 181."
+      ]
+    },
+    {
+      "id": "ihv2-p12",
+      "required_facts": [
+        "FedEx ofrece el mejor tiempo de entrega para envíos express dentro de California.",
+        "El plazo express habitual es de 24 a 48 horas dentro del mismo país y está disponible en el área metropolitana de Los Ángeles.",
+        "Navidad es una fecha declarada de alta demanda.",
+        "Durante alta demanda el SLA no está garantizado y los plazos pueden ampliarse hasta un 40% adicional.",
+        "La ampliación debe comunicarse proactivamente a los clientes con antelación."
+      ]
+    },
+    {
+      "id": "ihv2-n01",
+      "required_facts": [
+        "Debe abstenerse porque los documentos no indican horarios de atención de fin de semana para ninguno de los almacenes.",
+        "No debe inventar días ni horas de apertura."
+      ]
+    },
+    {
+      "id": "ihv2-n02",
+      "required_facts": [
+        "Debe abstenerse porque los documentos no especifican un plazo para emitir reembolsos al consumidor.",
+        "No debe confundir el plazo de devolución de 30 días con un plazo de reembolso."
+      ]
+    },
+    {
+      "id": "ihv2-n03",
+      "required_facts": [
+        "Debe abstenerse porque los documentos no detallan límites de seguro por paquete o transportista.",
+        "No debe inferir una cobertura monetaria a partir de la lista de transportistas."
+      ]
+    },
+    {
+      "id": "ihv2-n04",
+      "required_facts": [
+        "Debe abstenerse porque los documentos no especifican dimensiones máximas de cajas ni recargos por dimensiones.",
+        "No debe convertir la facturación por volumen ocupado en un límite dimensional inexistente."
+      ]
+    }
+  ]
+}

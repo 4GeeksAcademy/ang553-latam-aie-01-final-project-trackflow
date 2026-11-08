@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "system_version": "rag-hybrid-v3",
+  "evaluation_version": "trackflow-independent-holdout-v2.1-2026-11-07",
+  "holdout_artifact": "independent-holdout-v2.1.json",
+  "holdout_sha256": "99a37a949d1b5adc5c01704778eef43c9611981a3541fb7e42af50c0171edc71",
+  "rubric_artifact": "independent-holdout-v2.1-rubric.json",
+  "rubric_sha256": "d05d1fe6e5a970816c3a201307fa05876fc03f1661c5662e3392eeb90d0cca5d",
+  "result_artifact": "independent-holdout-v2.1-results.json",
+  "review_template": "independent-holdout-v2.1-review-template.json",
+  "case_counts": {
+    "positive": 12,
+    "negative": 4,
+    "total": 16
+  },
+  "external_request_budget": {
+    "embedding_requests_maximum": 16,
+    "generation_requests_maximum": 16,
+    "minimum_interval_seconds": 2.0,
+    "automatic_retries": 0
+  }
+}

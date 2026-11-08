@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "evaluation_version": "rag-contextual-v2-independent-v1",
+  "language": "en",
+  "created_before_execution": true,
+  "positive": [
+    {
+      "id": "v2-sla-express-corridor",
+      "question": "A brand needs express shipping from Madrid to Zaragoza. What delivery window and route eligibility does the policy state?",
+      "expected": [{"source_document": "sla-delivery", "section": "delivery-commitments"}]
+    },
+    {
+      "id": "v2-sla-customs-control",
+      "question": "For a shipment moving from the United States to Spain, what delivery window applies and what customs delay does TrackFlow not control?",
+      "expected": [{"source_document": "sla-delivery", "section": "delivery-commitments"}]
+    },
+    {
+      "id": "v2-sla-seasonal-notice",
+      "question": "During a declared seasonal demand period, what is the maximum additional delivery-time extension and what advance communication is required?",
+      "expected": [{"source_document": "sla-delivery", "section": "high-demand-periods"}]
+    },
+    {
+      "id": "v2-returns-standard-sequence",
+      "question": "Under the standard reverse-logistics workflow, what happens from the portal request through warehouse classification?",
+      "expected": [{"source_document": "returns-policy", "section": "standard-return-process"}]
+    },
+    {
+      "id": "v2-returns-shipping-liability",
+      "question": "Who normally pays return shipping, and which two TrackFlow-caused situations transfer that cost to TrackFlow?",
+      "expected": [{"source_document": "returns-policy", "section": "return-window-and-costs"}]
+    },
+    {
+      "id": "v2-returns-company-scope",
+      "question": "May TrackFlow independently recondition or resell returned products for its own account?",
+      "expected": [{"source_document": "returns-policy", "section": "service-scope"}]
+    },
+    {
+      "id": "v2-carrier-us-heavy-rate",
+      "question": "For a seven-kilogram domestic parcel in the United States, which carrier is positioned for the best rate and why?",
+      "expected": [{"source_document": "carrier-coverage", "section": "united-states-coverage"}]
+    },
+    {
+      "id": "v2-carrier-spain-small-parcel",
+      "question": "For a 1.5-kilogram parcel in Spain, which named carrier offers the most competitive rate, and where are local carriers restricted?",
+      "expected": [{"source_document": "carrier-coverage", "section": "spain-coverage"}]
+    },
+    {
+      "id": "v2-carrier-selection-governance",
+      "question": "Which four shipment attributes drive automated carrier selection, and who must approve a manual exception?",
+      "expected": [{"source_document": "carrier-coverage", "section": "selection-and-exceptions"}]
+    },
+    {
+      "id": "v2-storage-country-rates",
+      "question": "What monthly cubic-meter storage rate applies in each warehouse, and how long is a new product free of storage charges?",
+      "expected": [{"source_document": "storage-pricing", "section": "standard-rates-and-grace-period"}]
+    },
+    {
+      "id": "v2-storage-aging-access",
+      "question": "How can a client brand obtain an inventory aging report, and is that report automated for the end client?",
+      "expected": [{"source_document": "storage-pricing", "section": "aging-reports"}]
+    },
+    {
+      "id": "v2-storage-billing-basis",
+      "question": "Is regular storage billing determined by item count or by the amount of warehouse volume occupied?",
+      "expected": [{"source_document": "storage-pricing", "section": "standard-rates-and-grace-period"}]
+    }
+  ],
+  "negative": [
+    {"id": "v2-negative-cold-chain", "question": "What temperature range does TrackFlow guarantee for refrigerated medicines?", "expected": []},
+    {"id": "v2-negative-flood-insurance", "question": "What insurance payment applies when warehouse inventory is destroyed by a flood?", "expected": []},
+    {"id": "v2-negative-opening-hours", "question": "What are the Saturday and Sunday opening hours for the Zaragoza warehouse?", "expected": []},
+    {"id": "v2-negative-carbon-offsets", "question": "How many kilograms of carbon offsets does TrackFlow purchase per delivery?", "expected": []}
+  ]
+}

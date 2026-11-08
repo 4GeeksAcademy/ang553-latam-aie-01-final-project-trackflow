@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "gen-delivery-standard",
+      "question": "What is TrackFlow's standard domestic delivery time?",
+      "source_document": "sla-delivery",
+      "section": "delivery-commitments",
+      "required_patterns": ["3\\s*(?:to|-)\\s*5 business days"]
+    },
+    {
+      "id": "gen-delivery-express",
+      "question": "How fast is express domestic shipping and where is it available?",
+      "source_document": "sla-delivery",
+      "section": "delivery-commitments",
+      "required_patterns": ["24\\s*(?:to|-)\\s*48 hours", "Los Angeles metropolitan", "Zaragoza-Madrid"]
+    },
+    {
+      "id": "gen-high-demand",
+      "question": "What happens to TrackFlow delivery commitments during Black Friday, Christmas, and January Sales in Spain?",
+      "source_document": "sla-delivery",
+      "section": "high-demand-periods",
+      "required_patterns": ["(?:does not|not) guarantee", "Black Friday", "Christmas", "January Sales", "40%"]
+    },
+    {
+      "id": "gen-return-window-costs",
+      "question": "What is the standard return window, what exception can change it, and who pays return shipping?",
+      "source_document": "returns-policy",
+      "section": "return-window-and-costs",
+      "required_patterns": ["30 days", "contract", "client brand", "TrackFlow"]
+    },
+    {
+      "id": "gen-international-returns",
+      "question": "How are international returns handled?",
+      "source_document": "returns-policy",
+      "section": "international-returns",
+      "required_patterns": ["not covered by the standard automated process", "manual", "Sofía Ramos"]
+    },
+    {
+      "id": "gen-carrier-international-la",
+      "question": "Which carrier is the reliable option for international shipments from Los Angeles?",
+      "source_document": "carrier-coverage",
+      "section": "united-states-coverage",
+      "required_patterns": ["DHL", "international", "Los Angeles"]
+    },
+    {
+      "id": "gen-carrier-exception",
+      "question": "Can an account manager manually choose a carrier without approval?",
+      "source_document": "carrier-coverage",
+      "section": "selection-and-exceptions",
+      "required_patterns": ["system", "Carlos Vega", "approv"]
+    },
+    {
+      "id": "gen-storage-standard",
+      "question": "What are the standard storage rates and grace period?",
+      "source_document": "storage-pricing",
+      "section": "standard-rates-and-grace-period",
+      "required_patterns": ["18 USD", "16 EUR", "30 days"]
+    },
+    {
+      "id": "gen-storage-long-term",
+      "question": "When does the long-term inventory fee begin and exactly how is it calculated?",
+      "source_document": "storage-pricing",
+      "section": "long-term-inventory",
+      "required_patterns": ["more than 180 days", "150% over the standard rate", "day 181"]
+    },
+    {
+      "id": "gen-storage-preferential",
+      "question": "Who can approve a preferential storage rate and when can it be negotiated?",
+      "source_document": "storage-pricing",
+      "section": "preferential-rates",
+      "required_patterns": ["more than 50 cubic meters", "Miguel Torres", "account manager"]
+    },
+    {
+      "id": "gen-negative-sunday",
+      "question": "Does TrackFlow guarantee Sunday delivery?",
+      "source_document": "sla-delivery",
+      "section": "high-demand-periods",
+      "required_patterns": ["(?:not enough information|insufficient information|does not specify|not specified|cannot determine)"]
+    }
+  ]
+}

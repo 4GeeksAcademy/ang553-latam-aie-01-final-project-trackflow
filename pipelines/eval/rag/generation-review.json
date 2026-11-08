@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "generation_results_sha256": "f12e63b245fa0566d02888ca9580a4c45e119c2b3a14603a8e54cbc95e7c7b16",
+  "manual_passed": 11,
+  "total": 11,
+  "cases": [
+    {"id": "gen-delivery-standard", "pass": true, "reason": "Preserves the 3-to-5-business-day domestic commitment."},
+    {"id": "gen-delivery-express", "pass": true, "reason": "Preserves 24–48 hours and both authorized geographic limits."},
+    {"id": "gen-high-demand", "pass": true, "reason": "Preserves no guarantee, all three periods, the additional 40%, and proactive notice."},
+    {"id": "gen-return-window-costs", "pass": true, "reason": "Preserves 30 days, contractual override, and both cost-responsibility branches."},
+    {"id": "gen-international-returns", "pass": true, "reason": "Preserves exclusion from automation and manual handling by Sofía Ramos's team."},
+    {"id": "gen-carrier-international-la", "pass": true, "reason": "DHL is the exact answer; omitted restatement of the question caused only a regex miss."},
+    {"id": "gen-carrier-exception", "pass": true, "reason": "Correctly denies unapproved manual choice and requires Carlos Vega approval; the omitted word system caused only a regex miss."},
+    {"id": "gen-storage-standard", "pass": true, "reason": "Preserves 18 USD, 16 EUR, volume/month units, locations, and the 30-day grace period."},
+    {"id": "gen-storage-long-term", "pass": true, "reason": "Preserves day 181 and exactly 150% over the standard rate; the redundant more-than-180 wording was omitted."},
+    {"id": "gen-storage-preferential", "pass": true, "reason": "Preserves Miguel Torres approval and the more-than-50-cubic-meter condition; it does not grant authority to account managers."},
+    {"id": "gen-negative-sunday", "pass": true, "reason": "Explicitly abstains because the approved corpus does not answer Sunday delivery."}
+  ]
+}

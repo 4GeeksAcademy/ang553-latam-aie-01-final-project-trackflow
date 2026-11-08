@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "split": "calibration",
+  "source_sha256": "31b3057a1af3ef6bcaaa4f142dc51997e37011c03572d7b074e7e3f6f9fa7dd0",
+  "threshold": null,
+  "k": 3,
+  "cases": [
+    {
+      "id": "cal-sla-express",
+      "question": "Where is TrackFlow express shipping available?",
+      "expected": [
+        {
+          "source_document": "sla-delivery",
+          "section": "delivery-commitments"
+        }
+      ],
+      "top3": [
+        {
+          "rank": 1,
+          "point_id": "6614ec3f-e272-5c09-92ff-4b50e9d04292",
+          "source_document": "sla-delivery",
+          "section": "delivery-commitments",
+          "chunk_index": 0,
+          "score": 0.6420697,
+          "text": "TrackFlow manages last-mile delivery in the United States (Los Angeles) and\nSpain (Zaragoza). Delivery commitments vary depending on the service type\ncontracted by the client brand:\n\n- Standard shipping: 3 to 5 business days within the same country.\n- Express shipping: 24 to 48 hours within the same country (available only\n  in the Los Angeles metropolitan area and the Zaragoza-Madrid corridor).\n- International shipping (between the United States and Spain): 7 to 12\n  business days, subject to customs; TrackFlow does not control customs\n  hold times."
+        },
+        {
+          "rank": 2,
+          "point_id": "44892a95-7f61-52d7-a2a6-d850af20c4c9",
+          "source_document": "carrier-coverage",
+          "section": "united-states-coverage",
+          "chunk_index": 0,
+          "score": 0.5784366,
+          "text": "TrackFlow works with different carriers depending on the country:\n\nUnited States (Los Angeles): UPS, FedEx, and DHL.\n- UPS: full national coverage, best rate for heavy packages (over 5 kg).\n- FedEx: best delivery time for express shipments within California.\n- DHL: the only reliable-coverage option for international shipments from\n  Los Angeles."
+        },
+        {
+          "rank": 3,
+          "point_id": "54157b46-a155-5314-93e8-7a9524d33b0a",
+          "source_document": "sla-delivery",
+          "section": "high-demand-periods",
+          "chunk_index": 2,
+          "score": 0.4186627,
+          "text": "TrackFlow does not guarantee delivery SLA during declared high-demand dates\n(Black Friday, Christmas, January Sales in Spain) \u2014 during those dates,\ndelivery times may extend by up to an additional 40%, and this must be\ncommunicated proactively to clients in advance."
+        }
+      ],
+      "pass": true
+    },
+    {
+      "id": "cal-carrier-small-package",
+      "question": "Which carrier has the most competitive rates for packages under 2 kg in Spain?",
+      "expected": [
+        {
+          "source_document": "carrier-coverage",
+          "section": "spain-coverage"
+        }
+      ],
+      "top3": [
+        {
+          "rank": 1,
+          "point_id": "cd0a829d-d952-54cf-b59a-92ab10db7963",
+          "source_document": "carrier-coverage",
+          "section": "spain-coverage",
+          "chunk_index": 1,
+          "score": 0.65864444,
+          "text": "Spain (Zaragoza): MRW, SEUR, DHL, and two local last-mile carriers in the\nZaragoza metropolitan area.\n- SEUR: best coverage in rural areas of Arag\u00f3n.\n- MRW: most competitive rates for small packages (under 2 kg).\n- Local carriers: only available within the Zaragoza metropolitan area, do\n  not cover the rest of Spain."
+        },
+        {
+          "rank": 2,
+          "point_id": "44892a95-7f61-52d7-a2a6-d850af20c4c9",
+          "source_document": "carrier-coverage",
+          "section": "united-states-coverage",
+          "chunk_index": 0,
+          "score": 0.42783603,
+          "text": "TrackFlow works with different carriers depending on the country:\n\nUnited States (Los Angeles): UPS, FedEx, and DHL.\n- UPS: full national coverage, best rate for heavy packages (over 5 kg).\n- FedEx: best delivery time for express shipments within California.\n- DHL: the only reliable-coverage option for international shipments from\n  Los Angeles."
+        },
+        {
+          "rank": 3,
+          "point_id": "6614ec3f-e272-5c09-92ff-4b50e9d04292",
+          "source_document": "sla-delivery",
+          "section": "delivery-commitments",
+          "chunk_index": 0,
+          "score": 0.3127265,
+          "text": "TrackFlow manages last-mile delivery in the United States (Los Angeles) and\nSpain (Zaragoza). Delivery commitments vary depending on the service type\ncontracted by the client brand:\n\n- Standard shipping: 3 to 5 business days within the same country.\n- Express shipping: 24 to 48 hours within the same country (available only\n  in the Los Angeles metropolitan area and the Zaragoza-Madrid corridor).\n- International shipping (between the United States and Spain): 7 to 12\n  business days, subject to customs; TrackFlow does not control customs\n  hold times."
+        }
+      ],
+      "pass": true
+    },
+    {
+      "id": "cal-storage-grace",
+      "question": "Is storage charged during a new product's first 30 days?",
+      "expected": [
+        {
+          "source_document": "storage-pricing",
+          "section": "standard-rates-and-grace-period"
+        }
+      ],
+      "top3": [
+        {
+          "rank": 1,
+          "point_id": "37dc227d-85c4-596e-b05a-2e404eb1a95e",
+          "source_document": "storage-pricing",
+          "section": "standard-rates-and-grace-period",
+          "chunk_index": 0,
+          "score": 0.5787239,
+          "text": "TrackFlow charges client brands for storage based on volume occupied, not\nnumber of units:\n\n- Standard rate: 18 USD per cubic meter per month (Los Angeles) or 16 EUR\n  per cubic meter per month (Zaragoza).\n- The first 30 days of any new product in inventory incur no storage\n  charge (grace period)."
+        },
+        {
+          "rank": 2,
+          "point_id": "3d6d9c5f-cde8-5f50-8e06-0902ec53e568",
+          "source_document": "storage-pricing",
+          "section": "long-term-inventory",
+          "chunk_index": 1,
+          "score": 0.440133,
+          "text": "- Inventory with more than 180 days of no movement (no sales or outbound)\n  pays a \"long-term inventory\" fee of 150% over the standard rate, starting\n  on day 181."
+        },
+        {
+          "rank": 3,
+          "point_id": "d30c3961-d19f-5cae-a286-22e35f927874",
+          "source_document": "returns-policy",
+          "section": "return-window-and-costs",
+          "chunk_index": 1,
+          "score": 0.34833258,
+          "text": "Standard return window: 30 days from delivery, unless the client brand has\nconfigured a different window in their contract.\n\nReturn costs: the return shipping cost is covered by the client brand,\nunless the reason is a TrackFlow error (product damaged in transit or\nwrong delivery), in which case TrackFlow covers it."
+        }
+      ],
+      "pass": true
+    }
+  ],
+  "passed": 3,
+  "total": 3,
+  "rate": 1.0,
+  "embedding_requests": 3,
+  "usage": {
+    "completion_tokens": 0,
+    "prompt_tokens": 38,
+    "total_tokens": 38
+  }
+}
