@@ -37,9 +37,11 @@ RUN uv pip install --system --no-cache -r /app/services/api/requirements.txt
 # Only the directories that the runtime needs:
 #   services/   — FastAPI application code
 #   scripts/    — Incident-analysis package (imported by services.api.main)
+#   agents/     — compiled customer-support LangGraph
 COPY services/ /app/services/
 COPY scripts/ /app/scripts/
 COPY pipelines/ /app/pipelines/
+COPY agents/ /app/agents/
 
 # ── Runtime configuration ───────────────────────────────────────────────────
 EXPOSE 8000

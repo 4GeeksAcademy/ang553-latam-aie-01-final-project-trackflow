@@ -1,0 +1,190 @@
+{
+  "evaluations": [
+    {
+      "checks": {
+        "authentic_policy_conditions": true,
+        "checkpoint_removed": true,
+        "compiled_route": true,
+        "exact_authentic_source": true,
+        "expected_abstention": true,
+        "generation_calls": true,
+        "retrieval_once": true
+      },
+      "name": "grounded_answer_route",
+      "passed": true,
+      "run_id": "550e8400-e29b-41d4-a716-446655440011",
+      "trace": {
+        "duration_ms": 7.0,
+        "nodes": [
+          {
+            "duration_ms": 1.0,
+            "node": "retrieve_context",
+            "sequence": 1,
+            "state": {
+              "context_count": 1,
+              "has_answer": false,
+              "has_question": true,
+              "has_result": false,
+              "insufficient_context": null,
+              "source_count": 0
+            },
+            "status": "completed",
+            "transition": "generate_answer"
+          },
+          {
+            "duration_ms": 1.0,
+            "node": "generate_answer",
+            "sequence": 2,
+            "state": {
+              "context_count": 1,
+              "has_answer": true,
+              "has_question": true,
+              "has_result": false,
+              "insufficient_context": null,
+              "source_count": 0
+            },
+            "status": "completed",
+            "transition": "finalize_answer"
+          },
+          {
+            "duration_ms": 1.0,
+            "node": "finalize_answer",
+            "sequence": 3,
+            "state": {
+              "context_count": 1,
+              "has_answer": true,
+              "has_question": true,
+              "has_result": true,
+              "insufficient_context": false,
+              "source_count": 1
+            },
+            "status": "completed",
+            "transition": "__end__"
+          }
+        ],
+        "outcome": "answered",
+        "run_id": "550e8400-e29b-41d4-a716-446655440011",
+        "status": "completed"
+      }
+    },
+    {
+      "checks": {
+        "checkpoint_removed": true,
+        "compiled_route": true,
+        "expected_abstention": true,
+        "generation_calls": true,
+        "retrieval_once": true
+      },
+      "name": "retrieval_abstention_route",
+      "passed": true,
+      "run_id": "550e8400-e29b-41d4-a716-446655440012",
+      "trace": {
+        "duration_ms": 5.0,
+        "nodes": [
+          {
+            "duration_ms": 1.0,
+            "node": "retrieve_context",
+            "sequence": 1,
+            "state": {
+              "context_count": 0,
+              "has_answer": false,
+              "has_question": true,
+              "has_result": false,
+              "insufficient_context": null,
+              "source_count": 0
+            },
+            "status": "completed",
+            "transition": "abstain"
+          },
+          {
+            "duration_ms": 1.0,
+            "node": "abstain",
+            "sequence": 2,
+            "state": {
+              "context_count": 0,
+              "has_answer": false,
+              "has_question": true,
+              "has_result": true,
+              "insufficient_context": true,
+              "source_count": 0
+            },
+            "status": "completed",
+            "transition": "__end__"
+          }
+        ],
+        "outcome": "abstained",
+        "run_id": "550e8400-e29b-41d4-a716-446655440012",
+        "status": "completed"
+      }
+    },
+    {
+      "checks": {
+        "checkpoint_removed": true,
+        "compiled_route": true,
+        "expected_abstention": true,
+        "generation_calls": true,
+        "retrieval_once": true
+      },
+      "name": "generation_abstention_route",
+      "passed": true,
+      "run_id": "550e8400-e29b-41d4-a716-446655440013",
+      "trace": {
+        "duration_ms": 7.0,
+        "nodes": [
+          {
+            "duration_ms": 1.0,
+            "node": "retrieve_context",
+            "sequence": 1,
+            "state": {
+              "context_count": 1,
+              "has_answer": false,
+              "has_question": true,
+              "has_result": false,
+              "insufficient_context": null,
+              "source_count": 0
+            },
+            "status": "completed",
+            "transition": "generate_answer"
+          },
+          {
+            "duration_ms": 1.0,
+            "node": "generate_answer",
+            "sequence": 2,
+            "state": {
+              "context_count": 1,
+              "has_answer": true,
+              "has_question": true,
+              "has_result": false,
+              "insufficient_context": null,
+              "source_count": 0
+            },
+            "status": "completed",
+            "transition": "abstain"
+          },
+          {
+            "duration_ms": 1.0,
+            "node": "abstain",
+            "sequence": 3,
+            "state": {
+              "context_count": 1,
+              "has_answer": true,
+              "has_question": true,
+              "has_result": true,
+              "insufficient_context": true,
+              "source_count": 0
+            },
+            "status": "completed",
+            "transition": "__end__"
+          }
+        ],
+        "outcome": "abstained",
+        "run_id": "550e8400-e29b-41d4-a716-446655440013",
+        "status": "completed"
+      }
+    }
+  ],
+  "passed": true,
+  "precision_claim": false,
+  "schema_version": 1,
+  "scope": "compiled_graph_with_local_fakes"
+}

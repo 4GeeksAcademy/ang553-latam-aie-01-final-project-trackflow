@@ -10,3 +10,4 @@ psycopg2-binary>=2.9.10,<3.0.0
 pandas>=2.2.0,<3.0.0
 prefect==3.9.0
 httpx>=0.28.1,<1.0.0
+langgraph>=1.0.0,<2.0.0

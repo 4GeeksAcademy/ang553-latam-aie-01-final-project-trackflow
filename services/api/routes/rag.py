@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from typing import Annotated, Literal
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from agents.customer_support import CustomerSupportAgent, get_customer_support_agent
 from services.api.auth_models import Role, UserInDB
 from services.api.auth_security import get_current_user
 from services.rag.clients import FourGeeksHTTPClient, QdrantHTTPVectorStore
@@ -103,19 +105,27 @@ def get_rag_service() -> Iterator[RAGService]:
 def query_knowledge_base(
     payload: KnowledgeQueryRequest,
     request: Request,
+    response: Response,
     service: Annotated[RAGService, Depends(get_rag_service)],
+    agent: Annotated[CustomerSupportAgent, Depends(get_customer_support_agent)],
 ) -> KnowledgeQueryResponse:
+    run_id = str(uuid4())
     try:
-        result = service.query(
+        execution = agent.execute(
             payload.question,
+            service,
             request_id=getattr(request.state, "request_id", None),
+            run_id=run_id,
         )
     except (RAGConfigurationError, RAGProviderError):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="knowledge service unavailable",
+            headers={"X-TrackFlow-Run-ID": run_id},
         ) from None
 
+    response.headers["X-TrackFlow-Run-ID"] = run_id
+    result = execution.result
     return KnowledgeQueryResponse(
         answer=result.answer,
         insufficient_context=result.insufficient_context,
