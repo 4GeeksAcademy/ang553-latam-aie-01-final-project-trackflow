@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "kind": "post_hoc_offline_review",
+  "generation_results_sha256": "f12e63b245fa0566d02888ca9580a4c45e119c2b3a14603a8e54cbc95e7c7b16",
+  "fidelity_cases_sha256": "a578787f3ab67684b6d1ae9bcb96bece0b022b0d23aa5385c261eba817630d2f",
+  "reviewed": 4,
+  "passed": 3,
+  "cases": [
+    {
+      "id": "gen-carrier-international-la",
+      "pass": true,
+      "matched_requirements": [
+        "reliable international carrier"
+      ],
+      "missing_requirements": []
+    },
+    {
+      "id": "gen-carrier-exception",
+      "pass": true,
+      "matched_requirements": [
+        "manual choice denied",
+        "exception requires approval",
+        "Carlos Vega authority"
+      ],
+      "missing_requirements": []
+    },
+    {
+      "id": "gen-storage-long-term",
+      "pass": false,
+      "matched_requirements": [
+        "more than 180 days",
+        "starts on day 181",
+        "150 percent over standard rate"
+      ],
+      "missing_requirements": [
+        "no-movement eligibility"
+      ]
+    },
+    {
+      "id": "gen-storage-preferential",
+      "pass": true,
+      "matched_requirements": [
+        "Miguel Torres approval",
+        "more than 50 cubic meters",
+        "average monthly volume"
+      ],
+      "missing_requirements": []
+    }
+  ]
+}

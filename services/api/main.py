@@ -26,6 +26,7 @@ from services.api.auth_security import get_current_user
 from services.api.database import create_db_and_tables
 from services.api.routes.auth import router as auth_router
 from services.api.routes.inventory import router as inventory_router
+from services.api.routes.rag import router as rag_router
 from services.api.routes.profiles import router as profiles_router
 from services.api.routes.suppliers import router as suppliers_router
 from services.api.routes.telemetry import router as telemetry_router
@@ -202,6 +203,7 @@ app.include_router(profiles_router)
 app.include_router(telemetry_router)
 app.include_router(reporting_router)
 app.include_router(task_router)
+app.include_router(rag_router)
 
 
 # ── Health check ─────────────────────────────────────────────────────────────

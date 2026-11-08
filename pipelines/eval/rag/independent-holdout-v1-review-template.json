@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "target_system_version": "rag-hybrid-v3",
+  "holdout_sha256": "3565f8cad364745000df1c43328b30601510af9760ff718463c6de9c9a1d30a6",
+  "rubric_sha256": "860b80288e9f682762d8eb59c1bb31d5be7354fae673b76b5f7bba9ec18a0382",
+  "approved": null,
+  "reviewer": null,
+  "reviewer_independent_from_implementation": null,
+  "reviewed_at": null,
+  "checks": {
+    "references_match_corpus": null,
+    "ambiguity_reviewed": null,
+    "duplicates_reviewed": null,
+    "prior_use_reviewed": null,
+    "rubric_is_material_and_complete": null
+  },
+  "limitations": [
+    "The implementation-side agent authored and has inspected the sealed questions; reviewer independence must be external to that process."
+  ]
+}

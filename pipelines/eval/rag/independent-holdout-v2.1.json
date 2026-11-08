@@ -1,0 +1,159 @@
+{
+  "schema_version": 1,
+  "evaluation_version": "trackflow-independent-holdout-v2.1-2026-11-07",
+  "target_system_version": "rag-hybrid-v3",
+  "created_at": "2026-11-07T14:52:41-07:00",
+  "language": "es",
+  "positive": [
+    {
+      "id": "ihv2-p01",
+      "question": "¿Cuánto tarda normalmente un envío estándar dentro del mismo país y qué plazo tiene un envío internacional entre Estados Unidos y España?",
+      "expected": [
+        {
+          "source_document": "sla-delivery",
+          "section": "delivery-commitments"
+        }
+      ]
+    },
+    {
+      "id": "ihv2-p02",
+      "question": "Si las entregas a tiempo de un país quedan por debajo del compromiso durante dos meses seguidos, ¿qué compensación corresponde y sobre qué importe se calcula?",
+      "expected": [
+        {
+          "source_document": "sla-delivery",
+          "section": "monthly-sla-and-compensation"
+        }
+      ]
+    },
+    {
+      "id": "ihv2-p03",
+      "question": "Durante Black Friday, ¿se mantiene garantizado el SLA de entrega y cuánto pueden ampliarse los plazos? ¿Hay que avisar al cliente?",
+      "expected": [
+        {
+          "source_document": "sla-delivery",
+          "section": "high-demand-periods"
+        }
+      ]
+    },
+    {
+      "id": "ihv2-p04",
+      "question": "¿Qué pasos sigue una devolución estándar desde que la solicita el consumidor hasta que se inspecciona el producto, y cuáles son las posibles clasificaciones finales?",
+      "expected": [
+        {
+          "source_document": "returns-policy",
+          "section": "standard-return-process"
+        }
+      ]
+    },
+    {
+      "id": "ihv2-p05",
+      "question": "¿Quién paga el transporte de una devolución normal y qué cambia si el producto llegó dañado durante el transporte o se entregó el artículo equivocado?",
+      "expected": [
+        {
+          "source_document": "returns-policy",
+          "section": "return-window-and-costs"
+        }
+      ]
+    },
+    {
+      "id": "ihv2-p06",
+      "question": "Un pedido comprado en un país se devuelve desde el otro. ¿Puede seguir el proceso automático estándar y quién debe gestionarlo?",
+      "expected": [
+        {
+          "source_document": "returns-policy",
+          "section": "international-returns"
+        }
+      ]
+    },
+    {
+      "id": "ihv2-p07",
+      "question": "Para un paquete de 7 kg con destino nacional en Estados Unidos, ¿qué transportista destaca por tarifa y qué alcance tiene?",
+      "expected": [
+        {
+          "source_document": "carrier-coverage",
+          "section": "united-states-coverage"
+        }
+      ]
+    },
+    {
+      "id": "ihv2-p08",
+      "question": "¿Qué opciones se recomiendan en España para un paquete pequeño de menos de 2 kg y para una entrega en una zona rural de Aragón?",
+      "expected": [
+        {
+          "source_document": "carrier-coverage",
+          "section": "spain-coverage"
+        }
+      ]
+    },
+    {
+      "id": "ihv2-p09",
+      "question": "¿El account manager puede elegir manualmente el transportista de un envío? Explica cómo se selecciona y quién debe aprobar una excepción.",
+      "expected": [
+        {
+          "source_document": "carrier-coverage",
+          "section": "selection-and-exceptions"
+        }
+      ]
+    },
+    {
+      "id": "ihv2-p10",
+      "question": "¿Cómo se cobra el almacenamiento en Los Ángeles y Zaragoza, y qué tratamiento recibe un producto nuevo durante sus primeros 30 días?",
+      "expected": [
+        {
+          "source_document": "storage-pricing",
+          "section": "standard-rates-and-grace-period"
+        }
+      ]
+    },
+    {
+      "id": "ihv2-p11",
+      "question": "¿Qué ocurre con la tarifa de un inventario que lleva más de 180 días sin ventas ni salidas y desde qué día se aplica?",
+      "expected": [
+        {
+          "source_document": "storage-pricing",
+          "section": "long-term-inventory"
+        }
+      ]
+    },
+    {
+      "id": "ihv2-p12",
+      "question": "Para un envío urgente dentro de California durante Navidad, ¿qué transportista ofrece el mejor tiempo, cuál es el plazo express habitual y qué salvedad aplica por la temporada de alta demanda?",
+      "expected": [
+        {
+          "source_document": "carrier-coverage",
+          "section": "united-states-coverage"
+        },
+        {
+          "source_document": "sla-delivery",
+          "section": "delivery-commitments"
+        },
+        {
+          "source_document": "sla-delivery",
+          "section": "high-demand-periods"
+        }
+      ]
+    }
+  ],
+  "negative": [
+    {
+      "id": "ihv2-n01",
+      "question": "¿Cuál es el horario de atención de los almacenes de Los Ángeles y Zaragoza durante los fines de semana?",
+      "expected": []
+    },
+    {
+      "id": "ihv2-n02",
+      "question": "¿Cuánto tarda TrackFlow en emitir el reembolso al consumidor después de aprobar una devolución?",
+      "expected": []
+    },
+    {
+      "id": "ihv2-n03",
+      "question": "¿Cuál es el importe máximo que cubre el seguro de un paquete perdido con cada transportista?",
+      "expected": []
+    },
+    {
+      "id": "ihv2-n04",
+      "question": "¿Qué dimensiones máximas puede tener una caja para almacenarse sin recargo en cada almacén?",
+      "expected": []
+    }
+  ]
+}

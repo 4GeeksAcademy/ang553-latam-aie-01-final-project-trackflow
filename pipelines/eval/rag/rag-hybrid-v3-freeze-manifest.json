@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "system_version": "rag-hybrid-v3",
+  "frozen_at_utc": "2026-11-07T22:21:51.7310694Z",
+  "branch": "feature/rag-knowledge-base",
+  "git_head": "153820a86fe3ffc6a7f60bf7625c550c507db981",
+  "git_worktree_clean": false,
+  "freeze_mechanism": "sha256_manifest_over_the_uncommitted_evaluation_target",
+  "notes": [
+    "The user prohibited staging and commits, so the target is bound by file hashes rather than a Git tree object.",
+    "The ignored .env and all secret values are intentionally excluded.",
+    "A hash change in any listed file invalidates this freeze and requires a new manifest before evaluation.",
+    "The historical 90 percent Recall@3 result does not apply to this system version.",
+    "The second freeze changes only the evaluation runner, validator and their offline test to bind holdout v2.1 and report multi-reference coverage. The evaluated RAG implementation is unchanged."
+  ],
+  "configuration_contract": {
+    "rag_min_score": 0.57,
+    "semantic_top_k": 3,
+    "vector_size": 1024,
+    "distance": "Cosine",
+    "collection": "trackflow_knowledge",
+    "embedding_model": "online/openrouter/perplexity/pplx-embed-v1-0.6b",
+    "generation_model": "online/openrouter/deepseek/deepseek-v4-flash",
+    "minimum_request_interval_seconds": 2,
+    "automatic_http_retries": 0,
+    "follow_redirects": false
+  },
+  "runtime_snapshot": {
+    "qdrant_status": "ok",
+    "qdrant_points": 14,
+    "qdrant_vector_size": 1024,
+    "qdrant_distance": "Cosine",
+    "four_geeks_api_key_present": true,
+    "four_geeks_api_key_rotation_reported_by_user": true,
+    "four_geeks_api_key_functionality_verified": false,
+    "external_requests_made_during_freeze": 0
+  },
+  "offline_qa": {
+    "rag_core": {"passed": 51, "failed": 0},
+    "rag_api": {"passed": 11, "failed": 0},
+    "holdout_validator": "valid",
+    "evaluation_result_created": false,
+    "git_diff_check": "pass"
+  },
+  "instrumental_adjustment": {
+    "scope": [
+      "pipelines/eval/rag/run_independent_holdout.py",
+      "pipelines/eval/rag/validate_independent_holdout.py",
+      "pipelines/eval/rag/current-system-evaluation-plan.json",
+      "tests/pipelines/test_rag.py"
+    ],
+    "purpose": "Bind immutable v2.1 artifacts, record multi-reference coverage, and separate attributable approval from optional strict independence without changing retrieval or grading facts.",
+    "evaluated_system_files_changed": false
+  },
+  "evaluation_binding": {
+    "binding_artifact": "pipelines/eval/rag/independent-holdout-v2.1-binding.json",
+    "binding_sha256": "c269a13124f72561c07c3fcd555ed84f9f62bf2adc8fa828ebf2c2266667c207",
+    "holdout_artifact": "pipelines/eval/rag/independent-holdout-v2.1.json",
+    "holdout_sha256": "99a37a949d1b5adc5c01704778eef43c9611981a3541fb7e42af50c0171edc71",
+    "rubric_artifact": "pipelines/eval/rag/independent-holdout-v2.1-rubric.json",
+    "rubric_sha256": "d05d1fe6e5a970816c3a201307fa05876fc03f1661c5662e3392eeb90d0cca5d",
+    "review_template": "pipelines/eval/rag/independent-holdout-v2.1-review-template.json",
+    "review_template_sha256": "2282d936caf9f6d6ecabe1c4ce2af14a5f2b4ec459cc5fbd3a623de3b9e63be1",
+    "result_artifact": "pipelines/eval/rag/independent-holdout-v2.1-results.json",
+    "result_exists": false
+  },
+  "review_traceability": {
+    "superseded_record": "pipelines/eval/rag/independent-holdout-v2.1-review.json",
+    "superseded_record_sha256": "a454a23e44423bf626802f419fae278c7c1299b84358d141bad35d5ade0489c1",
+    "amendment": "pipelines/eval/rag/independent-holdout-v2.1-review-amendment.json",
+    "amendment_sha256": "5d92f00fe30956a8b0de1f86aae7239e4955f489562abbbd5de47debdcd78819",
+    "approved_review": "pipelines/eval/rag/independent-holdout-v2.1-review-approved.json",
+    "approved_review_sha256": "ca65d30b62805278bc86b7ba1ba70776007a340e64b21e43bf62330e07d25c8d",
+    "review_gate_status": "approved_with_independence_limitations",
+    "execution_authorized": false
+  },
+  "files": [
+    {"path": "services/rag/__init__.py", "sha256": "37a2c56e266c838859bd5fd9f50eaea9990df3e5e706d3d36b1184796025288e", "bytes": 750, "role": "rag_public_contract"},
+    {"path": "services/rag/chunking.py", "sha256": "a25986c661bb39e89cec9d3812c7367da7bb1a1ced245cb4d21ce48fd15842bd", "bytes": 4715, "role": "chunking_and_deterministic_ids"},
+    {"path": "services/rag/clients.py", "sha256": "291fb2db7dc0ebf97de714eff7e0f17d7d6a12713561bb84c5ec79ada7eee14e", "bytes": 12931, "role": "gateway_qdrant_and_generation_prompt"},
+    {"path": "services/rag/config.py", "sha256": "08afaa2106e319e2d3f9e64f73778a51af844fecdbd7cc954942d283701ae276", "bytes": 3885, "role": "configuration_contract"},
+    {"path": "services/rag/contracts.py", "sha256": "d185a93729b9c804da0111987c73cf076e3bc94e348c22b4399a98e3104f07df", "bytes": 3451, "role": "domain_contracts"},
+    {"path": "services/rag/service.py", "sha256": "4706e278252a15cf5e50922fdebf21cedef32a536c7ca1db8543f3904a8fe873", "bytes": 20303, "role": "semantic_lexical_retrieval_and_generation"},
+    {"path": "services/api/routes/rag.py", "sha256": "33910a9a51b6b24246be762a7af3c1289496e8c2f7db29da3733f7a3e19bb0a1", "bytes": 4197, "role": "authenticated_api_route"},
+    {"path": "services/api/main.py", "sha256": "dfa2e59d9bcb53d24930ff92a14b459fb64fd6779d06dc1bcc0d546f22b82e2d", "bytes": 13015, "role": "api_integration"},
+    {"path": "pipelines/rag.py", "sha256": "2de99d04e9ec6a4fa320bb25ef8086f62dc974c4762babd3b8ef39a86b024ffa", "bytes": 4697, "role": "indexing_entrypoint"},
+    {"path": "docker-compose.yml", "sha256": "db9a896fecc9e322d5e271df890a795b21066da2da5495fff52b33d12f2f1464", "bytes": 8729, "role": "runtime_configuration"},
+    {"path": ".env.example", "sha256": "60710d68079f4edf73d9f9eebd463d00eb438fafdb4bb264a4dd450b731ebe2b", "bytes": 1921, "role": "non_secret_configuration_example"},
+    {"path": "uis/backoffice/app/backoffice/knowledge-base/page.tsx", "sha256": "052081641d456ea1948e46cfd4fe98a4d3d00a5f7acf17848132627d0dc24310", "bytes": 5606, "role": "knowledge_base_ui"},
+    {"path": "uis/backoffice/lib/ragApi.ts", "sha256": "cf3a00a947eb81691618bd081a632c0e9773d51e630f3edb07a892f05f3d537e", "bytes": 2728, "role": "knowledge_base_http_client"},
+    {"path": "uis/backoffice/types/rag.ts", "sha256": "535ace42de013ab2b7ce712e7edd10f163d879cb379d6ef96764e8c274573850", "bytes": 256, "role": "knowledge_base_ui_contract"},
+    {"path": "uis/backoffice/components/layout/BackofficeHeader.tsx", "sha256": "57a4f340a6001486be7cfe5b31020410c163e03c62a56c2af9f8aa81f0b0fd87", "bytes": 3179, "role": "authorized_navigation"},
+    {"path": "uis/backoffice/next.config.ts", "sha256": "143a6ed5fc0c6b33245f3d5883428cdfa5e65951bff52fb47f7c44ff2072f47d", "bytes": 1629, "role": "api_proxy_contract"},
+    {"path": "docs/company-knowledge-base/trackflow-sla-delivery.en.md", "sha256": "4466f856c11030640e475e25f929d2cd936ddb0d3d63cbade7355a7023b0c9bd", "bytes": 1093, "role": "canonical_corpus"},
+    {"path": "docs/company-knowledge-base/trackflow-returns-policy.en.md", "sha256": "b870e600871236a150484ab255dcb2dcc894af0f0fec789a5897735b6252ce13", "bytes": 1124, "role": "canonical_corpus"},
+    {"path": "docs/company-knowledge-base/trackflow-carrier-coverage.en.md", "sha256": "eb99c46c2cac8a7d74f05c82a2917092566f035a1ff18330bb6a78a72ee1d80b", "bytes": 949, "role": "canonical_corpus"},
+    {"path": "docs/company-knowledge-base/trackflow-storage-pricing.en.md", "sha256": "477d029f6fc3968c0d0c826ab6140d4c158a120a6df21cde0c054a8ff15c7182", "bytes": 879, "role": "canonical_corpus"},
+    {"path": "pipelines/eval/rag/run_independent_holdout.py", "sha256": "66be19f2c4065f19ac6679634d41f1198754af44c6e3ec994220f0b76bf3fce9", "bytes": 20971, "role": "guarded_evaluation_runner"},
+    {"path": "pipelines/eval/rag/validate_independent_holdout.py", "sha256": "d91a255dea9ea0dfe76644f1b2225f5c677bcddb916f91a70350e943f0eaaed1", "bytes": 4717, "role": "holdout_validator"},
+    {"path": "pipelines/eval/rag/current-system-evaluation-plan.json", "sha256": "dffe47104cf1c863f02db9c33d66eec4cbae3b0f4504df66e62615493e312cfb", "bytes": 4136, "role": "evaluation_method"},
+    {"path": "pipelines/eval/rag/independent-holdout-v1.json", "sha256": "3565f8cad364745000df1c43328b30601510af9760ff718463c6de9c9a1d30a6", "bytes": 4204, "role": "secondary_regression_holdout"},
+    {"path": "pipelines/eval/rag/independent-holdout-v1-rubric.json", "sha256": "860b80288e9f682762d8eb59c1bb31d5be7354fae673b76b5f7bba9ec18a0382", "bytes": 2744, "role": "secondary_regression_rubric"},
+    {"path": "tests/pipelines/test_rag.py", "sha256": "f155723da63c6cd253ed48b15d21fc20212c56e3bdc6485557426e354665a8b6", "bytes": 51780, "role": "offline_rag_qa"},
+    {"path": "tests/test_rag_api.py", "sha256": "4058b8904deee68836c07f6aab9fc4c99ecbc14b4c25af4999c72941555e0456", "bytes": 6312, "role": "offline_api_qa"},
+    {"path": "pyproject.toml", "sha256": "9eab965dd57f27b14f8e37bd55cc5e42aa6f41df3f3bd46436f7895a9a432d38", "bytes": 1123, "role": "python_dependency_contract"},
+    {"path": "uv.lock", "sha256": "8fe520bf944b5f762ad89b229f17cbef84a1bfa42e342c1673704e42e4949660", "bytes": 1184730, "role": "python_dependency_lock"}
+  ]
+}

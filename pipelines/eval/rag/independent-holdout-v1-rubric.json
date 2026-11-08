@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "evaluation_version": "rag-contextual-v2-independent-v1",
+  "global_rules": [
+    "Every material fact must be supported by the expected canonical reference.",
+    "Do not add unrelated complementary policies or unsupported commercial terms.",
+    "Do not claim that exceptions are exhaustive unless the reference says so.",
+    "Negative cases must produce the controlled insufficient-information answer."
+  ],
+  "cases": [
+    {"id": "v2-sla-express-corridor", "required_facts": ["24 to 48 hours", "within the same country", "Zaragoza-Madrid corridor eligibility"]},
+    {"id": "v2-sla-customs-control", "required_facts": ["7 to 12 business days", "subject to customs", "TrackFlow does not control customs hold times"]},
+    {"id": "v2-sla-seasonal-notice", "required_facts": ["declared high-demand dates", "up to an additional 40%", "proactive advance communication"]},
+    {"id": "v2-returns-standard-sequence", "required_facts": ["request through brand portal", "automatic label only for configured reasons", "warehouse inspection", "resale, reconditioning, or disposal classification"]},
+    {"id": "v2-returns-shipping-liability", "required_facts": ["client brand normally pays", "TrackFlow pays for transit damage", "TrackFlow pays for wrong delivery"]},
+    {"id": "v2-returns-company-scope", "required_facts": ["TrackFlow does not recondition for its own account", "TrackFlow does not resell for its own account", "client-brand rules govern execution"]},
+    {"id": "v2-carrier-us-heavy-rate", "required_facts": ["UPS", "packages over 5 kg", "best rate"]},
+    {"id": "v2-carrier-spain-small-parcel", "required_facts": ["MRW", "under 2 kg", "local carriers only in Zaragoza metropolitan area", "local carriers do not cover the rest of Spain"]},
+    {"id": "v2-carrier-selection-governance", "required_facts": ["destination", "weight", "product type", "urgency", "manual exception requires Carlos Vega approval"]},
+    {"id": "v2-storage-country-rates", "required_facts": ["18 USD per cubic meter per month in Los Angeles", "16 EUR per cubic meter per month in Zaragoza", "first 30 days free"]},
+    {"id": "v2-storage-aging-access", "required_facts": ["request at any time", "through account manager", "not automated for end client", "available internally"]},
+    {"id": "v2-storage-billing-basis", "required_facts": ["volume occupied", "not number of units"]},
+    {"id": "v2-negative-cold-chain", "required_facts": ["INSUFFICIENT_CONTEXT"]},
+    {"id": "v2-negative-flood-insurance", "required_facts": ["INSUFFICIENT_CONTEXT"]},
+    {"id": "v2-negative-opening-hours", "required_facts": ["INSUFFICIENT_CONTEXT"]},
+    {"id": "v2-negative-carbon-offsets", "required_facts": ["INSUFFICIENT_CONTEXT"]}
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "target_system_version": "rag-hybrid-v3",
+  "evaluation_version": "trackflow-independent-holdout-v2.1-2026-11-07",
+  "result_artifact": "independent-holdout-v2.1-results.json",
+  "result_sha256": "10367faa8fb5835f2a2dc09fa4a65b3caf5e3d878c8b3c48e9d3a6d49fa841b0",
+  "reviewed_at": "2026-11-07T22:34:43.3212844Z",
+  "review_type": "custodial_non_independent_source_comparison",
+  "independent_adjudication_claimed": false,
+  "cases": [
+    {
+      "id": "ihv2-p01",
+      "status": "adjudicated",
+      "required_fact_scores": [true, true, true],
+      "required_facts_passed": 3,
+      "required_facts_total": 3,
+      "unsupported_claims": [],
+      "pass": true,
+      "reason": "The answer preserves the 3–5 business-day domestic window, the 7–12 business-day international window, customs dependency and TrackFlow's lack of control over customs holds."
+    },
+    {
+      "id": "ihv2-p02",
+      "status": "adjudicated",
+      "required_fact_scores": [false, false, true],
+      "required_facts_passed": 1,
+      "required_facts_total": 3,
+      "unsupported_claims": [],
+      "pass": false,
+      "reason": "The answer correctly states 5% of that country's monthly fee but omits the 90% monthly country-level SLA and the below-90%-for-two-consecutive-months trigger required by the frozen rubric."
+    },
+    {
+      "id": "ihv2-p03",
+      "status": "not_adjudicated_technical_error",
+      "required_fact_scores": null,
+      "pass": null,
+      "reason": "Generation timed out and produced no answer."
+    }
+  ],
+  "summary": {
+    "completed_answers": 2,
+    "adjudicated_passed": 1,
+    "adjudicated_failed": 1,
+    "technical_errors": 1,
+    "unexecuted_cases": 13,
+    "partial_fidelity_rate": 0.5,
+    "full_holdout_fidelity_rate": null
+  },
+  "limitations": [
+    "This is a custodial source comparison, not an independent evaluator approval.",
+    "The run stopped at the first technical error as authorized, so no complete holdout fidelity metric exists."
+  ]
+}

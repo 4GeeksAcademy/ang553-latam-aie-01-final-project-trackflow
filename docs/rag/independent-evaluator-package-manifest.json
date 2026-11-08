@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "target_system_version": "rag-hybrid-v3",
+  "purpose": "allowlist_for_an_isolated_holdout_author",
+  "include": [
+    {
+      "path": "docs/company-knowledge-base/trackflow-sla-delivery.en.md",
+      "sha256": "4466f856c11030640e475e25f929d2cd936ddb0d3d63cbade7355a7023b0c9bd"
+    },
+    {
+      "path": "docs/company-knowledge-base/trackflow-returns-policy.en.md",
+      "sha256": "b870e600871236a150484ab255dcb2dcc894af0f0fec789a5897735b6252ce13"
+    },
+    {
+      "path": "docs/company-knowledge-base/trackflow-carrier-coverage.en.md",
+      "sha256": "eb99c46c2cac8a7d74f05c82a2917092566f035a1ff18330bb6a78a72ee1d80b"
+    },
+    {
+      "path": "docs/company-knowledge-base/trackflow-storage-pricing.en.md",
+      "sha256": "477d029f6fc3968c0d0c826ab6140d4c158a120a6df21cde0c054a8ff15c7182"
+    },
+    {
+      "path": "docs/rag/independent-evaluator-brief.md",
+      "sha256": "e9f56d720776b24a5a39b357bc8922d7f37b9eebed00ac0e6b6fbdbc272cfa5b"
+    }
+  ],
+  "exclude_categories": [
+    "source_code",
+    "prompts",
+    "vector_scores",
+    "historical_results",
+    "historical_questions",
+    "human_test_questions",
+    "defect_reports",
+    "existing_holdouts",
+    "credentials"
+  ]
+}

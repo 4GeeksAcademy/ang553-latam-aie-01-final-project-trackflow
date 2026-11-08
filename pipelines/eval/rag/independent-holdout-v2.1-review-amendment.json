@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "amended_artifact": "independent-holdout-v2.1-review.json",
+  "amended_artifact_sha256": "a454a23e44423bf626802f419fae278c7c1299b84358d141bad35d5ade0489c1",
+  "recorded_at": "2026-11-07T22:20:18.8775519Z",
+  "status": "superseded_invalid_attribution",
+  "usable_for_execution": false,
+  "original_preserved": true,
+  "reason": "The APPROVED text was supplied by ChatGPT during the review conversation and was not a directly attributable human approval from the TrackFlow user. The original record incorrectly attributed that approval to the user.",
+  "replacement_template": "independent-holdout-v2.1-review-template.json",
+  "replacement_status": "pending_explicit_user_approval"
+}

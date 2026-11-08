@@ -1,3 +1,7 @@
 # Next.js generated files
 .next/
 node_modules/
+.env*
+
+# TypeScript build artifacts
+*.tsbuildinfo

@@ -21,7 +21,7 @@ COPY backoffice/ ./uis/backoffice/
 # Start script
 # ---------------------------------------------------------------
 COPY start.sh /uis/start.sh
-RUN chmod +x /uis/start.sh
+RUN sed -i 's/\r$//' /uis/start.sh && chmod +x /uis/start.sh
 
 # ---------------------------------------------------------------
 # Ports

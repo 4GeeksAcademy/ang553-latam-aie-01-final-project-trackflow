@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "split": "negative",
+  "source_sha256": "31b3057a1af3ef6bcaaa4f142dc51997e37011c03572d7b074e7e3f6f9fa7dd0",
+  "threshold": 0.57,
+  "k": 3,
+  "cases": [
+    {
+      "id": "negative-hazardous-materials",
+      "question": "Does TrackFlow insure hazardous materials?",
+      "expected": [],
+      "top3": [],
+      "pass": true
+    },
+    {
+      "id": "negative-vehicle",
+      "question": "What compensation applies to a stolen warehouse vehicle?",
+      "expected": [],
+      "top3": [],
+      "pass": true
+    },
+    {
+      "id": "negative-sunday",
+      "question": "Does TrackFlow guarantee Sunday delivery?",
+      "expected": [],
+      "top3": [
+        {
+          "rank": 1,
+          "point_id": "54157b46-a155-5314-93e8-7a9524d33b0a",
+          "source_document": "sla-delivery",
+          "section": "high-demand-periods",
+          "chunk_index": 2,
+          "score": 0.596487,
+          "text": "TrackFlow does not guarantee delivery SLA during declared high-demand dates\n(Black Friday, Christmas, January Sales in Spain) \u2014 during those dates,\ndelivery times may extend by up to an additional 40%, and this must be\ncommunicated proactively to clients in advance."
+        }
+      ],
+      "pass": false
+    }
+  ],
+  "passed": 2,
+  "total": 3,
+  "rate": 0.6666666666666666,
+  "embedding_requests": 3,
+  "usage": {
+    "completion_tokens": 0,
+    "prompt_tokens": 23,
+    "total_tokens": 23
+  }
+}

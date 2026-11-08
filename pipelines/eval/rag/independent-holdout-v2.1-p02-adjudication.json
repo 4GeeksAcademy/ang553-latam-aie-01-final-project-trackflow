@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "target_system_version": "rag-hybrid-v3",
+  "evaluation_version": "trackflow-independent-holdout-v2.1-2026-11-07",
+  "case_id": "ihv2-p02",
+  "result_sha256": "10367faa8fb5835f2a2dc09fa4a65b3caf5e3d878c8b3c48e9d3a6d49fa841b0",
+  "historical_fidelity_review_sha256": "773d02f4d777d05b8ce57ca14ec2d71c2adf4d2e5a3146f95c819bbd2b8c2ce6",
+  "question": "Si las entregas a tiempo de un país quedan por debajo del compromiso durante dos meses seguidos, ¿qué compensación corresponde y sobre qué importe se calcula?",
+  "answer": "La compensación es del 5% sobre la tarifa mensual de ese país.",
+  "frozen_required_facts": [
+    "El SLA contractual es 90% de entregas a tiempo al mes, medido por país.",
+    "La compensación se activa cuando un país queda por debajo del 90% durante dos meses consecutivos.",
+    "La compensación es el 5% de la cuota mensual de ese país."
+  ],
+  "frozen_rubric_verdict": "FAIL",
+  "frozen_fact_score": "1/3",
+  "historical_verdict_changed": false,
+  "question_conditioned_review": {
+    "two_consecutive_months_already_established_by_question": true,
+    "ninety_percent_threshold_explicitly_stated_in_question": false,
+    "requested_compensation_and_fee_base_answered_correctly": true,
+    "unsupported_commercial_claims": false,
+    "assessment": "commercially_correct_direct_answer_but_incomplete_under_frozen_rubric",
+    "reason": "Repeating the two-month condition was not necessary to answer the direct conversational request because it was already in the question. The 90% threshold was only implicit in the word commitment and was omitted. Regardless of conversational adequacy, the frozen rubric requires all three facts, so the historical FAIL remains authoritative."
+  },
+  "review_type": "separate_post_run_adjudication",
+  "independent_adjudication_claimed": false
+}

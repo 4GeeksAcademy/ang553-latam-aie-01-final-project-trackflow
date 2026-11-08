@@ -1,0 +1,29 @@
+{
+  "question": "Does TrackFlow guarantee its delivery SLA during Black Friday?",
+  "manager_status": 200,
+  "user_status": 403,
+  "missing_token_status": 401,
+  "invalid_token_status": 401,
+  "valid_response": true,
+  "answer": "Yes, TrackFlow does not guarantee its delivery SLA during Black Friday.",
+  "insufficient_context": false,
+  "sources": [
+    {
+      "source_document": "sla-delivery",
+      "section": "high-demand-periods"
+    }
+  ],
+  "embedding_requests": 1,
+  "generation_requests": 1,
+  "embedding_usage": {
+    "completion_tokens": 0,
+    "prompt_tokens": 12,
+    "total_tokens": 12
+  },
+  "generation_usage": {
+    "completion_tokens": 15,
+    "prompt_tokens": 193,
+    "total_tokens": 208,
+    "cost": 0.00011835
+  }
+}

@@ -1,0 +1,214 @@
+{
+  "schema_version": 1,
+  "source_sha256": "4f0c6daf9c66a2e251293040508ee18c7c72db7b9ce7cc3a23bd3ba6e4df0b30",
+  "model": "online/openrouter/deepseek/deepseek-v4-flash",
+  "cases": [
+    {
+      "id": "gen-delivery-standard",
+      "question": "What is TrackFlow's standard domestic delivery time?",
+      "source_document": "sla-delivery",
+      "section": "delivery-commitments",
+      "required_patterns": [
+        "3\\s*(?:to|-)\\s*5 business days"
+      ],
+      "pattern_checks": [
+        true
+      ],
+      "automatic_pass": true,
+      "answer": "3 to 5 business days within the same country."
+    },
+    {
+      "id": "gen-delivery-express",
+      "question": "How fast is express domestic shipping and where is it available?",
+      "source_document": "sla-delivery",
+      "section": "delivery-commitments",
+      "required_patterns": [
+        "24\\s*(?:to|-)\\s*48 hours",
+        "Los Angeles metropolitan",
+        "Zaragoza-Madrid"
+      ],
+      "pattern_checks": [
+        true,
+        true,
+        true
+      ],
+      "automatic_pass": true,
+      "answer": "Express shipping takes 24 to 48 hours within the same country and is available only in the Los Angeles metropolitan area and the Zaragoza-Madrid corridor."
+    },
+    {
+      "id": "gen-high-demand",
+      "question": "What happens to TrackFlow delivery commitments during Black Friday, Christmas, and January Sales in Spain?",
+      "source_document": "sla-delivery",
+      "section": "high-demand-periods",
+      "required_patterns": [
+        "(?:does not|not) guarantee",
+        "Black Friday",
+        "Christmas",
+        "January Sales",
+        "40%"
+      ],
+      "pattern_checks": [
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "automatic_pass": true,
+      "answer": "TrackFlow does not guarantee delivery SLA during Black Friday, Christmas, and January Sales in Spain. During those dates, delivery times may extend by up to an additional 40%, and this must be communicated proactively to clients in advance."
+    },
+    {
+      "id": "gen-return-window-costs",
+      "question": "What is the standard return window, what exception can change it, and who pays return shipping?",
+      "source_document": "returns-policy",
+      "section": "return-window-and-costs",
+      "required_patterns": [
+        "30 days",
+        "contract",
+        "client brand",
+        "TrackFlow"
+      ],
+      "pattern_checks": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "automatic_pass": true,
+      "answer": "Standard return window is 30 days from delivery, unless the client brand has configured a different window in their contract.\n\nReturn shipping is covered by the client brand, unless the reason is a TrackFlow error (product damaged in transit or wrong delivery), in which case TrackFlow covers it."
+    },
+    {
+      "id": "gen-international-returns",
+      "question": "How are international returns handled?",
+      "source_document": "returns-policy",
+      "section": "international-returns",
+      "required_patterns": [
+        "not covered by the standard automated process",
+        "manual",
+        "Sofía Ramos"
+      ],
+      "pattern_checks": [
+        true,
+        true,
+        true
+      ],
+      "automatic_pass": true,
+      "answer": "International returns are not covered by the standard automated process and require manual handling by Sofía Ramos's team (Returns Manager)."
+    },
+    {
+      "id": "gen-carrier-international-la",
+      "question": "Which carrier is the reliable option for international shipments from Los Angeles?",
+      "source_document": "carrier-coverage",
+      "section": "united-states-coverage",
+      "required_patterns": [
+        "DHL",
+        "international",
+        "Los Angeles"
+      ],
+      "pattern_checks": [
+        true,
+        false,
+        false
+      ],
+      "automatic_pass": false,
+      "answer": "DHL"
+    },
+    {
+      "id": "gen-carrier-exception",
+      "question": "Can an account manager manually choose a carrier without approval?",
+      "source_document": "carrier-coverage",
+      "section": "selection-and-exceptions",
+      "required_patterns": [
+        "system",
+        "Carlos Vega",
+        "approv"
+      ],
+      "pattern_checks": [
+        false,
+        true,
+        true
+      ],
+      "automatic_pass": false,
+      "answer": "No — the account manager does not manually choose the carrier except for an exception approved by Carlos Vega (Head of Carrier Operations)."
+    },
+    {
+      "id": "gen-storage-standard",
+      "question": "What are the standard storage rates and grace period?",
+      "source_document": "storage-pricing",
+      "section": "standard-rates-and-grace-period",
+      "required_patterns": [
+        "18 USD",
+        "16 EUR",
+        "30 days"
+      ],
+      "pattern_checks": [
+        true,
+        true,
+        true
+      ],
+      "automatic_pass": true,
+      "answer": "Standard storage rates: 18 USD per cubic meter per month (Los Angeles) or 16 EUR per cubic meter per month (Zaragoza).  \nGrace period: The first 30 days of any new product in inventory incur no storage charge."
+    },
+    {
+      "id": "gen-storage-long-term",
+      "question": "When does the long-term inventory fee begin and exactly how is it calculated?",
+      "source_document": "storage-pricing",
+      "section": "long-term-inventory",
+      "required_patterns": [
+        "more than 180 days",
+        "150% over the standard rate",
+        "day 181"
+      ],
+      "pattern_checks": [
+        false,
+        true,
+        true
+      ],
+      "automatic_pass": false,
+      "answer": "The long-term inventory fee begins on day 181 and is calculated as 150% over the standard rate."
+    },
+    {
+      "id": "gen-storage-preferential",
+      "question": "Who can approve a preferential storage rate and when can it be negotiated?",
+      "source_document": "storage-pricing",
+      "section": "preferential-rates",
+      "required_patterns": [
+        "more than 50 cubic meters",
+        "Miguel Torres",
+        "account manager"
+      ],
+      "pattern_checks": [
+        true,
+        true,
+        false
+      ],
+      "automatic_pass": false,
+      "answer": "Miguel Torres must approve a preferential storage rate. It can be negotiated when a client has more than 50 cubic meters of average monthly volume."
+    },
+    {
+      "id": "gen-negative-sunday",
+      "question": "Does TrackFlow guarantee Sunday delivery?",
+      "source_document": "sla-delivery",
+      "section": "high-demand-periods",
+      "required_patterns": [
+        "(?:not enough information|insufficient information|does not specify|not specified|cannot determine)"
+      ],
+      "pattern_checks": [
+        true
+      ],
+      "automatic_pass": true,
+      "answer": "There is not enough information in the TrackFlow knowledge base to answer this question."
+    }
+  ],
+  "completed": 11,
+  "total": 11,
+  "generation_requests": 11,
+  "usage": {
+    "completion_tokens": 1018,
+    "prompt_tokens": 2465,
+    "total_tokens": 3483,
+    "cost": 0.00064068956
+  },
+  "status": "succeeded",
+  "automatic_passed": 7
+}

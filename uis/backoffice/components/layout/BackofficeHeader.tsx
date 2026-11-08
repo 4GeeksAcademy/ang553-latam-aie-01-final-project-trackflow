@@ -6,7 +6,7 @@ import { useAuth } from "@/lib/AuthContext";
 
 export function BackofficeHeader() {
   const router = useRouter();
-  const { logout } = useAuth();
+  const { logout, user } = useAuth();
 
   const handleLogout = () => {
     logout();
@@ -63,6 +63,14 @@ export function BackofficeHeader() {
           >
             Reporting
           </Link>
+          {user && (user.role === "admin" || user.role === "manager") && (
+            <Link
+              href="/backoffice/knowledge-base"
+              className="text-sm font-medium text-slate-100 transition-colors hover:text-white"
+            >
+              Knowledge Base
+            </Link>
+          )}
           <Link
             href="/account/profile"
             className="text-sm font-medium text-slate-100 transition-colors hover:text-white"

@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "metric": {
+    "name": "Recall@3",
+    "target": 0.8,
+    "status": "not_measured"
+  },
+  "calibration": [
+    {
+      "id": "cal-sla-express",
+      "question": "Where is TrackFlow express shipping available?",
+      "expected": [
+        {"source_document": "sla-delivery", "section": "delivery-commitments"}
+      ]
+    },
+    {
+      "id": "cal-carrier-small-package",
+      "question": "Which carrier has the most competitive rates for packages under 2 kg in Spain?",
+      "expected": [
+        {"source_document": "carrier-coverage", "section": "spain-coverage"}
+      ]
+    },
+    {
+      "id": "cal-storage-grace",
+      "question": "Is storage charged during a new product's first 30 days?",
+      "expected": [
+        {"source_document": "storage-pricing", "section": "standard-rates-and-grace-period"}
+      ]
+    }
+  ],
+  "evaluation": [
+    {
+      "id": "eval-sla-standard",
+      "question": "How long does standard shipping take within the same country?",
+      "expected": [
+        {"source_document": "sla-delivery", "section": "delivery-commitments"}
+      ]
+    },
+    {
+      "id": "eval-sla-black-friday",
+      "question": "Does TrackFlow guarantee its delivery SLA during Black Friday?",
+      "expected": [
+        {"source_document": "sla-delivery", "section": "high-demand-periods"}
+      ]
+    },
+    {
+      "id": "eval-sla-compensation",
+      "question": "What compensation applies after two consecutive months below the on-time SLA?",
+      "expected": [
+        {"source_document": "sla-delivery", "section": "monthly-sla-and-compensation"}
+      ]
+    },
+    {
+      "id": "eval-returns-international",
+      "question": "Are international returns handled by the standard automated process?",
+      "expected": [
+        {"source_document": "returns-policy", "section": "international-returns"}
+      ]
+    },
+    {
+      "id": "eval-returns-trackflow-error",
+      "question": "Who pays return shipping when TrackFlow delivered the wrong product?",
+      "expected": [
+        {"source_document": "returns-policy", "section": "return-window-and-costs"}
+      ]
+    },
+    {
+      "id": "eval-carrier-international-la",
+      "question": "Which carrier provides reliable international coverage from Los Angeles?",
+      "expected": [
+        {"source_document": "carrier-coverage", "section": "united-states-coverage"}
+      ]
+    },
+    {
+      "id": "eval-carrier-rural-aragon",
+      "question": "Which carrier has the best coverage in rural areas of Aragón?",
+      "expected": [
+        {"source_document": "carrier-coverage", "section": "spain-coverage"}
+      ]
+    },
+    {
+      "id": "eval-carrier-exception",
+      "question": "Can an account manager manually choose a carrier without approval?",
+      "expected": [
+        {"source_document": "carrier-coverage", "section": "selection-and-exceptions"}
+      ]
+    },
+    {
+      "id": "eval-storage-long-term",
+      "question": "When does the long-term inventory fee start and how is it calculated?",
+      "expected": [
+        {"source_document": "storage-pricing", "section": "long-term-inventory"}
+      ]
+    },
+    {
+      "id": "eval-storage-discount",
+      "question": "Who must approve a preferential storage rate for a high-volume client?",
+      "expected": [
+        {"source_document": "storage-pricing", "section": "preferential-rates"}
+      ]
+    }
+  ],
+  "negative": [
+    {"id": "negative-hazardous-materials", "question": "Does TrackFlow insure hazardous materials?"},
+    {"id": "negative-vehicle", "question": "What compensation applies to a stolen warehouse vehicle?"},
+    {"id": "negative-sunday", "question": "Does TrackFlow guarantee Sunday delivery?"}
+  ]
+}

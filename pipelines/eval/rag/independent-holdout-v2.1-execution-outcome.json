@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "target_system_version": "rag-hybrid-v3",
+  "evaluation_version": "trackflow-independent-holdout-v2.1-2026-11-07",
+  "authorization_artifact": "independent-holdout-v2.1-execution-authorization.json",
+  "authorization_sha256": "7799427e051a9d2a1a1a76e21023504fce185469001d4bd93540f32ca7e4f908",
+  "result_artifact": "independent-holdout-v2.1-results.json",
+  "result_sha256": "10367faa8fb5835f2a2dc09fa4a65b3caf5e3d878c8b3c48e9d3a6d49fa841b0",
+  "started_at": "2026-11-07T22:32:57.754369Z",
+  "finished_at": "2026-11-07T22:34:12.166928Z",
+  "status": "interrupted_on_first_technical_error",
+  "requests": {
+    "embedding": 3,
+    "generation": 3,
+    "external_total": 6,
+    "automatic_retries": 0,
+    "repeat_requests": 0
+  },
+  "usage": {
+    "embedding_total_tokens": 110,
+    "generation_prompt_tokens": 867,
+    "generation_completion_tokens": 309,
+    "generation_total_tokens": 1176,
+    "generation_cost": 0.00012468456,
+    "cost_source": "provider_usage"
+  },
+  "completed_cases": 2,
+  "latency": {
+    "run_total_ms": 74412.559,
+    "ihv2-p01": {
+      "retrieval_ms": 15498.153,
+      "generation_ms": 11485.676,
+      "total_ms": 26983.888
+    },
+    "ihv2-p02": {
+      "retrieval_ms": 2424.947,
+      "generation_ms": 4029.928,
+      "total_ms": 6454.934
+    },
+    "ihv2-p03_runtime_log": {
+      "embedding_ms": 6731.7,
+      "qdrant_ms": 190.9,
+      "generation_ms": null,
+      "generation_note": "The persisted error category is timeout; exact failed-stage duration is not stored in the result artifact."
+    }
+  },
+  "technical_error": {
+    "case_id": "ihv2-p03",
+    "stage": "generation",
+    "category": "timeout",
+    "provider_http_status": null
+  },
+  "runtime_log_retrieval_observation": {
+    "case_id": "ihv2-p03",
+    "expected_rank": 1,
+    "expected_source_document": "sla-delivery",
+    "expected_section": "high-demand-periods",
+    "score": 0.66478646,
+    "retrieval_kind": "primary",
+    "evidence_basis": "semantic",
+    "limitation": "The runner's technical-error case does not persist candidates after generation failure; this observation comes from the sanitized execution log."
+  },
+  "academic_result": {
+    "full_recall_at_3": null,
+    "partial_completed_case_recall_at_3": 1.0,
+    "positive_cases_required": 12,
+    "positive_cases_completed": 2,
+    "negative_cases_required": 4,
+    "negative_cases_completed": 0,
+    "multisource_case_ihv2_p12_executed": false,
+    "target_80_percent_assessable": false
+  },
+  "decision": "BLOCKED"
+}

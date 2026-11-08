@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "target_system_version": "rag-hybrid-v3",
+  "evaluation_version": "trackflow-independent-holdout-v2.1-2026-11-07",
+  "holdout_sha256": "99a37a949d1b5adc5c01704778eef43c9611981a3541fb7e42af50c0171edc71",
+  "rubric_sha256": "d05d1fe6e5a970816c3a201307fa05876fc03f1661c5662e3392eeb90d0cca5d",
+  "approved": true,
+  "reviewer": "TrackFlow responsible user — explicit human approval",
+  "reviewer_independent_from_implementation": false,
+  "reviewed_at": "2026-11-07T22:26:28.8386817Z",
+  "review_type": "prospective_with_independence_limitations",
+  "approval_source": "Explicit APPROVED statement by the self-identified TrackFlow responsible user in the current Codex conversation.",
+  "approval_scope": "holdout questions, contractual references and fidelity rubric",
+  "independence_limitation_acknowledged": true,
+  "execution_authorized": false,
+  "checks": {
+    "references_match_corpus": true,
+    "ambiguity_reviewed": true,
+    "duplicates_reviewed": true,
+    "prior_use_reviewed": true,
+    "rubric_is_material_and_complete": true
+  },
+  "limitations": [
+    "The holdout author disclosed exposure to general repository context but not to RAG code, prior questions, prior results, logs, prompts or system outputs.",
+    "No second independent reviewer was recorded in the delivered methodology.",
+    "The approving reviewer participates in the TrackFlow project and is not strictly independent from implementation decisions and prior human testing.",
+    "No exact historical question reuse was detected, but several commercial intents overlap previously discussed SLA, high-demand, carrier-exception and long-term-inventory topics.",
+    "Case ihv2-p12 uses a California scenario while the express SLA is available only in the Los Angeles metropolitan area; the frozen rubric requires that geographic limitation to be preserved.",
+    "This approval does not authorize gateway consumption or live evaluation execution."
+  ]
+}
