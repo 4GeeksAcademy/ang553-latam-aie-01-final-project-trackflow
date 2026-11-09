@@ -1219,3 +1219,24 @@ revisión y autorización arquitectónica.
   no question, answer, record ID, SKU, stock or operational data.
 - No DDL, persistent data, dependency, root configuration, protected file,
   provider, Supabase, authentication store or Git state was modified.
+
+## Milestone 9 — regression test cleanup
+
+- Added cross-platform Git attributes for hash-bound RAG JSON artifacts. Files
+  whose committed blob is LF now materialize as LF even when
+  `core.autocrlf=true`; the three requested frozen inputs were verified as LF.
+  Explicit exceptions preserve the sealed CRLF byte representation of the
+  result artifacts whose review hashes depend on it. No evidence content,
+  expected hash or evaluation result changed.
+- Updated inventory HTTP regression fixtures to use isolated SQLite plus the
+  per-test TinyDB identity store, operational security metadata, an active
+  client and a real manager membership. Requests still authenticate through
+  the real HTTP login and exercise the production authorization dependencies.
+- CORS coverage now distinguishes preflight allow-origin/method/header behavior
+  from exposed response headers on a real request with `Origin`. Inventory
+  order projections explicitly assert that the private `user_uuid` field is
+  absent, and tenantless legacy inventory remains hidden.
+- Removed the two Python 3.13 ASGI skip gates after isolated evidence showed
+  each affected incident and inventory authorization test passing three
+  consecutive executions without timeout. Their test bodies and assertions
+  remain unchanged; final combined QA is delegated to the independent gate.

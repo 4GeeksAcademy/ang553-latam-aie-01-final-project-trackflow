@@ -13,8 +13,11 @@ import httpx
 from fastapi import Response
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
+from tinydb import Query
 
 from services.api import main as api_main
+from services.api.access_control import assign_user_to_client, register_verified_client
+from services.api.auth_models import Role
 from services.api.main import IncidentAnalysisResponse, app
 from services.api.inventory_clients import CLIENT_IDS_BY_NAME
 from services.api.models import SupplierResponse
@@ -309,6 +312,7 @@ def test_http_inventory_contracts_use_isolated_sqlite(isolated_auth_db, monkeypa
     from services.api.cache import orders_cache, products_cache
     from services.api.inventory_models import SKU
     from services.api.inventory_outbox import inventory_outbox_metadata
+    from services.incidents.models import operational_security_metadata
 
     engine = create_engine(
         "sqlite://",
@@ -317,6 +321,7 @@ def test_http_inventory_contracts_use_isolated_sqlite(isolated_auth_db, monkeypa
     )
     SQLModel.metadata.create_all(engine)
     inventory_outbox_metadata.create_all(engine)
+    operational_security_metadata.create_all(engine)
 
     def isolated_get_db():
         with Session(engine) as session:
@@ -329,6 +334,26 @@ def test_http_inventory_contracts_use_isolated_sqlite(isolated_auth_db, monkeypa
             "POST", "/users", json={"email": email, "password": "password-123"}
         )
         assert registration.status_code == 201
+        user = isolated_auth_db.users.get(Query().email == email)
+        assert user is not None
+        isolated_auth_db.users.update(
+            {"role": Role.manager.value}, Query().email == email
+        )
+        client_id = CLIENT_IDS_BY_NAME["PureStep Footwear"]
+        with Session(engine) as session:
+            register_verified_client(
+                session,
+                client_id=client_id,
+                display_name="PureStep Footwear",
+                actor_user_id=user["id"],
+            )
+            assign_user_to_client(
+                session,
+                user_id=user["id"],
+                client_id=client_id,
+                can_view_sensitive=False,
+                actor_user_id=user["id"],
+            )
         token = _exact_keys(
             _request(
                 "POST",
@@ -345,7 +370,7 @@ def test_http_inventory_contracts_use_isolated_sqlite(isolated_auth_db, monkeypa
             json={
                 "name": "HTTP SKU",
                 "sku": "HTTP-001",
-                "client_id": CLIENT_IDS_BY_NAME["PureStep Footwear"],
+                "client_id": client_id,
                 "client_name": "PureStep Footwear",
                 "category": "electronics",
                 "warehouse": "LA",
@@ -353,14 +378,14 @@ def test_http_inventory_contracts_use_isolated_sqlite(isolated_auth_db, monkeypa
         )
         assert product.status_code == 200, product.text
         product_body = product.json()
-        assert product_body["client_id"] == CLIENT_IDS_BY_NAME["PureStep Footwear"]
+        assert product_body["client_id"] == client_id
         assert product_body["client_name"] == "PureStep Footwear"
         sku_id = product_body["id"]
 
         listed = _request("GET", "/inventory/products", headers=headers)
         assert listed.status_code == 200, listed.text
         listed_product = next(item for item in listed.json() if item["id"] == sku_id)
-        assert listed_product["client_id"] == CLIENT_IDS_BY_NAME["PureStep Footwear"]
+        assert listed_product["client_id"] == client_id
         assert listed_product["client_name"] == "PureStep Footwear"
 
         detail = _request(
@@ -368,41 +393,42 @@ def test_http_inventory_contracts_use_isolated_sqlite(isolated_auth_db, monkeypa
         )
         assert detail.status_code == 200, detail.text
         detail_body = detail.json()
-        assert detail_body["client_id"] == CLIENT_IDS_BY_NAME["PureStep Footwear"]
+        assert detail_body["client_id"] == client_id
         assert detail_body["client_name"] == "PureStep Footwear"
 
-        for invalid_payload in (
-            {
+        invalid_payloads = (
+            ({
                 "name": "HTTP Missing Client",
                 "sku": "HTTP-MISSING-CLIENT",
                 "client_name": "PureStep Footwear",
                 "category": "electronics",
                 "warehouse": "LA",
-            },
-            {
+            }, 422),
+            ({
                 "name": "HTTP Unknown Client",
                 "sku": "HTTP-UNKNOWN-CLIENT",
                 "client_id": "00000000-0000-4000-8000-000000000000",
                 "client_name": "PureStep Footwear",
                 "category": "electronics",
                 "warehouse": "LA",
-            },
-            {
+            }, 404),
+            ({
                 "name": "HTTP Mismatched Client",
                 "sku": "HTTP-MISMATCHED-CLIENT",
-                "client_id": CLIENT_IDS_BY_NAME["PureStep Footwear"],
+                "client_id": client_id,
                 "client_name": "SoundWave Electronics",
                 "category": "electronics",
                 "warehouse": "LA",
-            },
-        ):
+            }, 422),
+        )
+        for invalid_payload, expected_status in invalid_payloads:
             invalid = _request(
                 "POST",
                 "/inventory/products",
                 headers=headers,
                 json=invalid_payload,
             )
-            assert invalid.status_code == 422, invalid.text
+            assert invalid.status_code == expected_status, invalid.text
 
         with Session(engine) as session:
             assert session.exec(
@@ -434,10 +460,7 @@ def test_http_inventory_contracts_use_isolated_sqlite(isolated_auth_db, monkeypa
         legacy_response = _request(
             "GET", f"/inventory/products/{legacy.id}", headers=headers
         )
-        assert legacy_response.status_code == 200, legacy_response.text
-        legacy_body = legacy_response.json()
-        assert legacy_body["client_id"] is None
-        assert legacy_body["client_name"] == "Legacy Client"
+        assert legacy_response.status_code == 404, legacy_response.text
 
         inbound = _request(
             "POST",
@@ -491,7 +514,7 @@ def test_http_inventory_contracts_use_isolated_sqlite(isolated_auth_db, monkeypa
         dispatch_id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
         order_payload = {
             "order_id": order_id,
-            "client_id": CLIENT_IDS_BY_NAME["PureStep Footwear"],
+            "client_id": client_id,
             "warehouse": "LA",
             "dispatches": [
                 {

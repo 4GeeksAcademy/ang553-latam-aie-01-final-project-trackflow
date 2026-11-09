@@ -1,7 +1,6 @@
 """Deterministic acceptance tests for operational incidents and tenant access."""
 
 import asyncio
-import sys
 from datetime import date
 from pathlib import Path
 
@@ -376,10 +375,6 @@ def test_backoffice_incident_telemetry_uses_sanitized_path_template():
     assert "{ pathTemplate: path }" not in source
 
 
-@pytest.mark.skipif(
-    sys.version_info >= (3, 13),
-    reason="Known repository-wide FastAPI ASGI hang on the available Python 3.13 runtime",
-)
 def test_operational_http_crud_auth_and_hidden_cross_tenant(session: Session):
     api = FastAPI()
     api.include_router(incident_router)
