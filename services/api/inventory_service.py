@@ -31,6 +31,8 @@ from services.api.inventory_schemas import (
     StockExitCreate,
 )
 from services.api.cache import invalidate_inventory_cache
+from services.api.access_control import AccessContext
+from services.api.auth_models import Role
 from services.api.telemetry_capture import capture_telemetry_events
 from services.api.inventory_outbox import enqueue_inventory_event
 from services.api.telemetry_schemas import TelemetryEvent
@@ -38,6 +40,7 @@ from services.api.telemetry_storage import (
     persist_backend_telemetry_best_effort,
 )
 from services.api.telemetry_utils import canonical_telemetry_warehouse
+from services.incidents.models import clients
 
 logger = logging.getLogger(__name__)
 
@@ -63,17 +66,52 @@ def _lock_idempotency_keys(session: Session, values: list[UUID]) -> None:
         session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": key})
 
 
-def _lock_skus(session: Session, sku_ids: set[int]) -> dict[int, object]:
-    """Lock SKU rows in stable order to serialize stock-derived writes."""
+def _require_inventory_writer(access: AccessContext) -> None:
+    if access.role is Role.user:
+        raise HTTPException(status_code=403, detail="Inventory write not authorized.")
+
+
+def require_active_inventory_client(
+    session: Session,
+    *,
+    client_id: str,
+    access: AccessContext,
+) -> object:
+    """Resolve an active, visible client or return the uniform hidden 404."""
+    _require_inventory_writer(access)
+    statement = select(clients).where(
+        clients.c.client_id == client_id,
+        clients.c.is_active.is_(True),
+    )
+    if not access.global_access:
+        statement = statement.where(clients.c.client_id.in_(access.allowed_client_ids))
+    row = session.execute(statement).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Client not found.")
+    return row
+
+
+def _lock_skus(
+    session: Session, sku_ids: set[int], access: AccessContext
+) -> dict[int, object]:
+    """Lock only visible SKU rows in stable order for an authorized writer."""
     from services.api.inventory_models import SKU
 
+    _require_inventory_writer(access)
     ordered = sorted(sku_ids)
-    rows = session.exec(
+    statement = (
         select(SKU)
-        .where(SKU.id.in_(ordered))
-        .order_by(SKU.id)
-        .with_for_update()
-    ).all()
+        .join(clients, clients.c.client_id == SKU.client_id)
+        .where(
+            SKU.id.in_(ordered),
+            clients.c.is_active.is_(True),
+        )
+    )
+    if not access.global_access:
+        statement = statement.where(SKU.client_id.in_(access.allowed_client_ids))
+    rows = session.exec(statement.order_by(SKU.id).with_for_update()).all()
+    if set(ordered) - {row.id for row in rows}:
+        raise HTTPException(status_code=404, detail="SKU not found.")
     return {row.id: row for row in rows}
 
 
@@ -204,6 +242,7 @@ def get_sku_or_none(session: Session, sku_id: int) -> object | None:
 
 def get_current_stocks(
     session: Session,
+    sku_ids: frozenset[int] | None = None,
 ) -> dict[tuple[int, str], int]:
     """Compute current stock for all (sku_id, warehouse) pairs in bulk.
 
@@ -220,16 +259,20 @@ def get_current_stocks(
     from services.api.inventory_models import StockEntry, StockExit
 
     # ── Aggregated entries ───────────────────────────────────────────────
-    entry_rows = session.exec(
-        select(StockEntry.sku_id, StockEntry.warehouse, func.sum(StockEntry.quantity))
-        .group_by(StockEntry.sku_id, StockEntry.warehouse)
-    ).all()
+    entry_statement = select(
+        StockEntry.sku_id, StockEntry.warehouse, func.sum(StockEntry.quantity)
+    ).group_by(StockEntry.sku_id, StockEntry.warehouse)
+    if sku_ids is not None:
+        entry_statement = entry_statement.where(StockEntry.sku_id.in_(sku_ids))
+    entry_rows = session.exec(entry_statement).all()
 
     # ── Aggregated exits ─────────────────────────────────────────────────
-    exit_rows = session.exec(
-        select(StockExit.sku_id, StockExit.warehouse, func.sum(StockExit.quantity))
-        .group_by(StockExit.sku_id, StockExit.warehouse)
-    ).all()
+    exit_statement = select(
+        StockExit.sku_id, StockExit.warehouse, func.sum(StockExit.quantity)
+    ).group_by(StockExit.sku_id, StockExit.warehouse)
+    if sku_ids is not None:
+        exit_statement = exit_statement.where(StockExit.sku_id.in_(sku_ids))
+    exit_rows = session.exec(exit_statement).all()
 
     # ── Build entry map ──────────────────────────────────────────────────
     entry_map: dict[tuple[int, str], int] = {}
@@ -323,6 +366,7 @@ def create_stock_entry(
     session: Session,
     data: StockEntryCreate,
     user_uuid: str,
+    access: AccessContext,
     request_id: str | None = None,
 ):
     """Register an inbound stock movement (StockEntry).
@@ -352,13 +396,7 @@ def create_stock_entry(
     from services.api.inventory_models import StockEntry
 
     # 1. Check SKU exists
-    sku = _lock_skus(session, {data.sku_id}).get(data.sku_id)
-    if sku is None:
-        raise HTTPException(
-            status_code=404,
-            detail="SKU not found.",
-            headers={"X-TrackFlow-Error-Code": "unknown_product"},
-        )
+    sku = _lock_skus(session, {data.sku_id}, access)[data.sku_id]
 
     # 2. Check warehouse matches SKU
     movement_warehouse = data.warehouse.value
@@ -466,6 +504,7 @@ def create_stock_exit(
     session: Session,
     data: StockExitCreate,
     user_uuid: str,
+    access: AccessContext,
     request_id: str | None = None,
 ):
     """Register an outbound stock movement (StockExit).
@@ -499,13 +538,7 @@ def create_stock_exit(
     from services.api.inventory_models import StockExit
 
     # 1. Check SKU exists
-    sku = _lock_skus(session, {data.sku_id}).get(data.sku_id)
-    if sku is None:
-        raise HTTPException(
-            status_code=404,
-            detail="SKU not found.",
-            headers={"X-TrackFlow-Error-Code": "unknown_product"},
-        )
+    sku = _lock_skus(session, {data.sku_id}, access)[data.sku_id]
 
     # 2. Check warehouse matches SKU
     movement_warehouse = data.warehouse.value
@@ -624,11 +657,10 @@ def update_sku_threshold(
     *,
     sku_id: int,
     minimum_stock_threshold: int | None,
+    access: AccessContext,
 ):
     """Configure a threshold without emitting a business event."""
-    sku = _lock_skus(session, {sku_id}).get(sku_id)
-    if sku is None:
-        raise HTTPException(status_code=404, detail="SKU not found.")
+    sku = _lock_skus(session, {sku_id}, access)[sku_id]
     try:
         sku.minimum_stock_threshold = minimum_stock_threshold
         session.add(sku)
@@ -650,11 +682,13 @@ def confirm_inventory_physical_count(
     data: InventoryPhysicalCountCreate,
     *,
     user_uuid: str,
+    access: AccessContext,
     request_id: str | None = None,
 ):
     """Persist one idempotent count and discrepancy outbox event atomically."""
     from services.api.inventory_models import InventoryPhysicalCount
 
+    sku = _lock_skus(session, {data.sku_id}, access)[data.sku_id]
     _lock_idempotency_keys(session, [data.count_id])
     existing = session.exec(
         select(InventoryPhysicalCount)
@@ -671,9 +705,6 @@ def confirm_inventory_physical_count(
             return existing
         raise _conflict("count_id already exists with different content")
 
-    sku = _lock_skus(session, {data.sku_id}).get(data.sku_id)
-    if sku is None:
-        raise HTTPException(status_code=404, detail="SKU not found.")
     if sku.warehouse != data.warehouse.value:
         raise HTTPException(status_code=400, detail="Warehouse mismatch for SKU.")
     if not sku.client_id:
@@ -767,12 +798,10 @@ def _validate_order_skus(
     dispatches: list[object],
     client_id: str,
     warehouse: str,
+    access: AccessContext,
 ) -> dict[int, object]:
     sku_ids = {item.sku_id for item in dispatches}
-    skus = _lock_skus(session, sku_ids)
-    missing = sku_ids - set(skus)
-    if missing:
-        raise InventoryDataIntegrityError(missing)
+    skus = _lock_skus(session, sku_ids, access)
     for sku in skus.values():
         if sku.client_id != client_id or sku.warehouse != warehouse:
             raise HTTPException(
@@ -857,18 +886,25 @@ def create_commercial_order(
     data: CommercialOrderCreate,
     *,
     user_uuid: str,
+    access: AccessContext,
     request_id: str | None = None,
 ):
     """Create one order, its initial dispatches, and one outbound event."""
-    from services.api.inventory_models import CommercialOrder, StockExit
+    from services.api.inventory_models import CommercialOrder, SKU, StockExit
 
+    require_active_inventory_client(
+        session, client_id=data.client_id, access=access
+    )
     dispatch_ids = [item.dispatch_id for item in data.dispatches]
     if len(dispatch_ids) != len(set(dispatch_ids)):
         raise _conflict("dispatch_id values must be unique within a command")
     _lock_idempotency_keys(session, [data.order_id, *dispatch_ids])
     existing = session.exec(
         select(CommercialOrder)
-        .where(CommercialOrder.order_id == data.order_id)
+        .where(
+            CommercialOrder.order_id == data.order_id,
+            CommercialOrder.client_id == data.client_id,
+        )
         .with_for_update()
     ).first()
     if existing is not None:
@@ -884,7 +920,12 @@ def create_commercial_order(
         raise _conflict("order_id already exists with different dispatches")
 
     existing_dispatches = session.exec(
-        select(StockExit).where(StockExit.dispatch_id.in_(dispatch_ids))
+        select(StockExit)
+        .join(SKU, SKU.id == StockExit.sku_id)
+        .where(
+            StockExit.dispatch_id.in_(dispatch_ids),
+            SKU.client_id == data.client_id,
+        )
     ).all()
     if existing_dispatches:
         raise _conflict("dispatch_id already exists")
@@ -893,6 +934,7 @@ def create_commercial_order(
         dispatches=list(data.dispatches),
         client_id=data.client_id,
         warehouse=data.warehouse.value,
+        access=access,
     )
     occurred_at = datetime.now(timezone.utc)
     order = CommercialOrder(
@@ -953,26 +995,34 @@ def append_commercial_order_dispatches(
     data: CommercialOrderDispatchAppend,
     *,
     user_uuid: str,
+    access: AccessContext,
     request_id: str | None = None,
 ):
     """Append new partials, deduplicating exact dispatch-id retries."""
     from services.api.inventory_models import CommercialOrder, StockExit
 
+    order_statement = select(CommercialOrder).where(
+        CommercialOrder.order_id == data.order_id
+    )
+    _require_inventory_writer(access)
+    if not access.global_access:
+        order_statement = order_statement.where(
+            CommercialOrder.client_id.in_(access.allowed_client_ids)
+        )
+    order = session.exec(order_statement.with_for_update()).first()
+    if order is None:
+        raise HTTPException(status_code=404, detail="Commercial order not found.")
     dispatch_ids = [item.dispatch_id for item in data.dispatches]
     if len(dispatch_ids) != len(set(dispatch_ids)):
         raise _conflict("dispatch_id values must be unique within a command")
     _lock_idempotency_keys(session, [data.order_id, *dispatch_ids])
-    order = session.exec(
-        select(CommercialOrder)
-        .where(CommercialOrder.order_id == data.order_id)
-        .with_for_update()
-    ).first()
-    if order is None:
-        raise HTTPException(status_code=404, detail="Commercial order not found.")
     existing = {
         item.dispatch_id: item
         for item in session.exec(
-            select(StockExit).where(StockExit.dispatch_id.in_(dispatch_ids))
+            select(StockExit).where(
+                StockExit.dispatch_id.in_(dispatch_ids),
+                StockExit.commercial_order_id == order.id,
+            )
         ).all()
     }
     new_items = []
@@ -989,6 +1039,7 @@ def append_commercial_order_dispatches(
         dispatches=new_items,
         client_id=order.client_id,
         warehouse=order.warehouse,
+        access=access,
     )
     try:
         occurred_at = datetime.now(timezone.utc)
@@ -1015,7 +1066,9 @@ def append_commercial_order_dispatches(
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-def list_orders(session: Session) -> list[dict]:
+def list_orders(
+    session: Session, access: AccessContext
+) -> list[dict]:
     """Return all stock movements (entries + exits) with SKU data.
 
     Strategy to avoid N+1
@@ -1038,9 +1091,15 @@ def list_orders(session: Session) -> list[dict]:
     """
     from services.api.inventory_models import SKU, StockEntry, StockExit
 
-    # 1. Fetch all entries and exits
-    entries = session.exec(select(StockEntry)).all()  # type: ignore[arg-type]
-    exits = session.exec(select(StockExit)).all()      # type: ignore[arg-type]
+    # 1. Apply tenant filtering in SQL before any movement is materialized.
+    entry_statement = select(StockEntry)
+    exit_statement = select(StockExit)
+    if not access.global_access:
+        scoped_skus = select(SKU.id).where(SKU.client_id.in_(access.allowed_client_ids))
+        entry_statement = entry_statement.where(StockEntry.sku_id.in_(scoped_skus))
+        exit_statement = exit_statement.where(StockExit.sku_id.in_(scoped_skus))
+    entries = session.exec(entry_statement).all()  # type: ignore[arg-type]
+    exits = session.exec(exit_statement).all()      # type: ignore[arg-type]
 
     # 2. Collect unique sku_ids
     sku_ids: set[int] = set()

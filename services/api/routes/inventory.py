@@ -24,6 +24,7 @@ from sqlmodel import Session, select
 
 from services.api.auth_models import UserInDB
 from services.api.auth_security import get_current_user
+from services.api.access_control import build_access_context
 from services.api.cache import (
     invalidate_products_cache,
     inventory_cache_key,
@@ -56,6 +57,7 @@ from services.api.inventory_service import (
     get_current_stock,
     get_current_stocks,
     list_orders,
+    require_active_inventory_client,
     update_sku_threshold,
 )
 from services.api.telemetry_capture import capture_telemetry_events
@@ -93,7 +95,6 @@ def _order_items_to_response(raw: list[dict]) -> list[InventoryOrderListItem]:
             quantity=item["quantity"],
             warehouse=item["warehouse"],
             created_at=item["created_at"],
-            user_uuid=item["user_uuid"],
             sku_name=item["sku"].name,
             sku_code=item["sku"].sku,
             reference=item["reference"],
@@ -112,10 +113,10 @@ def _order_items_to_response(raw: list[dict]) -> list[InventoryOrderListItem]:
 @router.get(
     "/products",
     response_model=list[SKUResponse],
-    dependencies=[Depends(get_current_user)],
 )
 def list_products(
     session: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[UserInDB, Depends(get_current_user)],
 ) -> list[SKUResponse]:
     """Return all SKUs with current stock computed per warehouse.
 
@@ -123,13 +124,20 @@ def list_products(
     grouped by (sku_id, warehouse) — this avoids N+1 behaviour while
     maintaining per-warehouse accuracy.
     """
-    cache_key = inventory_cache_key("products", session)
+    access = build_access_context(session, current_user)
+    cache_key = inventory_cache_key("products", session, access.cache_scope)
     cached = products_cache.get(cache_key)
     if cached is not None:
         return cached
 
-    skus = session.exec(select(SKU)).all()
-    stock_map = get_current_stocks(session)
+    statement = select(SKU)
+    if not access.global_access:
+        statement = statement.where(SKU.client_id.in_(access.allowed_client_ids))
+    skus = session.exec(statement).all()
+    stock_map = get_current_stocks(
+        session,
+        None if access.global_access else frozenset(sku.id for sku in skus),
+    )
     result = [_sku_to_response(sku, stock_map) for sku in skus]
     products_cache.set(cache_key, result)
     return result
@@ -141,11 +149,11 @@ def list_products(
 @router.get(
     "/products/{id}",
     response_model=SKUResponse,
-    dependencies=[Depends(get_current_user)],
 )
 def get_product(
     id: int,
     session: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[UserInDB, Depends(get_current_user)],
 ) -> SKUResponse:
     """Return a single SKU by primary key, with computed current_stock.
 
@@ -154,7 +162,11 @@ def get_product(
 
     Raises ``404`` if the SKU does not exist.
     """
-    sku = session.get(SKU, id)
+    access = build_access_context(session, current_user)
+    statement = select(SKU).where(SKU.id == id)
+    if not access.global_access:
+        statement = statement.where(SKU.client_id.in_(access.allowed_client_ids))
+    sku = session.exec(statement).first()
     if sku is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -193,6 +205,12 @@ def create_product(
     Requires authentication.  The new SKU starts with ``current_stock=0``
     because no movements exist yet — stock is never persisted directly.
     """
+    access = build_access_context(session, current_user)
+    client = require_active_inventory_client(
+        session, client_id=payload.client_id, access=access
+    )
+    if client["display_name"] != payload.client_name:
+        raise HTTPException(status_code=422, detail="Client identity does not match.")
     sku = SKU(
         name=payload.name,
         sku=payload.sku,
@@ -256,13 +274,14 @@ def configure_product_threshold(
     id: int,
     payload: SKUThresholdUpdate,
     session: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[UserInDB, Depends(get_current_user)],
+    current_user: Annotated[UserInDB, Depends(get_current_user)],
 ) -> SKUResponse:
     """Configure or disable the threshold; configuration emits no event."""
     sku = update_sku_threshold(
         session,
         sku_id=id,
         minimum_stock_threshold=payload.minimum_stock_threshold,
+        access=build_access_context(session, current_user),
     )
     stock = get_current_stock(session, sku.id, sku.warehouse)
     return _sku_to_response(sku, {(sku.id, sku.warehouse): stock})
@@ -284,6 +303,7 @@ def confirm_physical_count(
             session,
             payload,
             user_uuid=current_user.id,
+            access=build_access_context(session, current_user),
             request_id=getattr(request.state, "request_id", None),
         )
     )
@@ -315,6 +335,7 @@ def create_order_with_dispatches(
         session,
         payload,
         user_uuid=current_user.id,
+        access=build_access_context(session, current_user),
         request_id=getattr(request.state, "request_id", None),
     )
     return _order_mutation_response(order, dispatches)
@@ -338,6 +359,7 @@ def append_order_dispatches(
         session,
         payload,
         user_uuid=current_user.id,
+        access=build_access_context(session, current_user),
         request_id=getattr(request.state, "request_id", None),
     )
     return _order_mutation_response(order, dispatches)
@@ -366,6 +388,7 @@ def create_inbound_order(
         session=session,
         data=payload,
         user_uuid=current_user.id,
+        access=build_access_context(session, current_user),
         request_id=getattr(request.state, "request_id", None),
     )
     return MovementCreatedResponse(id=entry.id)
@@ -394,6 +417,7 @@ def create_outbound_order(
         session=session,
         data=payload,
         user_uuid=current_user.id,
+        access=build_access_context(session, current_user),
         request_id=getattr(request.state, "request_id", None),
     )
     return MovementCreatedResponse(id=exit_record.id)
@@ -405,10 +429,10 @@ def create_outbound_order(
 @router.get(
     "/orders",
     response_model=list[InventoryOrderListItem],
-    dependencies=[Depends(get_current_user)],
 )
 def list_orders_endpoint(
     session: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[UserInDB, Depends(get_current_user)],
 ) -> list[InventoryOrderListItem]:
     """Return all stock movements (entries + exits) with SKU data.
 
@@ -420,13 +444,14 @@ def list_orders_endpoint(
 
     Inventory reads require authentication.
     """
-    cache_key = inventory_cache_key("orders", session)
+    access = build_access_context(session, current_user)
+    cache_key = inventory_cache_key("orders", session, access.cache_scope)
     cached = orders_cache.get(cache_key)
     if cached is not None:
         return cached
 
     try:
-        raw = list_orders(session=session)
+        raw = list_orders(session=session, access=access)
     except InventoryDataIntegrityError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

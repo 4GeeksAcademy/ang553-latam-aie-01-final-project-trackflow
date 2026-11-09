@@ -6,10 +6,13 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import insert
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import services.api.inventory_service as inventory_service
 from services.api.inventory_clients import CLIENT_IDS_BY_NAME
+from services.api.access_control import AccessContext
+from services.api.auth_models import Role
 from services.api.inventory_models import (
     CommercialOrder,
     InventoryPhysicalCount,
@@ -29,9 +32,37 @@ from services.api.inventory_schemas import (
     StockEntryCreate,
     StockExitCreate,
 )
+from services.incidents.models import clients, operational_security_metadata
 
 
 CLIENT_ID = CLIENT_IDS_BY_NAME["PureStep Footwear"]
+_ADMIN_ACCESS = AccessContext(
+    user_id="producer-test-admin",
+    role=Role.admin,
+    allowed_client_ids=frozenset(),
+    sensitive_client_ids=frozenset(),
+    global_access=True,
+)
+_ORIGINAL_SERVICE_WRITES = {
+    name: getattr(inventory_service, name)
+    for name in (
+        "create_stock_entry",
+        "create_stock_exit",
+        "update_sku_threshold",
+        "confirm_inventory_physical_count",
+        "create_commercial_order",
+        "append_commercial_order_dispatches",
+    )
+}
+
+
+@pytest.fixture(autouse=True)
+def authorized_service_writes(monkeypatch):
+    for name, original in _ORIGINAL_SERVICE_WRITES.items():
+        def wrapper(*args, _original=original, **kwargs):
+            kwargs["access"] = _ADMIN_ACCESS
+            return _original(*args, **kwargs)
+        monkeypatch.setattr(inventory_service, name, wrapper)
 
 
 @pytest.fixture
@@ -39,7 +70,15 @@ def session() -> Session:
     engine = create_engine("sqlite://")
     SQLModel.metadata.create_all(engine)
     inventory_outbox_metadata.create_all(engine)
+    operational_security_metadata.create_all(engine)
     with Session(engine) as value:
+        value.execute(insert(clients).values(
+            client_id=CLIENT_ID,
+            display_name="PureStep Footwear",
+            is_active=True,
+            created_by_user_id="producer-test-admin",
+        ))
+        value.commit()
         yield value
 
 

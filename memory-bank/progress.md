@@ -1024,3 +1024,136 @@ revisión y autorización arquitectónica.
 - Documented deadline limitation: synchronous `httpx` read timeouts measure
   inactivity between chunks. The 80-second budget controls admission and phase
   allocation but cannot hard-interrupt an adversarial slow-trickle response.
+
+## Milestone 9 prerequisite — incident query and tenant security
+
+- Added an explicit, separately provisioned PostgreSQL design for verified
+  clients, user/client memberships, operational incidents and append-only
+  incident history. Operational tables are isolated from startup
+  `SQLModel.metadata.create_all`; `infra/sql/incident_query_security.sql` is a
+  reviewable DDL artifact and has not been applied.
+- Added shared `AccessContext` authorization sourced from authenticated TinyDB
+  identity plus PostgreSQL membership. Admin has global access; manager and
+  user access is restricted to assigned active clients; user is read-only for
+  the new operational incident capability.
+  Membership creation is admin-only and verifies the TinyDB user before the
+  PostgreSQL write without a fictitious cross-database foreign key.
+- Added authenticated operational incident POST/GET/PATCH routes alongside the
+  unchanged academic analyze/export routes. Incident IDs are database-sequence
+  derived (`TRF-000001`), status changes use optimistic versioning and approved
+  transitions, and cross-tenant/not-found reads share the same 404 projection.
+  Email is optional, permission-redacted, and never replaced with invented data.
+- Operational incident creation is validated by its typed contract rather than
+  the academic CSV carrier whitelist. Newly encountered authentic carriers are
+  accepted, email remains optional, and genuinely invalid country, category,
+  email, tracking length and description values remain rejected. Focused
+  incident QA passes 18 tests with one Python 3.13 ASGI scenario skipped.
+- Inventory product/order reads now filter tenant scope in SQL, aggregate stock
+  only for visible SKUs, use tenant-scoped caches, and omit movement actor UUIDs
+  from HTTP projections. Every inventory mutation now requires an
+  `AccessContext`: admin is global, manager is limited to active assigned
+  clients, and user is denied. SKU, client and commercial-order targets are
+  filtered in SQL before idempotency or domain processing; foreign and missing
+  targets share a sanitized 404. Computed stock semantics remain unchanged.
+- Inventory client identity now fails closed against active
+  `trackflow_client` rows instead of treating the four historical static
+  clients as operational truth. Sensitive membership flags never grant PII to
+  role `user`, including direct `AccessContext` construction. Cache database
+  namespaces use weakly registered monotonic tokens rather than reusable
+  Python object IDs.
+- The reviewed DDL uses explicit `public` objects, explicitly named identity
+  sequences for incidents and history, and a stored PostgreSQL-generated
+  incident ID. Incident creation is one INSERT with `RETURNING`; no second
+  UPDATE remains. History transitions,
+  reopen reasons and status/score coherence are database-checked, and the
+  redundant history index was removed. A versioned read-only preflight is
+  included; the DDL explicitly does not claim or configure RLS.
+- The Backoffice incident page now supports authenticated operational lookup,
+  creation and status history. Creation/mutation controls are hidden from role
+  `user`, and closing requires an operator-entered satisfaction score.
+- Focused deterministic SQLite coverage passes 15 tests for IDs, history,
+  optimistic locking, all seven inventory mutation families, role and tenant
+  matrices, cache isolation and fail-closed client registration,
+  tenant hiding, PII redaction, persisted memberships, scoped inventory and the
+  controlled admin registration flow. Two HTTP ASGI scenarios are present but
+  skipped on the available Python 3.13 runtime because of the repository's
+  known FastAPI ASGI hang.
+- Additional Python 3.13 regression QA passes 71 product/order-endpoint tests,
+  38 movement/business-producer tests, 29 inventory-order tests (three known
+  lifespan cases deselected), 47 LangGraph Part 1/Gateway Resilience tests and
+  16 static serialization tests. `compileall`, `uv lock --check` and
+  `git diff --check` pass. The Windows Python 3.12 isolated attempt remained
+  blocked in slow dependency/module filesystem reads, but a Linux Python 3.12
+  API container using the current code subsequently passed lifespan, health,
+  authentication and real HTTP incident/inventory authorization scenarios.
+- Backoffice `npm ci` repaired only `node_modules`; package manifests and lock
+  files are unchanged. TypeScript and focused ESLint for all touched frontend
+  files pass. Global ESLint still reports three pre-existing errors and one
+  warning in unrelated profile/login/auth/inventory files. The webpack
+  production build passes completely outside the restrictive sandbox,
+  including compilation, TypeScript, all 18 static routes and build traces.
+- PostgreSQL 16.15 integration now passes in the authorized disposable
+  `trackflow-incident-qa-20261108` container on loopback port 55439, backed by
+  `tmpfs` with no persistent mounts. The first DDL attempt exposed invalid
+  schema-qualified index-name syntax and rolled back atomically; the two index
+  names were corrected and the second application committed successfully.
+  Catalog checks confirm four operational tables, two named identity sequences,
+  23 constraints, nine indexes and the append-only trigger. Synthetic tests
+  pass generated IDs, `INSERT ... RETURNING`, FK/check failures, rollback,
+  immutable history, PII redaction, tenant isolation and inventory writes.
+- A real two-session PostgreSQL race exposed that stale version validation ran
+  after transition validation. The order is corrected so stale writers
+  consistently receive `IncidentConflict`; the repeated race produced one
+  successful version-2 update and one conflict. Manual Backoffice acceptance
+  remains pending. The disposable database remains running for that later gate.
+- Manual acceptance exposed two QA frontend startup/configuration blockers.
+  `next dev` served the shell but failed its HMR WebSocket and never mounted the
+  login client tree; the acceptance server now uses the verified production
+  build. The operational client request also lacked a Next.js rewrite and was
+  answered by Next's own 404 instead of FastAPI. `/api/access/:path*` now
+  proxies to the configured backend. Playwright against the real QA services
+  confirms HTTP 200, no client-access error, a visible selector populated from
+  PostgreSQL QA and no console or network errors. Human acceptance remains
+  pending.
+- Manual incident creation then exposed inappropriate reuse of the academic
+  CSV carrier allowlist by the operational write service. The operational
+  typed contract is now authoritative: an authentic carrier name and omitted
+  optional email produce `OPEN` version 1 with one append-only `CREATED`
+  history row, while invalid taxonomy, email, tracking length and description
+  remain rejected. The failed human attempt did not persist a row.
+- The first successful browser retest also exposed a post-201 UI error caused
+  by dereferencing React `event.currentTarget` after an `await`; the form
+  reference is now captured before the asynchronous request. A separate
+  Playwright context against the production Backoffice and disposable
+  PostgreSQL completed create, close, reopen and discard as versions 1 through
+  4, with HTTP 201/200 responses, no failed requests and exactly one database
+  row for the generated tracking number. A genuinely short tracking number
+  returned 422 and persisted no row. Transparent HTTP retry idempotency is not
+  yet part of the write contract and remains an explicit product decision;
+  uniqueness on tracking number would be incorrect because multiple incidents
+  may legitimately refer to one shipment.
+- Human acceptance completed the operational lifecycle of `TRF-000012` through
+  `OPEN` v1, `CLOSED` v2 and a reasoned reopen to `OPEN` v3, including lookup
+  after a full Backoffice reload. The human result was not repeated or claimed
+  by automation.
+- Final QA created two non-sensitive temporary memberships only in disposable
+  PostgreSQL. Authentic HTTP and direct-service checks confirmed owner access,
+  foreign/missing/invalid 404 equivalence, user write denial, admin global
+  access and email redaction. Inventory HTTP checks confirmed tenant-scoped
+  products and caches, correct zero versus five-unit stock, hidden foreign
+  SKUs, denied user writes and no private movement actor projection. No active
+  manager identity exists in the isolated auth copy, so manager scope was
+  verified against the real service/database with a synthetic QA access
+  context: one own-client movement persisted and the foreign-client attempt
+  produced 404 and zero rows.
+- A separate negative ticket completed invalid-transition, missing-reopen-
+  reason, stale-version and real two-request concurrency checks. The race
+  produced one HTTP 200 and one 409, the ticket ended `DISCARDED` v4 with
+  history versions 1–4, and invalid or denied creates persisted no rows.
+- Final review sanitized incident telemetry templates so GET/PATCH traces use
+  `/api/incidents/{incident_id}` rather than a public incident identifier. Two
+  historical inventory-client test fixtures were aligned with Python 3.13 and
+  the current nullable threshold column; all six migration tests pass. Focused
+  incident/tenant, inventory, Backoffice, LangGraph and resilience regressions
+  pass. The known Python 3.13 ASGI/lifespan hangs remain explicitly skipped or
+  environment-blocked rather than reported as passes.

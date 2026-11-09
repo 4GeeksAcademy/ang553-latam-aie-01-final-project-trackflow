@@ -6,6 +6,7 @@ import { AuthGuard } from "@/components/layout/AuthGuard";
 import { BackofficeHeader } from "@/components/layout/BackofficeHeader";
 import { IncidentUploadCard } from "@/components/incidents/IncidentUploadCard";
 import { IncidentSummaryPlaceholder } from "@/components/incidents/IncidentSummaryPlaceholder";
+import { IncidentOperations } from "@/components/incidents/IncidentOperations";
 import { analyzeIncidents, downloadResultsCsv, ApiError } from "@/lib/incidentsApi";
 import type { IncidentAnalysisResult } from "@/types/incidents";
 
@@ -103,6 +104,8 @@ export default function IncidentsPage() {
             individual records are retained.
           </p>
         </div>
+
+        <IncidentOperations />
 
         {/* ── Upload card ── */}
         <div className="mt-8">

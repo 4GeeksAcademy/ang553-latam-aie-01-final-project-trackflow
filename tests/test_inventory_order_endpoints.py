@@ -15,10 +15,13 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
+from sqlalchemy import insert
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from services.api.auth_models import UserInDB
+from services.api.auth_models import Role, UserInDB
+from services.api.access_control import AccessContext
 from services.api.inventory_models import SKU, StockEntry, StockExit
+from services.api.inventory_clients import CLIENT_IDS_BY_NAME
 from services.api.inventory_schemas import (
     ExitType,
     StockEntryCreate,
@@ -27,16 +30,46 @@ from services.api.inventory_schemas import (
     Warehouse,
 )
 from services.api.inventory_service import (
-    create_stock_entry,
-    create_stock_exit,
+    create_stock_entry as _create_stock_entry,
+    create_stock_exit as _create_stock_exit,
     get_current_stock,
 )
 from services.api.inventory_outbox import inventory_outbox_metadata
 from services.api.routes.inventory import (
     create_inbound_order,
     create_outbound_order,
-    list_orders_endpoint,
+    list_orders_endpoint as _list_orders_endpoint_handler,
 )
+from services.incidents.models import clients, operational_security_metadata
+
+
+_READ_ADMIN = UserInDB(
+    id="inventory-read-admin",
+    email="inventory-read-admin@trackflow.io",
+    hashed_password="test-only",
+    role=Role.admin,
+)
+_ADMIN_ACCESS = AccessContext(
+    user_id=_READ_ADMIN.id,
+    role=Role.admin,
+    allowed_client_ids=frozenset(),
+    sensitive_client_ids=frozenset(),
+    global_access=True,
+)
+_CLIENT_ID = CLIENT_IDS_BY_NAME["PureStep Footwear"]
+
+
+def create_stock_entry(session, data, user_uuid, request_id=None):
+    return _create_stock_entry(session, data, user_uuid, _ADMIN_ACCESS, request_id)
+
+
+def create_stock_exit(session, data, user_uuid, request_id=None):
+    return _create_stock_exit(session, data, user_uuid, _ADMIN_ACCESS, request_id)
+
+
+def list_orders_endpoint(*, session: Session):
+    """Call the secured GET handler with an explicit test administrator."""
+    return _list_orders_endpoint_handler(session=session, current_user=_READ_ADMIN)
 
 
 def _request(request_id: str = "550e8400-e29b-41d4-a716-446655440099"):
@@ -58,7 +91,10 @@ def db_session() -> Session:
     engine = create_engine("sqlite://", echo=False)
     SQLModel.metadata.create_all(engine)
     inventory_outbox_metadata.create_all(engine)
+    operational_security_metadata.create_all(engine)
     with Session(engine) as session:
+        session.execute(insert(clients).values(client_id=_CLIENT_ID, display_name="PureStep Footwear", is_active=True, created_by_user_id=_READ_ADMIN.id))
+        session.commit()
         yield session
 
 
@@ -70,6 +106,7 @@ def auth_user() -> UserInDB:
         email="test@trackflow.io",
         hashed_password="fake-hash",
         is_active=True,
+        role=Role.admin,
     )
 
 
@@ -81,6 +118,7 @@ def second_auth_user() -> UserInDB:
         email="second@trackflow.io",
         hashed_password="fake-hash",
         is_active=True,
+        role=Role.admin,
     )
 
 
@@ -90,8 +128,8 @@ def _create_sku(
     name: str = "Test SKU",
     warehouse: str = "LA",
     category: str = "electronics",
-    client_name: str = "TestClient",
-    client_id: str | None = None,
+    client_name: str = "PureStep Footwear",
+    client_id: str | None = _CLIENT_ID,
 ) -> SKU:
     """Helper — create a SKU record directly in the database."""
     sku = SKU(

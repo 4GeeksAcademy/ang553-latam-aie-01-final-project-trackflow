@@ -51,7 +51,14 @@ EXPECTED_ROUTES = {
         ("DELETE", "/api/suppliers/{supplier_id}"),
         ("DELETE", "/suppliers/{supplier_id}"),
         ("POST", "/api/incidents/analyze"),
-        ("GET", "/api/incidents/results/export"), ("GET", "/health"),
+        ("GET", "/api/incidents/results/export"),
+        ("POST", "/api/incidents"),
+        ("GET", "/api/incidents/{incident_id}"),
+        ("PATCH", "/api/incidents/{incident_id}"),
+        ("GET", "/api/access/clients"),
+        ("POST", "/api/access/clients"),
+        ("POST", "/api/access/memberships"),
+        ("GET", "/health"),
         ("POST", "/telemetry/events"), ("GET", "/telemetry/report"),
         ("GET", "/reporting/weekly-warehouse-client-performance"),
         ("GET", "/reporting/pipeline-runs/latest"),
@@ -105,11 +112,11 @@ def _exact_keys(response: httpx.Response, keys: set[str]) -> dict[str, Any]:
     return payload
 
 
-def test_runtime_manifest_has_exactly_44_registrations() -> None:
+def test_runtime_manifest_has_exactly_50_registrations() -> None:
     routes = _routes()
     found = {(method, path) for method, path, _ in routes}
-    assert len(routes) == 44
-    assert len(found) == 44
+    assert len(routes) == 50
+    assert len(found) == 50
     assert found == EXPECTED_ROUTES
 
 
@@ -143,7 +150,7 @@ def test_openapi_visible_success_responses_are_nominal_or_special() -> None:
         for method, path, route in _routes()
         if route.include_in_schema and not path.startswith("/api/suppliers")
     }
-    assert len(visible) == 38
+    assert len(visible) == 44
     for method, path in visible:
         operation = openapi["paths"][path][method.lower()]
         success = next(
@@ -164,6 +171,7 @@ def test_application_decorators_explicitly_declare_response_models() -> None:
         ROOT / "services/api/main.py",
         *((ROOT / "services/api/routes").glob("*.py")),
         *((ROOT / "services/reporting").glob("*.py")),
+        ROOT / "services/incidents/router.py",
         ROOT / "services/task_queue/router.py",
     ]
     http_decorators = {"get", "post", "put", "patch", "delete", "options", "head"}
@@ -192,8 +200,8 @@ def test_application_decorators_explicitly_declare_response_models() -> None:
     unique_special = [
         item for item in source_decorators if "response_model" not in item[2]
     ]
-    assert len(source_decorators) == 38
-    assert len(unique_json) == 33
+    assert len(source_decorators) == 44
+    assert len(unique_json) == 39
     assert len(unique_special) == 5
     assert len(inferred_only) == 2
     assert all("services\\api\\routes\\telemetry.py" in item for item in inferred_only)
@@ -210,10 +218,10 @@ def test_registration_accounting_distinguishes_source_and_runtime_layers() -> No
         for method in operation_set
         if method.upper() in {"GET", "POST", "PUT", "PATCH", "DELETE"}
     }
-    assert len(runtime) == 44
-    assert len(runtime_json) == 40
+    assert len(runtime) == 50
+    assert len(runtime_json) == 46
     assert len(runtime_special) == 4
-    assert len(visible) == 38
+    assert len(visible) == 44
 
 
 def test_http_auth_profile_supplier_and_health_contracts(isolated_auth_db, monkeypatch) -> None:
@@ -564,7 +572,7 @@ def test_http_inventory_contracts_use_isolated_sqlite(isolated_auth_db, monkeypa
         item = next(item for item in orders.json() if item["id"] == created["id"])
         assert set(item) == {
             "id", "movement_type", "quantity", "warehouse", "created_at",
-            "user_uuid", "sku_name", "sku_code", "reference", "exit_type",
+            "sku_name", "sku_code", "reference", "exit_type",
             "tracking_number",
         }
         assert "sku_id" not in item and "sku" not in item

@@ -21,7 +21,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, UUID4, model_validator
 
-from services.api.inventory_clients import validate_client_pair
 
 
 # ── Domain enumerations ─────────────────────────────────────────────────────
@@ -68,13 +67,6 @@ class SKUCreate(BaseModel):
     category: Category
     warehouse: Warehouse
     minimum_stock_threshold: int | None = Field(default=None, ge=0, strict=True)
-
-    @model_validator(mode="after")
-    def _validate_client_identity(self) -> SKUCreate:
-        """Require a known, authoritative ID matching the display name."""
-        validate_client_pair(self.client_id, self.client_name)
-        return self
-
 
 class SKUResponse(BaseModel):
     """Public representation of a SKU, including computed stock.
@@ -360,7 +352,6 @@ class InventoryOrderListItem(BaseModel):
     quantity: int
     warehouse: Warehouse
     created_at: datetime
-    user_uuid: str
     sku_name: str
     sku_code: str
     reference: Optional[str] = None

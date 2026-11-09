@@ -6,7 +6,12 @@
  */
 
 import { authFetch } from "@/lib/authFetch";
-import type { IncidentAnalysisResult } from "@/types/incidents";
+import type {
+  IncidentAnalysisResult,
+  OperationalClient,
+  OperationalIncident,
+  OperationalIncidentCreate,
+} from "@/types/incidents";
 
 const BASE_URL: string = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -23,6 +28,62 @@ export class ApiError extends Error {
     this.name = "ApiError";
     this.statusCode = statusCode;
   }
+}
+
+async function operationalRequest<T>(
+  path: string,
+  pathTemplate: string,
+  init?: RequestInit,
+): Promise<T> {
+  let response: Response;
+  try {
+    response = await authFetch(`${BASE_URL}${path}`, init, { pathTemplate });
+  } catch {
+    throw new ApiError("Could not reach the incident service.");
+  }
+  if (!response.ok) {
+    let detail = `Server returned ${response.status}`;
+    try {
+      const body = await response.json() as { detail?: string };
+      if (typeof body.detail === "string") detail = body.detail;
+    } catch { /* retain safe fallback */ }
+    throw new ApiError(detail, response.status);
+  }
+  return response.json() as Promise<T>;
+}
+
+export function listOperationalClients(): Promise<OperationalClient[]> {
+  return operationalRequest<OperationalClient[]>("/api/access/clients", "/api/access/clients");
+}
+
+export function getOperationalIncident(incidentId: string): Promise<OperationalIncident> {
+  return operationalRequest<OperationalIncident>(
+    `/api/incidents/${encodeURIComponent(incidentId)}`,
+    "/api/incidents/{incident_id}",
+  );
+}
+
+export function createOperationalIncident(payload: OperationalIncidentCreate): Promise<OperationalIncident> {
+  return operationalRequest<OperationalIncident>("/api/incidents", "/api/incidents", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateOperationalIncident(
+  incidentId: string,
+  payload: { expected_version: number; status: string; reason?: string; satisfaction_score?: number },
+): Promise<OperationalIncident> {
+  return operationalRequest<OperationalIncident>(
+    `/api/incidents/${encodeURIComponent(incidentId)}`,
+    "/api/incidents/{incident_id}",
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
 }
 
 /**
