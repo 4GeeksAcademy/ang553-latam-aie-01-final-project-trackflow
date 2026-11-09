@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -241,10 +240,6 @@ def test_service_write_facades_require_access_context_and_deny_user(
         assert exc_info.value.status_code == 403
 
 
-@pytest.mark.skipif(
-    sys.version_info >= (3, 13),
-    reason="Known repository-wide FastAPI ASGI hang on the available Python 3.13 runtime",
-)
 def test_http_all_inventory_mutations_reject_role_user(secured_inventory: Session):
     api = FastAPI(); api.include_router(inventory_router)
     api.dependency_overrides[get_db] = lambda: secured_inventory

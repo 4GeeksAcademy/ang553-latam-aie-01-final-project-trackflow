@@ -1,9 +1,15 @@
 # Preserve byte-for-byte hashes for the frozen RAG evidence and manifest inputs.
-pipelines/eval/rag/independent-holdout-v2.1-results.json -text whitespace=cr-at-eol
-pipelines/eval/rag/independent-holdout-v2.1-resume-01-results.json -text whitespace=cr-at-eol
 services/api/main.py -text whitespace=cr-at-eol
 docker-compose.yml -text whitespace=cr-at-eol
 .env.example -text whitespace=cr-at-eol
 uis/backoffice/components/layout/BackofficeHeader.tsx -text whitespace=cr-at-eol
 uis/backoffice/next.config.ts -text whitespace=cr-at-eol
 pyproject.toml -text whitespace=cr-at-eol
+
+# Frozen RAG inputs and evidence are hash-bound and must materialize as LF.
+pipelines/eval/rag/*.json text eol=lf
+# These two sealed evidence blobs were committed with CRLF and keep those bytes.
+pipelines/eval/rag/independent-holdout-v2.1-results.json -text -eol whitespace=cr-at-eol
+pipelines/eval/rag/independent-holdout-v2.1-resume-01-results.json -text -eol whitespace=cr-at-eol
+# This reviewed generation artifact is hash-bound to its sealed CRLF bytes.
+pipelines/eval/rag/generation-results.json text eol=crlf
