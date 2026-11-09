@@ -27,6 +27,7 @@ from services.api.inventory_schemas import (
     CommercialOrderCreate,
     CommercialOrderDispatchAppend,
     InventoryPhysicalCountCreate,
+    SKUResponse,
     StockEntryCreate,
     StockExitCreate,
 )
@@ -54,6 +55,10 @@ class InventoryDataIntegrityError(RuntimeError):
             "Inventory movements reference missing SKUs: "
             f"{sorted(self.missing_sku_ids)}"
         )
+
+
+class InventoryProductNotFound(RuntimeError):
+    """A product is absent or outside the caller's authorized tenant scope."""
 
 
 def _lock_idempotency_keys(session: Session, values: list[UUID]) -> None:
@@ -355,6 +360,37 @@ def get_current_stock(
     exits = exit_sum if exit_sum is not None else 0
 
     return entries - exits
+
+
+def read_inventory_product(
+    session: Session,
+    *,
+    product_id: int,
+    access: AccessContext,
+) -> SKUResponse:
+    """Return one tenant-visible product with its computed stock."""
+    from services.api.inventory_models import SKU
+
+    if product_id <= 0:
+        raise ValueError("product_id must be positive")
+    statement = select(SKU).where(SKU.id == product_id)
+    if not access.global_access:
+        statement = statement.where(SKU.client_id.in_(access.allowed_client_ids))
+    sku = session.exec(statement).first()
+    if sku is None:
+        raise InventoryProductNotFound("product not found")
+    current_stock = get_current_stock(session, sku.id, sku.warehouse)
+    return SKUResponse(
+        id=sku.id,
+        name=sku.name,
+        sku=sku.sku,
+        client_id=sku.client_id,
+        client_name=sku.client_name,
+        category=sku.category,
+        warehouse=sku.warehouse,
+        minimum_stock_threshold=sku.minimum_stock_threshold,
+        current_stock=current_stock,
+    )
 
 
 # ═════════════════════════════════════════════════════════════════════════════

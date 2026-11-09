@@ -54,6 +54,10 @@ const nextConfig: NextConfig = {
         source: "/knowledge/:path*",
         destination: `${backendUrl}/knowledge/:path*`,
       },
+      {
+        source: "/support/:path*",
+        destination: `${backendUrl}/support/:path*`,
+      },
     ];
   },
 };

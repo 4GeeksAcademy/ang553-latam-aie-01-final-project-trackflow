@@ -30,6 +30,9 @@ def sanitized_error(error: BaseException) -> dict[str, object]:
             "category": error.category,
             "status_code": error.status_code,
         }
+    category = getattr(error, "category", None)
+    if category in {"timeout", "unavailable", "deadline_exhausted"}:
+        return {"category": category, "status_code": None}
     return {"category": "technical_error", "status_code": None}
 
 

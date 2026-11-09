@@ -1,0 +1,470 @@
+{
+  "contains_operational_data": false,
+  "evaluations": [
+    {
+      "case": "knowledge_only",
+      "checks": {
+        "call_counts": true,
+        "checkpoint_removed": true,
+        "clarification": true,
+        "component_status": true,
+        "controlled_total_failure": true,
+        "partial": true,
+        "route": true
+      },
+      "component_status": {
+        "inventory": null,
+        "knowledge": "ok",
+        "ticket": null
+      },
+      "passed": true,
+      "route": "knowledge",
+      "trace": [
+        {
+          "node": "route_query",
+          "status": "completed"
+        },
+        {
+          "node": "retrieve_context",
+          "status": "completed"
+        },
+        {
+          "node": "generate_answer",
+          "status": "completed"
+        },
+        {
+          "node": "finalize_answer",
+          "status": "completed"
+        },
+        {
+          "node": "assemble_response",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "case": "ticket_found",
+      "checks": {
+        "call_counts": true,
+        "checkpoint_removed": true,
+        "clarification": true,
+        "component_status": true,
+        "controlled_total_failure": true,
+        "partial": true,
+        "route": true
+      },
+      "component_status": {
+        "inventory": null,
+        "knowledge": null,
+        "ticket": "ok"
+      },
+      "passed": true,
+      "route": "ticket",
+      "trace": [
+        {
+          "node": "route_query",
+          "status": "completed"
+        },
+        {
+          "node": "ticket_lookup",
+          "status": "completed"
+        },
+        {
+          "node": "assemble_response",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "case": "ticket_cross_tenant_hidden",
+      "checks": {
+        "call_counts": true,
+        "checkpoint_removed": true,
+        "clarification": true,
+        "component_status": true,
+        "controlled_total_failure": true,
+        "partial": true,
+        "route": true
+      },
+      "component_status": {
+        "inventory": null,
+        "knowledge": null,
+        "ticket": "not_found"
+      },
+      "passed": true,
+      "route": "ticket",
+      "trace": [
+        {
+          "node": "route_query",
+          "status": "completed"
+        },
+        {
+          "node": "ticket_lookup",
+          "status": "completed"
+        },
+        {
+          "node": "assemble_response",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "case": "inventory_existing",
+      "checks": {
+        "call_counts": true,
+        "checkpoint_removed": true,
+        "clarification": true,
+        "component_status": true,
+        "controlled_total_failure": true,
+        "partial": true,
+        "route": true
+      },
+      "component_status": {
+        "inventory": "ok",
+        "knowledge": null,
+        "ticket": null
+      },
+      "passed": true,
+      "route": "inventory",
+      "trace": [
+        {
+          "node": "route_query",
+          "status": "completed"
+        },
+        {
+          "node": "inventory_lookup",
+          "status": "completed"
+        },
+        {
+          "node": "assemble_response",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "case": "inventory_zero",
+      "checks": {
+        "call_counts": true,
+        "checkpoint_removed": true,
+        "clarification": true,
+        "component_status": true,
+        "controlled_total_failure": true,
+        "partial": true,
+        "route": true
+      },
+      "component_status": {
+        "inventory": "ok",
+        "knowledge": null,
+        "ticket": null
+      },
+      "passed": true,
+      "route": "inventory",
+      "trace": [
+        {
+          "node": "route_query",
+          "status": "completed"
+        },
+        {
+          "node": "inventory_lookup",
+          "status": "completed"
+        },
+        {
+          "node": "assemble_response",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "case": "inventory_cross_tenant_hidden",
+      "checks": {
+        "call_counts": true,
+        "checkpoint_removed": true,
+        "clarification": true,
+        "component_status": true,
+        "controlled_total_failure": true,
+        "partial": true,
+        "route": true
+      },
+      "component_status": {
+        "inventory": "not_found",
+        "knowledge": null,
+        "ticket": null
+      },
+      "passed": true,
+      "route": "inventory",
+      "trace": [
+        {
+          "node": "route_query",
+          "status": "completed"
+        },
+        {
+          "node": "inventory_lookup",
+          "status": "completed"
+        },
+        {
+          "node": "assemble_response",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "case": "ticket_inventory",
+      "checks": {
+        "call_counts": true,
+        "checkpoint_removed": true,
+        "clarification": true,
+        "component_status": true,
+        "controlled_total_failure": true,
+        "partial": true,
+        "route": true
+      },
+      "component_status": {
+        "inventory": "ok",
+        "knowledge": null,
+        "ticket": "ok"
+      },
+      "passed": true,
+      "route": "mixed",
+      "trace": [
+        {
+          "node": "route_query",
+          "status": "completed"
+        },
+        {
+          "node": "ticket_lookup",
+          "status": "completed"
+        },
+        {
+          "node": "inventory_lookup",
+          "status": "completed"
+        },
+        {
+          "node": "assemble_response",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "case": "ticket_knowledge",
+      "checks": {
+        "call_counts": true,
+        "checkpoint_removed": true,
+        "clarification": true,
+        "component_status": true,
+        "controlled_total_failure": true,
+        "partial": true,
+        "route": true
+      },
+      "component_status": {
+        "inventory": null,
+        "knowledge": "ok",
+        "ticket": "ok"
+      },
+      "passed": true,
+      "route": "mixed",
+      "trace": [
+        {
+          "node": "route_query",
+          "status": "completed"
+        },
+        {
+          "node": "ticket_lookup",
+          "status": "completed"
+        },
+        {
+          "node": "retrieve_context",
+          "status": "completed"
+        },
+        {
+          "node": "generate_answer",
+          "status": "completed"
+        },
+        {
+          "node": "finalize_answer",
+          "status": "completed"
+        },
+        {
+          "node": "assemble_response",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "case": "missing_identifier",
+      "checks": {
+        "call_counts": true,
+        "checkpoint_removed": true,
+        "clarification": true,
+        "component_status": true,
+        "controlled_total_failure": true,
+        "partial": true,
+        "route": true
+      },
+      "component_status": {
+        "inventory": null,
+        "knowledge": null,
+        "ticket": null
+      },
+      "passed": true,
+      "route": "clarification",
+      "trace": [
+        {
+          "node": "route_query",
+          "status": "completed"
+        },
+        {
+          "node": "assemble_response",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "case": "partial_ticket_timeout",
+      "checks": {
+        "call_counts": true,
+        "checkpoint_removed": true,
+        "clarification": true,
+        "component_status": true,
+        "controlled_total_failure": true,
+        "partial": true,
+        "route": true
+      },
+      "component_status": {
+        "inventory": "ok",
+        "knowledge": null,
+        "ticket": "timeout"
+      },
+      "passed": true,
+      "route": "mixed",
+      "trace": [
+        {
+          "node": "route_query",
+          "status": "completed"
+        },
+        {
+          "node": "ticket_lookup",
+          "status": "completed"
+        },
+        {
+          "node": "inventory_lookup",
+          "status": "completed"
+        },
+        {
+          "node": "assemble_response",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "case": "partial_inventory_unavailable",
+      "checks": {
+        "call_counts": true,
+        "checkpoint_removed": true,
+        "clarification": true,
+        "component_status": true,
+        "controlled_total_failure": true,
+        "partial": true,
+        "route": true
+      },
+      "component_status": {
+        "inventory": "unavailable",
+        "knowledge": null,
+        "ticket": "ok"
+      },
+      "passed": true,
+      "route": "mixed",
+      "trace": [
+        {
+          "node": "route_query",
+          "status": "completed"
+        },
+        {
+          "node": "ticket_lookup",
+          "status": "completed"
+        },
+        {
+          "node": "inventory_lookup",
+          "status": "completed"
+        },
+        {
+          "node": "assemble_response",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "case": "partial_knowledge_failure",
+      "checks": {
+        "call_counts": true,
+        "checkpoint_removed": true,
+        "clarification": true,
+        "component_status": true,
+        "controlled_total_failure": true,
+        "partial": true,
+        "route": true
+      },
+      "component_status": {
+        "inventory": null,
+        "knowledge": "unavailable",
+        "ticket": "ok"
+      },
+      "passed": true,
+      "route": "mixed",
+      "trace": [
+        {
+          "node": "route_query",
+          "status": "completed"
+        },
+        {
+          "node": "ticket_lookup",
+          "status": "completed"
+        },
+        {
+          "node": "retrieve_context",
+          "status": "completed"
+        },
+        {
+          "node": "assemble_response",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "case": "total_failure",
+      "checks": {
+        "call_counts": true,
+        "checkpoint_removed": true,
+        "clarification": true,
+        "component_status": true,
+        "controlled_total_failure": true,
+        "partial": true,
+        "route": true
+      },
+      "component_status": {
+        "inventory": null,
+        "knowledge": null,
+        "ticket": "timeout"
+      },
+      "passed": true,
+      "route": "ticket",
+      "trace": [
+        {
+          "node": "route_query",
+          "status": "completed"
+        },
+        {
+          "node": "ticket_lookup",
+          "status": "completed"
+        },
+        {
+          "node": "assemble_response",
+          "status": "failed"
+        }
+      ]
+    }
+  ],
+  "passed": true,
+  "precision_claim": false,
+  "schema_version": 1,
+  "scope": "external_support_graph_offline_fakes"
+}
