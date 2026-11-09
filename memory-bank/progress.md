@@ -1157,3 +1157,65 @@ revisión y autorización arquitectónica.
   incident/tenant, inventory, Backoffice, LangGraph and resilience regressions
   pass. The known Python 3.13 ASGI/lifespan hangs remain explicitly skipped or
   environment-blocked rather than reported as passes.
+
+## Milestone 9 — LangGraph external tools, backend unit 1
+
+- Added typed read-only ticket and inventory tools that use the existing
+  authorized domain services. Ticket projections exclude email, tracking,
+  descriptions, history reasons, actors and internal references; inventory
+  preserves the existing computed-stock behavior and hides foreign products as
+  missing.
+- Extracted tenant-aware single-product reading into
+  `read_inventory_product()` and made the existing HTTP endpoint reuse it.
+- Added a deterministic English router and compiled multi-source support graph
+  for knowledge, ticket, inventory, mixed and clarification routes. The graph
+  reuses the Part 1 `retrieve_context`, `generate_answer`, `abstain` and
+  `finalize_answer` operations through a shared builder; it does not call
+  `RAGService.query()` as an opaque node.
+- Added authenticated `POST /support/query` for admin and manager. Its request
+  accepts only the required question, constructs one `AccessContext`, starts a
+  shared 80-second deadline before graph routing and creates RAG configuration
+  and clients lazily only for routes that need knowledge.
+- PostgreSQL tool reads receive a transaction-local statement timeout capped
+  at 5 seconds and the remaining shared deadline while preserving the existing
+  3-second response reserve. `pool_timeout` is unchanged;
+  pool checkout remains an infrastructure-level limit outside PostgreSQL's
+  statement timeout.
+- Mixed results are assembled without another model call. Successful sources
+  survive technical failure of another source as an explicit partial response;
+  total technical failure is a sanitized 503 with the graph run ID.
+- Extended bounded tracing records route, node/tool order, component status,
+  controlled error category, call counts, partial state and existing RAG
+  resilience metadata without questions, identifiers, stock values or response
+  content. Checkpoints remain ephemeral and are deleted in `finally`.
+- Backend/unit QA covers routing, identifier normalization, ambiguity,
+  tenant isolation, stock zero, tool timeouts, lazy RAG, shared deadline,
+  partial/total failure, role policy, trace privacy, checkpoint cleanup,
+  inventory/incident regression and Part 1/Gateway resilience. Python 3.13
+  continues to hang in the historical ASGI RAG API suite; static OpenAPI and
+  response-contract regression passes, and no gateway call was made.
+- Backoffice Phase C remains intentionally outside this unit. No DDL, database
+  mutation, dependency change, provider call or Git write was performed.
+
+## Milestone 9 — LangGraph external tools, Backoffice and evaluations
+
+- Added the authenticated `/backoffice/support` experience for admin and
+  manager roles, preserving the existing AuthGuard and navigation patterns.
+  The UI renders clarification, partial response, ticket, inventory and
+  knowledge-source states without exposing sensitive ticket fields or raw
+  backend errors.
+- Added a typed Backoffice API client for `POST /support/query` and the matching
+  Next.js `/support/:path*` backend rewrite. Telemetry uses the static
+  `/support/query` template; Knowledge Base navigation and behavior remain
+  unchanged.
+- Added focused frontend contract tests for authentication/role gating,
+  navigation, proxy routing, safe telemetry and partial-state presentation.
+  TypeScript, ESLint and production build remain the frontend acceptance gates
+  because this package has no browser-unit-test dependency.
+- Added a reproducible offline evaluation runner and sanitized evidence artifact
+  covering knowledge, tickets, inventory, mixed queries, clarification and
+  partial dependency failure. The runner uses only local fakes and does not
+  open a gateway, database or authentication connection. Its artifact contains
+  no question, answer, record ID, SKU, stock or operational data.
+- No DDL, persistent data, dependency, root configuration, protected file,
+  provider, Supabase, authentication store or Git state was modified.

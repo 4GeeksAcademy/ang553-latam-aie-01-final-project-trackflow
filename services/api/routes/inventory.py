@@ -49,6 +49,7 @@ from services.api.inventory_schemas import (
 )
 from services.api.inventory_service import (
     InventoryDataIntegrityError,
+    InventoryProductNotFound,
     create_stock_entry,
     create_stock_exit,
     append_commercial_order_dispatches,
@@ -57,6 +58,7 @@ from services.api.inventory_service import (
     get_current_stock,
     get_current_stocks,
     list_orders,
+    read_inventory_product,
     require_active_inventory_client,
     update_sku_threshold,
 )
@@ -163,31 +165,13 @@ def get_product(
     Raises ``404`` if the SKU does not exist.
     """
     access = build_access_context(session, current_user)
-    statement = select(SKU).where(SKU.id == id)
-    if not access.global_access:
-        statement = statement.where(SKU.client_id.in_(access.allowed_client_ids))
-    sku = session.exec(statement).first()
-    if sku is None:
+    try:
+        return read_inventory_product(session, product_id=id, access=access)
+    except (InventoryProductNotFound, ValueError):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="SKU not found.",
-        )
-    current_stock = get_current_stock(
-        session,
-        sku_id=sku.id,
-        warehouse=sku.warehouse,
-    )
-    return SKUResponse(
-        id=sku.id,
-        name=sku.name,
-        sku=sku.sku,
-        client_id=sku.client_id,
-        client_name=sku.client_name,
-        category=sku.category,
-        warehouse=sku.warehouse,
-        minimum_stock_threshold=sku.minimum_stock_threshold,
-        current_stock=current_stock,
-    )
+        ) from None
 
 
 # ── POST /inventory/products ────────────────────────────────────────────────

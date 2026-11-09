@@ -65,6 +65,14 @@ export function BackofficeHeader() {
           </Link>
           {user && (user.role === "admin" || user.role === "manager") && (
             <Link
+              href="/backoffice/support"
+              className="text-sm font-medium text-slate-100 transition-colors hover:text-white"
+            >
+              Support
+            </Link>
+          )}
+          {user && (user.role === "admin" || user.role === "manager") && (
+            <Link
               href="/backoffice/knowledge-base"
               className="text-sm font-medium text-slate-100 transition-colors hover:text-white"
             >

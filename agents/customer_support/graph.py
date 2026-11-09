@@ -89,7 +89,7 @@ def _recorded_node(name: str, operation):
     return node
 
 
-def _retrieve(state: SupportState, context: SupportRuntime):
+def retrieve_context(state: SupportState, context: SupportRuntime):
     service = context.service
     retrieved = service.retrieve(
         state["question"],
@@ -101,7 +101,7 @@ def _retrieve(state: SupportState, context: SupportRuntime):
     return {"context": retrieved}, transition
 
 
-def _generate(state: SupportState, context: SupportRuntime):
+def generate_answer(state: SupportState, context: SupportRuntime):
     answer = context.service.generate_answer(state["question"], state["context"])
     transition = (
         "abstain" if answer == INSUFFICIENT_INFORMATION_ANSWER else "finalize_answer"
@@ -109,13 +109,13 @@ def _generate(state: SupportState, context: SupportRuntime):
     return {"answer": answer}, transition
 
 
-def _abstain(state: SupportState, _context: SupportRuntime):
+def abstain(state: SupportState, _context: SupportRuntime):
     return {
         "result": QueryResult(INSUFFICIENT_INFORMATION_ANSWER, (), True)
     }, "__end__"
 
 
-def _finalize_answer(state: SupportState, _context: SupportRuntime):
+def finalize_answer(state: SupportState, _context: SupportRuntime):
     sources: list[SourceReference] = []
     seen: set[tuple[str, str]] = set()
     for retrieved in state["context"]:
@@ -140,6 +140,42 @@ def _after_generation(state: SupportState) -> str:
     )
 
 
+def add_rag_nodes(
+    builder,
+    *,
+    terminal=END,
+    node_wrapper=_recorded_node,
+    after_retrieval=_after_retrieval,
+    after_generation=_after_generation,
+) -> None:
+    """Attach the canonical Part 1 RAG nodes to a compatible graph builder."""
+    builder.add_node(
+        "retrieve_context",
+        node_wrapper("retrieve_context", retrieve_context),
+    )
+    builder.add_node(
+        "generate_answer",
+        node_wrapper("generate_answer", generate_answer),
+    )
+    builder.add_node("abstain", node_wrapper("abstain", abstain))
+    builder.add_node(
+        "finalize_answer",
+        node_wrapper("finalize_answer", finalize_answer),
+    )
+    builder.add_conditional_edges(
+        "retrieve_context",
+        after_retrieval,
+        {"generate_answer": "generate_answer", "abstain": "abstain", "terminal": terminal},
+    )
+    builder.add_conditional_edges(
+        "generate_answer",
+        after_generation,
+        {"finalize_answer": "finalize_answer", "abstain": "abstain", "terminal": terminal},
+    )
+    builder.add_edge("abstain", terminal)
+    builder.add_edge("finalize_answer", terminal)
+
+
 class CustomerSupportAgent:
     """Own the compiled graph, ephemeral checkpoints, and sanitized traces."""
 
@@ -152,26 +188,8 @@ class CustomerSupportAgent:
         self.checkpointer = checkpointer or InMemorySaver()
         self.tracer = tracer or TraceRecorder()
         builder = StateGraph(SupportState, context_schema=SupportRuntime)
-        builder.add_node("retrieve_context", _recorded_node("retrieve_context", _retrieve))
-        builder.add_node("generate_answer", _recorded_node("generate_answer", _generate))
-        builder.add_node("abstain", _recorded_node("abstain", _abstain))
-        builder.add_node(
-            "finalize_answer",
-            _recorded_node("finalize_answer", _finalize_answer),
-        )
+        add_rag_nodes(builder)
         builder.add_edge(START, "retrieve_context")
-        builder.add_conditional_edges(
-            "retrieve_context",
-            _after_retrieval,
-            {"generate_answer": "generate_answer", "abstain": "abstain"},
-        )
-        builder.add_conditional_edges(
-            "generate_answer",
-            _after_generation,
-            {"finalize_answer": "finalize_answer", "abstain": "abstain"},
-        )
-        builder.add_edge("abstain", END)
-        builder.add_edge("finalize_answer", END)
         self.graph = builder.compile(
             checkpointer=self.checkpointer,
             name="trackflow_customer_support",
