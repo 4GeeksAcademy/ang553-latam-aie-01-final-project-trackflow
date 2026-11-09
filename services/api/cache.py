@@ -8,10 +8,12 @@ it is not a distributed cache and does not replace database consistency.
 from __future__ import annotations
 
 import os
+from itertools import count
 from dataclasses import dataclass
 from threading import RLock
 from time import monotonic
 from typing import Callable, Generic, TypeVar
+from weakref import WeakKeyDictionary
 
 
 T = TypeVar("T")
@@ -66,6 +68,14 @@ class TTLCache(Generic[T]):
         with self._lock:
             self._entries.clear()
 
+    def delete_prefix(self, prefix: str) -> int:
+        """Delete every entry in a namespace and return the count."""
+        with self._lock:
+            keys = [key for key in self._entries if key.startswith(prefix)]
+            for key in keys:
+                del self._entries[key]
+            return len(keys)
+
     def __len__(self) -> int:
         with self._lock:
             now = self._clock()
@@ -88,22 +98,40 @@ ORDERS_CACHE_TTL_SECONDS = float(
 # the same Python process.
 products_cache: TTLCache[list] = TTLCache(PRODUCTS_CACHE_TTL_SECONDS)
 orders_cache: TTLCache[list] = TTLCache(ORDERS_CACHE_TTL_SECONDS)
+_bind_tokens: WeakKeyDictionary[object, int] = WeakKeyDictionary()
+_bind_tokens_lock = RLock()
+_bind_token_sequence = count(1)
 
 
-def inventory_cache_key(kind: str, session: object) -> str:
+def _bind_token(bind: object) -> str:
+    """Return a process-unique token without relying on reusable object IDs."""
+    try:
+        with _bind_tokens_lock:
+            token = _bind_tokens.get(bind)
+            if token is None:
+                token = next(_bind_token_sequence)
+                _bind_tokens[bind] = token
+        return str(token)
+    except TypeError:
+        # Non-weak-referenceable binds are unusual; disabling cache reuse is
+        # safer than risking a projection from another database.
+        return f"uncacheable-{next(_bind_token_sequence)}"
+
+
+def inventory_cache_key(kind: str, session: object, access_scope: str = "global") -> str:
     """Build a process-local key scoped to the session's database engine."""
     bind = getattr(session, "bind", None)
-    return f"{kind}:{id(bind)}"
+    return f"{kind}:{_bind_token(bind)}:{access_scope}"
 
 
 def invalidate_products_cache(session: object) -> None:
     """Invalidate the products projection for a database session."""
-    products_cache.delete(inventory_cache_key("products", session))
+    products_cache.delete_prefix(inventory_cache_key("products", session, ""))
 
 
 def invalidate_orders_cache(session: object) -> None:
     """Invalidate the orders projection for a database session."""
-    orders_cache.delete(inventory_cache_key("orders", session))
+    orders_cache.delete_prefix(inventory_cache_key("orders", session, ""))
 
 
 def invalidate_inventory_cache(session: object) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 from sqlalchemy import text
@@ -15,6 +16,7 @@ _MIGRATION_PATH = Path(__file__).parents[1] / "scripts/migrate_inventory_client_
 _SPEC = importlib.util.spec_from_file_location("migrate_inventory_client_ids", _MIGRATION_PATH)
 assert _SPEC is not None and _SPEC.loader is not None
 _MIGRATION = importlib.util.module_from_spec(_SPEC)
+sys.modules[_SPEC.name] = _MIGRATION
 _SPEC.loader.exec_module(_MIGRATION)
 
 
@@ -31,7 +33,8 @@ def test_migration_adds_backfills_and_is_idempotent() -> None:
             text(
                 "CREATE TABLE sku (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL, "
                 "sku VARCHAR NOT NULL, client_name VARCHAR NOT NULL, "
-                "category VARCHAR NOT NULL, warehouse VARCHAR NOT NULL)"
+                "category VARCHAR NOT NULL, warehouse VARCHAR NOT NULL, "
+                "minimum_stock_threshold INTEGER NULL)"
             )
         )
         connection.execute(
@@ -62,11 +65,11 @@ def test_migration_adds_backfills_and_is_idempotent() -> None:
 
 def test_null_known_client_is_backfilled_and_canonical_id_is_noop() -> None:
     engine = create_engine("sqlite://")
-    SQL = "CREATE TABLE sku (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL, sku VARCHAR NOT NULL, client_name VARCHAR NOT NULL, category VARCHAR NOT NULL, warehouse VARCHAR NOT NULL, client_id VARCHAR NULL)"
+    SQL = "CREATE TABLE sku (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL, sku VARCHAR NOT NULL, client_name VARCHAR NOT NULL, category VARCHAR NOT NULL, warehouse VARCHAR NOT NULL, client_id VARCHAR NULL, minimum_stock_threshold INTEGER NULL)"
     with engine.begin() as connection:
         connection.execute(text(SQL))
-        connection.execute(text("INSERT INTO sku VALUES (1, 'Known', 'A', 'PureStep Footwear', 'fashion', 'LA', NULL)"))
-        connection.execute(text("INSERT INTO sku VALUES (2, 'Known', 'B', 'UrbanThread', 'fashion', 'LA', :client_id)"), {"client_id": CLIENT_IDS_BY_NAME["UrbanThread"]})
+        connection.execute(text("INSERT INTO sku VALUES (1, 'Known', 'A', 'PureStep Footwear', 'fashion', 'LA', NULL, NULL)"))
+        connection.execute(text("INSERT INTO sku VALUES (2, 'Known', 'B', 'UrbanThread', 'fashion', 'LA', :client_id, NULL)"), {"client_id": CLIENT_IDS_BY_NAME["UrbanThread"]})
 
     report = _MIGRATION.backfill_client_ids(engine)
     assert report.unknown_clients == []
@@ -79,8 +82,8 @@ def test_null_known_client_is_backfilled_and_canonical_id_is_noop() -> None:
 def test_conflicting_id_is_preserved_and_reported() -> None:
     engine = create_engine("sqlite://")
     with engine.begin() as connection:
-        connection.execute(text("CREATE TABLE sku (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL, sku VARCHAR NOT NULL, client_name VARCHAR NOT NULL, category VARCHAR NOT NULL, warehouse VARCHAR NOT NULL, client_id VARCHAR NULL)"))
-        connection.execute(text("INSERT INTO sku VALUES (1, 'Conflict', 'C', 'PureStep Footwear', 'fashion', 'LA', '11111111-1111-4111-8111-111111111111')"))
+        connection.execute(text("CREATE TABLE sku (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL, sku VARCHAR NOT NULL, client_name VARCHAR NOT NULL, category VARCHAR NOT NULL, warehouse VARCHAR NOT NULL, client_id VARCHAR NULL, minimum_stock_threshold INTEGER NULL)"))
+        connection.execute(text("INSERT INTO sku VALUES (1, 'Conflict', 'C', 'PureStep Footwear', 'fashion', 'LA', '11111111-1111-4111-8111-111111111111', NULL)"))
 
     report = _MIGRATION.backfill_client_ids(engine)
     assert report.unknown_clients == []
@@ -95,9 +98,9 @@ def test_conflicting_id_is_preserved_and_reported() -> None:
 def test_unknown_client_preserves_null_or_existing_id() -> None:
     engine = create_engine("sqlite://")
     with engine.begin() as connection:
-        connection.execute(text("CREATE TABLE sku (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL, sku VARCHAR NOT NULL, client_name VARCHAR NOT NULL, category VARCHAR NOT NULL, warehouse VARCHAR NOT NULL, client_id VARCHAR NULL)"))
-        connection.execute(text("INSERT INTO sku VALUES (1, 'Unknown', 'U1', 'Unmapped', 'fashion', 'LA', NULL)"))
-        connection.execute(text("INSERT INTO sku VALUES (2, 'Unknown', 'U2', 'Unmapped', 'fashion', 'LA', '22222222-2222-4222-8222-222222222222')"))
+        connection.execute(text("CREATE TABLE sku (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL, sku VARCHAR NOT NULL, client_name VARCHAR NOT NULL, category VARCHAR NOT NULL, warehouse VARCHAR NOT NULL, client_id VARCHAR NULL, minimum_stock_threshold INTEGER NULL)"))
+        connection.execute(text("INSERT INTO sku VALUES (1, 'Unknown', 'U1', 'Unmapped', 'fashion', 'LA', NULL, NULL)"))
+        connection.execute(text("INSERT INTO sku VALUES (2, 'Unknown', 'U2', 'Unmapped', 'fashion', 'LA', '22222222-2222-4222-8222-222222222222', NULL)"))
 
     report = _MIGRATION.backfill_client_ids(engine)
     assert report.unknown_clients == [(1, "Unmapped"), (2, "Unmapped")]

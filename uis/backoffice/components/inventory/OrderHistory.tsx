@@ -10,14 +10,12 @@
  * - Specific columns for ``reference``, ``exit_type``, and
  *   ``tracking_number`` so operators can inspect every field the
  *   backend provides.
- * - Full ``user_uuid`` (no truncation).
  * - Timezone-safe ``created_at`` derived from the ISO string
  *   components directly, avoiding implicit ``Date`` conversions.
  *
  * @remarks
  * - Loading / error / empty states are handled here.
  * - No write/action columns (edit, delete, revert, approve, etc.).
- * - No user lookup — only ``user_uuid`` is available.
  * - Order is preserved as received from ``getInventoryOrders()``.
  */
 
@@ -141,7 +139,6 @@ export function OrderHistory({
                 <th className="px-4 py-3">Warehouse</th>
                 <th className="px-4 py-3">Reference / Tracking</th>
                 <th className="whitespace-nowrap px-4 py-3">Created At</th>
-                <th className="px-4 py-3">Created By</th>
               </tr>
             </thead>
             <tbody>
@@ -197,7 +194,6 @@ export function OrderHistory({
               <th className="px-4 py-3">Warehouse</th>
               <th className="px-4 py-3">Reference / Tracking</th>
               <th className="whitespace-nowrap px-4 py-3">Created At</th>
-              <th className="px-4 py-3">Created By</th>
             </tr>
           </thead>
           <tbody>
@@ -272,10 +268,6 @@ export function OrderHistory({
                   {formatDate(order.created_at)}
                 </td>
 
-                {/* Created By (user_uuid — full, no truncation) */}
-                <td className="max-w-[200px] px-4 py-3 font-mono text-xs text-slate-400 break-all">
-                  {order.user_uuid ?? <span className="text-slate-500">—</span>}
-                </td>
               </tr>
             ))}
           </tbody>

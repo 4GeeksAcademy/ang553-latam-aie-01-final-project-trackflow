@@ -12,7 +12,11 @@ from __future__ import annotations
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import insert
 from sqlmodel import Session, SQLModel, create_engine, select
+from services.api.access_control import AccessContext
+from services.api.auth_models import Role
+from services.api.inventory_clients import CLIENT_IDS_BY_NAME
 from services.api.inventory_models import SKU, StockEntry, StockExit
 from services.api.inventory_outbox import (
     inventory_event_outbox,
@@ -20,11 +24,30 @@ from services.api.inventory_outbox import (
 )
 from services.api.inventory_schemas import StockEntryCreate, StockExitCreate
 from services.api.inventory_service import (
-    create_stock_entry,
-    create_stock_exit,
+    create_stock_entry as _create_stock_entry,
+    create_stock_exit as _create_stock_exit,
     get_current_stock,
 )
 import services.api.inventory_service as inventory_service
+from services.incidents.models import clients, operational_security_metadata
+
+
+CLIENT_ID = CLIENT_IDS_BY_NAME["PureStep Footwear"]
+_ADMIN_ACCESS = AccessContext(
+    user_id="movement-test-admin",
+    role=Role.admin,
+    allowed_client_ids=frozenset(),
+    sensitive_client_ids=frozenset(),
+    global_access=True,
+)
+
+
+def create_stock_entry(session, data, user_uuid, request_id=None):
+    return _create_stock_entry(session, data, user_uuid, _ADMIN_ACCESS, request_id)
+
+
+def create_stock_exit(session, data, user_uuid, request_id=None):
+    return _create_stock_exit(session, data, user_uuid, _ADMIN_ACCESS, request_id)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -42,7 +65,13 @@ def db_session() -> Session:
     engine = create_engine("sqlite://", echo=False)
     SQLModel.metadata.create_all(engine)
     inventory_outbox_metadata.create_all(engine)
+    operational_security_metadata.create_all(engine)
     with Session(engine) as session:
+        session.execute(insert(clients), [
+            {"client_id": CLIENT_ID, "display_name": "PureStep Footwear", "is_active": True, "created_by_user_id": "movement-test-admin"},
+            {"client_id": "client-123", "display_name": "Private Client Name", "is_active": True, "created_by_user_id": "movement-test-admin"},
+        ])
+        session.commit()
         yield session
 
 
@@ -51,13 +80,14 @@ def _create_sku(
     sku_code: str = "SKU-TEST-001",
     name: str = "Test SKU",
     warehouse: str = "LA",
+    client_id: str | None = CLIENT_ID,
 ) -> SKU:
     """Helper — create the minimal SKU record needed for FK constraints."""
     sku = SKU(
         name=name,
         sku=sku_code,
-        client_name="TestClient",
-        client_id=None,
+        client_name="PureStep Footwear",
+        client_id=client_id,
         category="electronics",
         warehouse=warehouse,
     )
@@ -253,20 +283,21 @@ class TestCreateStockEntry:
         assert captured[0].properties["movement_id"] == str(persisted.id)
         assert _outbox_rows(db_session)[0]["source_pk"] == persisted.id
 
-    def test_legacy_client_id_skips_event_but_persists(
+    def test_legacy_client_id_fails_closed_without_persisting(
         self, db_session: Session, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         captured = []
-        sku = _create_sku(db_session, sku_code="SKU-LEGACY")
+        sku = _create_sku(db_session, sku_code="SKU-LEGACY", client_id=None)
         assert sku.client_id is None
         monkeypatch.setattr(inventory_service, "capture_telemetry_events", captured.extend)
-        entry = create_stock_entry(
-            db_session,
-            StockEntryCreate(sku_id=sku.id, quantity=3, reference="PO", warehouse="LA"),
-            user_uuid="u1",
-        )
-        assert entry.id is not None
-        assert db_session.get(StockEntry, entry.id) is not None
+        with pytest.raises(HTTPException) as exc_info:
+            create_stock_entry(
+                db_session,
+                StockEntryCreate(sku_id=sku.id, quantity=3, reference="PO", warehouse="LA"),
+                user_uuid="u1",
+            )
+        assert exc_info.value.status_code == 404
+        assert db_session.exec(select(StockEntry)).all() == []
         assert captured == []
         assert _outbox_rows(db_session) == []
 
@@ -348,7 +379,7 @@ class TestCreateStockEntry:
 
         assert exc_info.value.status_code == 404
         assert exc_info.value.detail == "SKU not found."
-        assert exc_info.value.headers == {"X-TrackFlow-Error-Code": "unknown_product"}
+        assert exc_info.value.headers is None
         after = db_session.exec(select(StockEntry)).all()
         assert len(after) == len(before)
         assert captured == []
@@ -856,15 +887,12 @@ class TestCreateStockExit:
         assert len(captured) == 1
         assert captured[0].event_type == "inventory_stock_insufficient"
 
-    def test_insufficient_stock_legacy_client_skips_event(
+    def test_legacy_client_exit_fails_closed_before_stock_check(
         self, db_session: Session, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         captured = []
-        sku = _create_sku(db_session, sku_code="SKU-EXT-LEGACY")
-        create_stock_entry(
-            db_session,
-            StockEntryCreate(sku_id=sku.id, quantity=5, reference="PO", warehouse="LA"),
-            user_uuid="u1",
+        sku = _create_sku(
+            db_session, sku_code="SKU-EXT-LEGACY", client_id=None
         )
         monkeypatch.setattr(inventory_service, "capture_telemetry_events", captured.extend)
 
@@ -883,14 +911,8 @@ class TestCreateStockExit:
 
         assert captured == []
         assert sku.client_id is None
-        assert exc_info.value.status_code == 400
-        assert exc_info.value.detail == (
-            f"Insufficient stock for SKU '{sku.sku}'. "
-            "Available: 5, requested: 8."
-        )
-        assert exc_info.value.headers == {
-            "X-TrackFlow-Error-Code": "insufficient_stock"
-        }
+        assert exc_info.value.status_code == 404
+        assert exc_info.value.detail == "SKU not found."
         assert db_session.exec(select(StockExit)).all() == []
 
     # ── 6. Insufficient stock uses status 400 ───────────────────────────
@@ -1080,7 +1102,7 @@ class TestCreateStockExit:
 
         assert exc_info.value.status_code == 404
         assert exc_info.value.detail == "SKU not found."
-        assert exc_info.value.headers == {"X-TrackFlow-Error-Code": "unknown_product"}
+        assert exc_info.value.headers is None
         assert captured == []
         after = db_session.exec(select(StockExit)).all()
         assert len(after) == len(before)

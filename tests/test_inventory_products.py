@@ -13,22 +13,55 @@ from __future__ import annotations
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import insert
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from services.api.auth_models import UserInDB
+from services.api.auth_models import Role, UserInDB
 from services.api.inventory_models import SKU, StockEntry, StockExit
 from services.api.inventory_clients import CLIENT_IDS_BY_NAME
 from services.api.inventory_schemas import SKUCreate
+from services.api.access_control import AccessContext
 from services.api.inventory_service import (
-    create_stock_entry,
+    create_stock_entry as _create_stock_entry,
     get_current_stock,
     get_current_stocks,
 )
 from services.api.inventory_outbox import inventory_outbox_metadata
 from services.api.cache import TTLCache, inventory_cache_key, orders_cache, products_cache
 from services.api.routes import inventory as inventory_routes
-from services.api.routes.inventory import create_product, get_product, list_products
+from services.api.routes.inventory import (
+    create_product,
+    get_product as _get_product_handler,
+    list_products as _list_products_handler,
+)
 from services.api.telemetry_utils import canonical_telemetry_warehouse
+from services.incidents.models import clients, operational_security_metadata
+from services.api.inventory_clients import CANONICAL_CLIENTS
+
+
+_READ_ADMIN = UserInDB(
+    id="inventory-read-admin",
+    email="inventory-read-admin@trackflow.io",
+    hashed_password="test-only",
+    role=Role.admin,
+)
+_ADMIN_ACCESS = AccessContext(
+    user_id=_READ_ADMIN.id,
+    role=Role.admin,
+    allowed_client_ids=frozenset(),
+    sensitive_client_ids=frozenset(),
+    global_access=True,
+)
+
+
+def list_products(*, session: Session):
+    """Call the secured GET handler with an explicit test administrator."""
+    return _list_products_handler(session=session, current_user=_READ_ADMIN)
+
+
+def get_product(*, id: int, session: Session):
+    """Call the secured GET handler with an explicit test administrator."""
+    return _get_product_handler(id=id, session=session, current_user=_READ_ADMIN)
 
 
 def _request(request_id: str = "550e8400-e29b-41d4-a716-446655440099"):
@@ -53,7 +86,13 @@ def db_session() -> Session:
     engine = create_engine("sqlite://", echo=False)
     SQLModel.metadata.create_all(engine)
     inventory_outbox_metadata.create_all(engine)
+    operational_security_metadata.create_all(engine)
     with Session(engine) as session:
+        session.execute(insert(clients), [
+            {"client_id": client.client_id, "display_name": client.client_name, "is_active": True, "created_by_user_id": "test-admin"}
+            for client in CANONICAL_CLIENTS
+        ])
+        session.commit()
         yield session
 
 
@@ -65,6 +104,7 @@ def auth_user() -> UserInDB:
         email="test@trackflow.io",
         hashed_password="fake-hash",
         is_active=True,
+        role=Role.admin,
     )
 
 
@@ -74,8 +114,8 @@ def _create_sku(
     name: str = "Test SKU",
     warehouse: str = "LA",
     category: str = "electronics",
-    client_name: str = "TestClient",
-    client_id: str | None = None,
+    client_name: str = "PureStep Footwear",
+    client_id: str | None = CLIENT_IDS_BY_NAME["PureStep Footwear"],
 ) -> SKU:
     """Helper — create a SKU record directly in the database."""
     sku = SKU(
@@ -102,7 +142,7 @@ def _add_entry(
     """Helper — record a stock-in movement."""
     from services.api.inventory_schemas import StockEntryCreate as _EntryCreate
 
-    return create_stock_entry(
+    return _create_stock_entry(
         session,
         data=_EntryCreate(
             sku_id=sku_id,
@@ -111,6 +151,7 @@ def _add_entry(
             warehouse=warehouse,
         ),
         user_uuid=user_uuid,
+        access=_ADMIN_ACCESS,
     )
 
 
@@ -124,9 +165,9 @@ def _add_exit(
     """Helper — record a stock-out movement."""
     from services.api.inventory_schemas import StockExitCreate as _ExitCreate
 
-    from services.api.inventory_service import create_stock_exit
+    from services.api.inventory_service import create_stock_exit as _create_stock_exit
 
-    return create_stock_exit(
+    return _create_stock_exit(
         session,
         data=_ExitCreate(
             sku_id=sku_id,
@@ -136,6 +177,7 @@ def _add_exit(
             warehouse=warehouse,
         ),
         user_uuid=user_uuid,
+        access=_ADMIN_ACCESS,
     )
 
 
@@ -743,16 +785,20 @@ class TestCreateProduct:
         # SKUCreate does not have current_stock
         assert not hasattr(payload, "current_stock")
 
-    def test_unknown_client_id_is_rejected(self) -> None:
-        with pytest.raises(ValueError, match="Unknown client_id"):
-            SKUCreate(
+    def test_unknown_client_id_is_rejected(
+        self, db_session: Session, auth_user: UserInDB
+    ) -> None:
+        payload = SKUCreate(
                 name="Unknown client",
                 sku="SKU-UNKNOWN-CLIENT",
                 client_id="00000000-0000-4000-8000-000000000000",
                 client_name="PureStep Footwear",
                 category="electronics",
                 warehouse="LA",
-            )
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            create_product(_request(), payload, db_session, auth_user)
+        assert exc_info.value.status_code == 404
 
     def test_missing_client_id_is_rejected(self) -> None:
         from pydantic import ValidationError
@@ -768,16 +814,20 @@ class TestCreateProduct:
 
         assert any(error["loc"] == ("client_id",) for error in exc_info.value.errors())
 
-    def test_mismatched_client_identity_is_rejected(self) -> None:
-        with pytest.raises(ValueError, match="do not match"):
-            SKUCreate(
+    def test_mismatched_client_identity_is_rejected(
+        self, db_session: Session, auth_user: UserInDB
+    ) -> None:
+        payload = SKUCreate(
                 name="Mismatched client",
                 sku="SKU-MISMATCHED-CLIENT",
                 client_id=CLIENT_IDS_BY_NAME["PureStep Footwear"],
                 client_name="SoundWave Electronics",
                 category="electronics",
                 warehouse="LA",
-            )
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            create_product(_request(), payload, db_session, auth_user)
+        assert exc_info.value.status_code == 422
 
         # Extra fields are forbidden by ConfigDict(extra="forbid")
         with pytest.raises(ValueError, match="Extra inputs are not permitted"):

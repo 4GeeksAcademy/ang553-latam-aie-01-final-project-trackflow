@@ -111,7 +111,7 @@ def test_inventory_response_contracts_are_exact() -> None:
     assert set(MovementCreatedResponse.model_fields) == {"id"}
     assert set(InventoryOrderListItem.model_fields) == {
         "id", "movement_type", "quantity", "warehouse", "created_at",
-        "user_uuid", "sku_name", "sku_code", "reference", "exit_type",
+        "sku_name", "sku_code", "reference", "exit_type",
         "tracking_number",
     }
     assert _route("POST", "/inventory/orders/inbound").response_model is MovementCreatedResponse

@@ -75,7 +75,6 @@ export interface InventoryOrderListItem {
   quantity: number;
   warehouse: Warehouse;
   created_at: string;
-  user_uuid: string;
   sku_name: string;
   sku_code: string;
   reference: string | null;
