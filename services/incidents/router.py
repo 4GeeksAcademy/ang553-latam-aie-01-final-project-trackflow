@@ -71,12 +71,11 @@ def get_incident_by_id(
         raise _translate(exc) from exc
 
 
-@router.patch("/{incident_id}", response_model=IncidentResponse)
-def patch_incident(
+def _patch_incident_status(
     incident_id: str,
     payload: IncidentUpdate,
-    session: Annotated[Session, Depends(get_db)],
-    user: Annotated[UserInDB, Depends(get_current_user)],
+    session: Session,
+    user: UserInDB,
 ) -> IncidentResponse:
     _validate_id(incident_id)
     try:
@@ -84,3 +83,23 @@ def patch_incident(
     except (IncidentNotFound, IncidentForbidden, IncidentConflict, IncidentValidationError, SQLAlchemyError) as exc:
         session.rollback()
         raise _translate(exc) from exc
+
+
+@router.patch("/{incident_id}", response_model=IncidentResponse)
+def patch_incident(
+    incident_id: str,
+    payload: IncidentUpdate,
+    session: Annotated[Session, Depends(get_db)],
+    user: Annotated[UserInDB, Depends(get_current_user)],
+) -> IncidentResponse:
+    return _patch_incident_status(incident_id, payload, session, user)
+
+
+@router.patch("/{incident_id}/status", response_model=IncidentResponse)
+def patch_incident_status(
+    incident_id: str,
+    payload: IncidentUpdate,
+    session: Annotated[Session, Depends(get_db)],
+    user: Annotated[UserInDB, Depends(get_current_user)],
+) -> IncidentResponse:
+    return _patch_incident_status(incident_id, payload, session, user)

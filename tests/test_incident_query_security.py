@@ -33,7 +33,7 @@ from services.incidents.service import (
     read_incident,
 )
 from services.incidents.router import router as incident_router
-from services.incidents.router import post_incident
+from services.incidents.router import patch_incident, patch_incident_status, post_incident
 
 CLIENT_A = "11111111-1111-4111-8111-111111111111"
 CLIENT_B = "22222222-2222-4222-8222-222222222222"
@@ -413,5 +413,240 @@ def test_operational_http_crud_auth_and_hidden_cross_tenant(session: Session):
             assert hidden.status_code == 404
             current["user"] = None
             assert (await client.get(f"/api/incidents/{incident_id}")).status_code == 401
+
+    asyncio.run(scenario())
+
+
+def test_status_endpoint_openapi_reuses_existing_contracts():
+    api = FastAPI()
+    api.include_router(incident_router)
+
+    schema = api.openapi()
+    status_patch = schema["paths"]["/api/incidents/{incident_id}/status"]["patch"]
+    legacy_patch = schema["paths"]["/api/incidents/{incident_id}"]["patch"]
+
+    assert status_patch["requestBody"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/IncidentUpdate"
+    }
+    assert status_patch["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/IncidentResponse"
+    }
+    assert legacy_patch["requestBody"] == status_patch["requestBody"]
+    assert legacy_patch["responses"]["200"] == status_patch["responses"]["200"]
+    assert status_patch["security"] == legacy_patch["security"]
+    assert status_patch["security"]
+
+
+def test_status_endpoint_parity_transitions_authorization_concurrency_and_redaction(
+    session: Session,
+):
+    manager = UserInDB(
+        id="manager-a",
+        email="manager@example.com",
+        hashed_password="x",
+        role=Role.manager,
+    )
+
+    session.execute(
+        insert(user_client_memberships),
+        {
+            "user_id": "manager-a-redacted",
+            "client_id": CLIENT_A,
+            "can_view_sensitive": False,
+            "assigned_by_user_id": "admin",
+        },
+    )
+    session.commit()
+
+    legacy_incident = post_incident(payload(), session, manager)
+    status_incident = post_incident(payload(), session, manager)
+    close = IncidentUpdate(
+        expected_version=1,
+        status="CLOSED",
+        satisfaction_score=4,
+    )
+
+    legacy = patch_incident(legacy_incident.incident_id, close, session, manager)
+    specialized = patch_incident_status(
+        status_incident.incident_id, close, session, manager
+    )
+    assert legacy.status == specialized.status == "CLOSED"
+    assert legacy.version == specialized.version == 2
+    assert [item.new_status for item in legacy.history] == [
+        item.new_status for item in specialized.history
+    ] == ["OPEN", "CLOSED"]
+
+    reopened = patch_incident_status(
+        status_incident.incident_id,
+        IncidentUpdate(
+            expected_version=2,
+            status="OPEN",
+            reason="Carrier resumed search",
+        ),
+        session,
+        manager,
+    )
+    assert reopened.version == 3
+    discarded = patch_incident_status(
+        status_incident.incident_id,
+        IncidentUpdate(
+            expected_version=3,
+            status="DISCARDED",
+            reason="Duplicate report",
+        ),
+        session,
+        manager,
+    )
+    assert discarded.status == "DISCARDED"
+    with pytest.raises(HTTPException) as invalid:
+        patch_incident_status(
+            status_incident.incident_id,
+            IncidentUpdate(
+                expected_version=4,
+                status="CLOSED",
+                satisfaction_score=4,
+            ),
+            session,
+            manager,
+        )
+    assert invalid.value.status_code == 422
+
+    competing_incident = post_incident(payload(), session, manager)
+    first_writer = patch_incident_status(
+        competing_incident.incident_id, close, session, manager
+    )
+    assert first_writer.version == 2
+    with pytest.raises(HTTPException) as stale_writer:
+        patch_incident_status(
+            competing_incident.incident_id,
+            IncidentUpdate(
+                expected_version=1,
+                status="DISCARDED",
+                reason="Competing update",
+            ),
+            session,
+            manager,
+        )
+    assert (stale_writer.value.status_code, stale_writer.value.detail) == (
+        409,
+        "Incident version conflict.",
+    )
+
+    redacted_incident = post_incident(payload(), session, manager)
+    redacted_manager = UserInDB(
+        id="manager-a-redacted",
+        email="redacted@example.com",
+        hashed_password="x",
+        role=Role.manager,
+    )
+    redacted = patch_incident_status(
+        redacted_incident.incident_id, close, session, redacted_manager
+    )
+    assert redacted.customer_email is None
+
+    read_only_user = UserInDB(
+        id="user-a",
+        email="user@example.com",
+        hashed_password="x",
+        role=Role.user,
+    )
+    with pytest.raises(HTTPException) as denied:
+        patch_incident_status(
+            legacy_incident.incident_id,
+            IncidentUpdate(
+                expected_version=2,
+                status="OPEN",
+                reason="Denied update",
+            ),
+            session,
+            read_only_user,
+        )
+    assert denied.value.status_code == 403
+
+    foreign_manager = UserInDB(
+        id="manager-b",
+        email="manager-b@example.com",
+        hashed_password="x",
+        role=Role.manager,
+    )
+    foreign_update = IncidentUpdate(
+        expected_version=2,
+        status="OPEN",
+        reason="Hidden update",
+    )
+    with pytest.raises(HTTPException) as hidden:
+        patch_incident_status(
+            legacy_incident.incident_id,
+            foreign_update,
+            session,
+            foreign_manager,
+        )
+    with pytest.raises(HTTPException) as absent:
+        patch_incident_status(
+            "TRF-999999",
+            IncidentUpdate(
+                expected_version=1,
+                status="DISCARDED",
+                reason="Missing update",
+            ),
+            session,
+            foreign_manager,
+        )
+    assert (hidden.value.status_code, hidden.value.detail) == (
+        absent.value.status_code,
+        absent.value.detail,
+    ) == (404, "Incident not found.")
+
+
+def test_status_endpoint_http_transport_and_unauthenticated_rejection(
+    session: Session,
+):
+    api = FastAPI()
+    api.include_router(incident_router)
+    manager = UserInDB(
+        id="manager-a",
+        email="manager@example.com",
+        hashed_password="x",
+        role=Role.manager,
+    )
+    current = {"user": manager}
+    incident = post_incident(payload(), session, manager)
+
+    def db_override():
+        return session
+
+    def auth_override():
+        if current["user"] is None:
+            raise HTTPException(status_code=401, detail="Not authenticated.")
+        return current["user"]
+
+    api.dependency_overrides[get_db] = db_override
+    api.dependency_overrides[get_current_user] = auth_override
+
+    async def scenario():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=api), base_url="http://test"
+        ) as client:
+            closed = await client.patch(
+                f"/api/incidents/{incident.incident_id}/status",
+                json={
+                    "expected_version": 1,
+                    "status": "CLOSED",
+                    "satisfaction_score": 4,
+                },
+            )
+            assert (closed.status_code, closed.json()["version"]) == (200, 2)
+
+            current["user"] = None
+            unauthenticated = await client.patch(
+                f"/api/incidents/{incident.incident_id}/status",
+                json={
+                    "expected_version": 2,
+                    "status": "OPEN",
+                    "reason": "No authenticated session",
+                },
+            )
+            assert unauthenticated.status_code == 401
+            assert unauthenticated.json() == {"detail": "Not authenticated."}
 
     asyncio.run(scenario())
