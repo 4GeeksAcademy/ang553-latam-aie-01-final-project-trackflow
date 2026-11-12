@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import inspect
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import Callable, Literal, cast
@@ -23,8 +24,6 @@ from agents.customer_support.tools import (
     TicketLookupInput,
     TicketLookupResult,
     ToolStatus,
-    lookup_inventory_product,
-    lookup_ticket,
 )
 from agents.customer_support.tracing import TraceRecorder
 from services.api.access_control import AccessContext
@@ -209,8 +208,8 @@ class ExternalSupportRuntime:
         request_id: str | None,
         run_id: str,
         tracer: TraceRecorder,
-        ticket_tool=lookup_ticket,
-        inventory_tool=lookup_inventory_product,
+        ticket_tool=None,
+        inventory_tool=None,
     ) -> None:
         self.session = session
         self.access = access
@@ -309,6 +308,40 @@ def _recorded_node(name: str, operation):
     return node
 
 
+def _recorded_async_node(name: str, operation):
+    async def node(
+        state: ExternalSupportState,
+        runtime: Runtime[ExternalSupportRuntime],
+    ) -> ExternalSupportState:
+        started = runtime.context.tracer.now()
+        try:
+            updates, transition = await operation(state, runtime.context)
+        except Exception as exc:
+            runtime.context.tracer.record_node(
+                runtime.context.run_id,
+                node=name,
+                status="failed",
+                started=started,
+                transition=None,
+                state=_state_summary(state),
+                error=exc,
+            )
+            raise
+        combined = cast(ExternalSupportState, {**state, **updates})
+        runtime.context.tracer.record_node(
+            runtime.context.run_id,
+            node=name,
+            status="completed",
+            started=started,
+            transition=transition,
+            state=_state_summary(combined),
+        )
+        return updates
+
+    node.__name__ = name
+    return node
+
+
 def _rag_node(name: str, operation):
     def adapted(state: ExternalSupportState, runtime: ExternalSupportRuntime):
         try:
@@ -380,13 +413,16 @@ def _after_route(state: ExternalSupportState) -> str:
     return "retrieve_context"
 
 
-def _ticket_node(state: ExternalSupportState, runtime: ExternalSupportRuntime):
-    result = runtime.ticket_tool(
-        runtime.session,
-        TicketLookupInput(state["incident_id"]),
-        runtime.access,
-        runtime.deadline,
-    )
+async def _ticket_node(state: ExternalSupportState, runtime: ExternalSupportRuntime):
+    if runtime.ticket_tool is None:
+        result = TicketLookupResult(status=ToolStatus.unavailable)
+    else:
+        result = runtime.ticket_tool(
+            TicketLookupInput(state["incident_id"]),
+            runtime.deadline,
+        )
+        if inspect.isawaitable(result):
+            result = await result
     transition = (
         "inventory_lookup"
         if state.get("needs_inventory")
@@ -397,13 +433,16 @@ def _ticket_node(state: ExternalSupportState, runtime: ExternalSupportRuntime):
     return {"ticket": result}, transition
 
 
-def _inventory_node(state: ExternalSupportState, runtime: ExternalSupportRuntime):
-    result = runtime.inventory_tool(
-        runtime.session,
-        InventoryLookupInput(state["product_id"]),
-        runtime.access,
-        runtime.deadline,
-    )
+async def _inventory_node(state: ExternalSupportState, runtime: ExternalSupportRuntime):
+    if runtime.inventory_tool is None:
+        result = InventoryLookupResult(status=ToolStatus.unavailable)
+    else:
+        result = runtime.inventory_tool(
+            InventoryLookupInput(state["product_id"]),
+            runtime.deadline,
+        )
+        if inspect.isawaitable(result):
+            result = await result
     transition = (
         "retrieve_context" if state.get("needs_knowledge") else "assemble_response"
     )
@@ -536,9 +575,12 @@ class ExternalSupportAgent:
         self.tracer = tracer or TraceRecorder()
         builder = StateGraph(ExternalSupportState, context_schema=ExternalSupportRuntime)
         builder.add_node("route_query", _recorded_node("route_query", _route_node))
-        builder.add_node("ticket_lookup", _recorded_node("ticket_lookup", _ticket_node))
         builder.add_node(
-            "inventory_lookup", _recorded_node("inventory_lookup", _inventory_node)
+            "ticket_lookup", _recorded_async_node("ticket_lookup", _ticket_node)
+        )
+        builder.add_node(
+            "inventory_lookup",
+            _recorded_async_node("inventory_lookup", _inventory_node),
         )
         builder.add_node(
             "assemble_response", _recorded_node("assemble_response", _assemble_node)
@@ -584,7 +626,7 @@ class ExternalSupportAgent:
             name="trackflow_external_support",
         )
 
-    def execute(
+    async def execute(
         self,
         question: str,
         *,
@@ -594,8 +636,8 @@ class ExternalSupportAgent:
         rag_factory: Callable[[], AbstractContextManager[RAGService]],
         request_id: str | None = None,
         run_id: str | None = None,
-        ticket_tool=lookup_ticket,
-        inventory_tool=lookup_inventory_product,
+        ticket_tool=None,
+        inventory_tool=None,
     ) -> ExternalSupportExecution:
         selected_run_id = run_id or str(uuid4())
         runtime = ExternalSupportRuntime(
@@ -611,7 +653,7 @@ class ExternalSupportAgent:
         )
         self.tracer.begin(selected_run_id)
         try:
-            output = self.graph.invoke(
+            output = await self.graph.ainvoke(
                 {"question": question},
                 config={"configurable": {"thread_id": selected_run_id}},
                 context=runtime,
@@ -633,7 +675,7 @@ class ExternalSupportAgent:
             try:
                 runtime.close()
             finally:
-                self.checkpointer.delete_thread(selected_run_id)
+                await self.checkpointer.adelete_thread(selected_run_id)
 
 
 _DEFAULT_EXTERNAL_AGENT = ExternalSupportAgent()

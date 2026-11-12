@@ -9,7 +9,7 @@ from sqlmodel import Session
 from scripts.incidents import INCIDENT_ID_PATTERN
 from services.api.access_control import build_access_context
 from services.api.auth_models import UserInDB
-from services.api.auth_security import get_current_user
+from services.api.operational_oidc import get_operational_user
 from services.api.database import get_db
 from services.incidents.contracts import IncidentCreate, IncidentResponse, IncidentUpdate
 from services.incidents.service import (
@@ -46,7 +46,7 @@ def _validate_id(incident_id: str) -> None:
 def post_incident(
     payload: IncidentCreate,
     session: Annotated[Session, Depends(get_db)],
-    user: Annotated[UserInDB, Depends(get_current_user)],
+    user: Annotated[UserInDB, Depends(get_operational_user)],
 ) -> IncidentResponse:
     try:
         return create_incident(session, payload, build_access_context(session, user))
@@ -62,7 +62,7 @@ def post_incident(
 def get_incident_by_id(
     incident_id: str,
     session: Annotated[Session, Depends(get_db)],
-    user: Annotated[UserInDB, Depends(get_current_user)],
+    user: Annotated[UserInDB, Depends(get_operational_user)],
 ) -> IncidentResponse:
     _validate_id(incident_id)
     try:
@@ -71,12 +71,11 @@ def get_incident_by_id(
         raise _translate(exc) from exc
 
 
-@router.patch("/{incident_id}", response_model=IncidentResponse)
-def patch_incident(
+def _patch_incident_status(
     incident_id: str,
     payload: IncidentUpdate,
-    session: Annotated[Session, Depends(get_db)],
-    user: Annotated[UserInDB, Depends(get_current_user)],
+    session: Session,
+    user: UserInDB,
 ) -> IncidentResponse:
     _validate_id(incident_id)
     try:
@@ -84,3 +83,23 @@ def patch_incident(
     except (IncidentNotFound, IncidentForbidden, IncidentConflict, IncidentValidationError, SQLAlchemyError) as exc:
         session.rollback()
         raise _translate(exc) from exc
+
+
+@router.patch("/{incident_id}", response_model=IncidentResponse)
+def patch_incident(
+    incident_id: str,
+    payload: IncidentUpdate,
+    session: Annotated[Session, Depends(get_db)],
+    user: Annotated[UserInDB, Depends(get_operational_user)],
+) -> IncidentResponse:
+    return _patch_incident_status(incident_id, payload, session, user)
+
+
+@router.patch("/{incident_id}/status", response_model=IncidentResponse)
+def patch_incident_status(
+    incident_id: str,
+    payload: IncidentUpdate,
+    session: Annotated[Session, Depends(get_db)],
+    user: Annotated[UserInDB, Depends(get_operational_user)],
+) -> IncidentResponse:
+    return _patch_incident_status(incident_id, payload, session, user)

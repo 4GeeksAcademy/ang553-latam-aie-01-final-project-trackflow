@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import Session, select
 
 from services.api.auth_models import UserInDB
-from services.api.auth_security import get_current_user
+from services.api.operational_oidc import get_operational_user
 from services.api.access_control import build_access_context
 from services.api.cache import (
     invalidate_products_cache,
@@ -118,7 +118,7 @@ def _order_items_to_response(raw: list[dict]) -> list[InventoryOrderListItem]:
 )
 def list_products(
     session: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[UserInDB, Depends(get_current_user)],
+    current_user: Annotated[UserInDB, Depends(get_operational_user)],
 ) -> list[SKUResponse]:
     """Return all SKUs with current stock computed per warehouse.
 
@@ -155,7 +155,7 @@ def list_products(
 def get_product(
     id: int,
     session: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[UserInDB, Depends(get_current_user)],
+    current_user: Annotated[UserInDB, Depends(get_operational_user)],
 ) -> SKUResponse:
     """Return a single SKU by primary key, with computed current_stock.
 
@@ -182,7 +182,7 @@ def create_product(
     request: Request,
     payload: SKUCreate,
     session: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[UserInDB, Depends(get_current_user)],
+    current_user: Annotated[UserInDB, Depends(get_operational_user)],
 ) -> SKUResponse:
     """Create a new SKU.
 
@@ -258,7 +258,7 @@ def configure_product_threshold(
     id: int,
     payload: SKUThresholdUpdate,
     session: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[UserInDB, Depends(get_current_user)],
+    current_user: Annotated[UserInDB, Depends(get_operational_user)],
 ) -> SKUResponse:
     """Configure or disable the threshold; configuration emits no event."""
     sku = update_sku_threshold(
@@ -280,7 +280,7 @@ def confirm_physical_count(
     request: Request,
     payload: InventoryPhysicalCountCreate,
     session: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[UserInDB, Depends(get_current_user)],
+    current_user: Annotated[UserInDB, Depends(get_operational_user)],
 ) -> InventoryPhysicalCountResponse:
     return InventoryPhysicalCountResponse.model_validate(
         confirm_inventory_physical_count(
@@ -313,7 +313,7 @@ def create_order_with_dispatches(
     request: Request,
     payload: CommercialOrderCreate,
     session: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[UserInDB, Depends(get_current_user)],
+    current_user: Annotated[UserInDB, Depends(get_operational_user)],
 ) -> CommercialOrderMutationResponse:
     order, dispatches = create_commercial_order(
         session,
@@ -335,7 +335,7 @@ def append_order_dispatches(
     request: Request,
     payload: CommercialOrderDispatchAppend,
     session: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[UserInDB, Depends(get_current_user)],
+    current_user: Annotated[UserInDB, Depends(get_operational_user)],
 ) -> CommercialOrderMutationResponse:
     if order_id != payload.order_id:
         raise HTTPException(status_code=409, detail="order_id path and payload mismatch")
@@ -357,7 +357,7 @@ def create_inbound_order(
     request: Request,
     payload: StockEntryCreate,
     session: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[UserInDB, Depends(get_current_user)],
+    current_user: Annotated[UserInDB, Depends(get_operational_user)],
 ) -> MovementCreatedResponse:
     """Register an inbound stock movement (stock entry).
 
@@ -386,7 +386,7 @@ def create_outbound_order(
     request: Request,
     payload: StockExitCreate,
     session: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[UserInDB, Depends(get_current_user)],
+    current_user: Annotated[UserInDB, Depends(get_operational_user)],
 ) -> MovementCreatedResponse:
     """Register an outbound stock movement (stock exit).
 
@@ -416,7 +416,7 @@ def create_outbound_order(
 )
 def list_orders_endpoint(
     session: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[UserInDB, Depends(get_current_user)],
+    current_user: Annotated[UserInDB, Depends(get_operational_user)],
 ) -> list[InventoryOrderListItem]:
     """Return all stock movements (entries + exits) with SKU data.
 

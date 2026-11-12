@@ -1,5 +1,11 @@
-import { authFetch } from "@/lib/authFetch";
 import type { SupportQueryResponse } from "@/types/support";
+import {
+  clearSupportAccessToken,
+  getSupportAccessToken,
+  SupportAuthorizationError,
+  SupportAuthorizationRedirect,
+} from "@/lib/supportOidc";
+import { telemetryService } from "@/lib/telemetry";
 
 const BASE_URL: string = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -28,22 +34,48 @@ function isSupportResponse(value: unknown): value is SupportQueryResponse {
 
 export async function askSupport(question: string): Promise<SupportQueryResponse> {
   let response: Response;
+  const startedAt =
+    typeof performance === "undefined" ? Date.now() : performance.now();
   try {
-    response = await authFetch(
-      `${BASE_URL}/support/query`,
-      {
-        method: "POST",
-        headers: { Accept: "application/json", "Content-Type": "application/json" },
-        body: JSON.stringify({ question }),
-      },
-      { pathTemplate: "/support/query" },
-    );
-  } catch {
+    const token = await getSupportAccessToken();
+    const requestId = globalThis.crypto?.randomUUID?.();
+    const headers = new Headers({
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    });
+    if (requestId) headers.set("X-Request-ID", requestId);
+    response = await fetch(`${BASE_URL}/support/query`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ question }),
+    });
+  } catch (error) {
+    if (error instanceof SupportAuthorizationRedirect) throw error;
+    if (error instanceof SupportAuthorizationError) {
+      throw new SupportApiError(error.message);
+    }
     throw new SupportApiError("No se pudo conectar con el asistente de soporte.");
+  }
+
+  if (response.status === 401) clearSupportAccessToken();
+
+  if (response.status >= 500 && response.status <= 599) {
+    const finishedAt =
+      typeof performance === "undefined" ? Date.now() : performance.now();
+    telemetryService.withRequestId(response.headers.get("X-Request-ID"), () => {
+      telemetryService.track("api_request_failed", {
+        method: "POST",
+        path_template: "/support/query",
+        status_code: response.status,
+        duration_ms: Math.max(0, finishedAt - startedAt),
+      });
+    });
   }
 
   if (!response.ok) {
     const messages: Record<number, string> = {
+      401: "La sesión OIDC de soporte expiró. Vuelve a autorizar el asistente.",
       403: "Tu rol no tiene acceso al asistente de soporte.",
       503: "El asistente de soporte no está disponible temporalmente.",
     };

@@ -58,6 +58,7 @@ EXPECTED_ROUTES = {
         ("POST", "/api/incidents"),
         ("GET", "/api/incidents/{incident_id}"),
         ("PATCH", "/api/incidents/{incident_id}"),
+        ("PATCH", "/api/incidents/{incident_id}/status"),
         ("GET", "/api/access/clients"),
         ("POST", "/api/access/clients"),
         ("POST", "/api/access/memberships"),
@@ -116,11 +117,11 @@ def _exact_keys(response: httpx.Response, keys: set[str]) -> dict[str, Any]:
     return payload
 
 
-def test_runtime_manifest_has_exactly_51_registrations() -> None:
+def test_runtime_manifest_has_exactly_52_registrations() -> None:
     routes = _routes()
     found = {(method, path) for method, path, _ in routes}
-    assert len(routes) == 51
-    assert len(found) == 51
+    assert len(routes) == 52
+    assert len(found) == 52
     assert found == EXPECTED_ROUTES
 
 
@@ -154,7 +155,7 @@ def test_openapi_visible_success_responses_are_nominal_or_special() -> None:
         for method, path, route in _routes()
         if route.include_in_schema and not path.startswith("/api/suppliers")
     }
-    assert len(visible) == 45
+    assert len(visible) == 46
     for method, path in visible:
         operation = openapi["paths"][path][method.lower()]
         success = next(
@@ -204,8 +205,8 @@ def test_application_decorators_explicitly_declare_response_models() -> None:
     unique_special = [
         item for item in source_decorators if "response_model" not in item[2]
     ]
-    assert len(source_decorators) == 45
-    assert len(unique_json) == 40
+    assert len(source_decorators) == 46
+    assert len(unique_json) == 41
     assert len(unique_special) == 5
     assert len(inferred_only) == 2
     assert all("services\\api\\routes\\telemetry.py" in item for item in inferred_only)
@@ -222,10 +223,10 @@ def test_registration_accounting_distinguishes_source_and_runtime_layers() -> No
         for method in operation_set
         if method.upper() in {"GET", "POST", "PUT", "PATCH", "DELETE"}
     }
-    assert len(runtime) == 51
-    assert len(runtime_json) == 47
+    assert len(runtime) == 52
+    assert len(runtime_json) == 48
     assert len(runtime_special) == 4
-    assert len(visible) == 45
+    assert len(visible) == 46
 
 
 def test_http_auth_profile_supplier_and_health_contracts(isolated_auth_db, monkeypatch) -> None:

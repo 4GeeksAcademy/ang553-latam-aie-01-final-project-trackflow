@@ -1,11 +1,16 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import { AuthGuard } from "@/components/layout/AuthGuard";
 import { BackofficeHeader } from "@/components/layout/BackofficeHeader";
 import { useAuth } from "@/lib/AuthContext";
 import { askSupport, SupportApiError } from "@/lib/supportApi";
 import type { SupportQueryResponse } from "@/types/support";
+import {
+  initializeSupportAuthorization,
+  SupportAuthorizationError,
+  SupportAuthorizationRedirect,
+} from "@/lib/supportOidc";
 
 const statusLabels = {
   ok: "Disponible",
@@ -13,6 +18,25 @@ const statusLabels = {
   timeout: "Tiempo de espera agotado",
   unavailable: "No disponible",
 };
+
+const PENDING_SUPPORT_QUESTION_KEY = "trackflow_support_pending_question";
+let supportAuthorizationInitialization: Promise<boolean> | null = null;
+
+function initializeSupportAuthorizationOnce(): Promise<boolean> {
+  supportAuthorizationInitialization ??= initializeSupportAuthorization();
+  return supportAuthorizationInitialization;
+}
+
+function clearPendingSupportQuestion(): void {
+  window.sessionStorage.removeItem(PENDING_SUPPORT_QUESTION_KEY);
+}
+
+function consumePendingSupportQuestion(): string | null {
+  const pending = window.sessionStorage.getItem(PENDING_SUPPORT_QUESTION_KEY);
+  clearPendingSupportQuestion();
+  const normalized = pending?.trim() ?? "";
+  return normalized && normalized.length <= 2000 ? normalized : null;
+}
 
 export default function SupportPage() {
   const { user } = useAuth();
@@ -22,6 +46,63 @@ export default function SupportPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const executeQuestion = useCallback(
+    async (normalized: string, retainAcrossRedirect: boolean) => {
+      if (retainAcrossRedirect) {
+        window.sessionStorage.setItem(PENDING_SUPPORT_QUESTION_KEY, normalized);
+      }
+      setLoading(true);
+      setError(null);
+      setResult(null);
+      try {
+        setResult(await askSupport(normalized));
+        clearPendingSupportQuestion();
+      } catch (caught: unknown) {
+        if (caught instanceof SupportAuthorizationRedirect) {
+          if (!retainAcrossRedirect) clearPendingSupportQuestion();
+          return;
+        }
+        clearPendingSupportQuestion();
+        setError(
+          caught instanceof SupportApiError
+            ? caught.message
+            : "No se pudo completar la consulta.",
+        );
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    let active = true;
+    initializeSupportAuthorizationOnce()
+      .then((completed) => {
+        if (!active) return;
+        if (!completed) {
+          clearPendingSupportQuestion();
+          return;
+        }
+        const pending = consumePendingSupportQuestion();
+        if (!pending) return;
+        setQuestion(pending);
+        void executeQuestion(pending, false);
+      })
+      .catch((caught: unknown) => {
+        if (!active) return;
+        clearPendingSupportQuestion();
+        setError(
+          caught instanceof SupportAuthorizationError
+            ? caught.message
+            : "No se pudo completar la autenticación de soporte.",
+        );
+      });
+    return () => {
+      active = false;
+    };
+  }, [executeQuestion]);
+
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const normalized = question.trim();
@@ -29,20 +110,7 @@ export default function SupportPage() {
       setError("Escribe una consulta de soporte.");
       return;
     }
-    setLoading(true);
-    setError(null);
-    setResult(null);
-    try {
-      setResult(await askSupport(normalized));
-    } catch (caught: unknown) {
-      setError(
-        caught instanceof SupportApiError
-          ? caught.message
-          : "No se pudo completar la consulta.",
-      );
-    } finally {
-      setLoading(false);
-    }
+    await executeQuestion(normalized, true);
   };
 
   return (

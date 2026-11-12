@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import sys
@@ -70,7 +71,7 @@ def _access() -> AccessContext:
 def _ticket(status: ToolStatus):
     calls = {"count": 0}
 
-    def tool(*_args):
+    def tool(_payload, _deadline):
         calls["count"] += 1
         if status is not ToolStatus.ok:
             return TicketLookupResult(status)
@@ -89,7 +90,7 @@ def _ticket(status: ToolStatus):
 def _inventory(status: ToolStatus, *, stock: int = 4):
     calls = {"count": 0}
 
-    def tool(*_args):
+    def tool(_payload, _deadline):
         calls["count"] += 1
         if status is not ToolStatus.ok:
             return InventoryLookupResult(status)
@@ -133,7 +134,7 @@ def run_evals() -> dict[str, object]:
         result = None
         raised = False
         try:
-            execution = agent.execute(
+            execution = asyncio.run(agent.execute(
                 scenario["question"],
                 session=object(),
                 access=_access(),
@@ -142,7 +143,7 @@ def run_evals() -> dict[str, object]:
                 run_id=run_id,
                 ticket_tool=ticket_tool,
                 inventory_tool=inventory_tool,
-            )
+            ))
             result = execution.result
         except SupportUnavailable:
             raised = True

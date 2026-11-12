@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -28,6 +29,10 @@ from services.rag.contracts import (
     RetrievalResult,
 )
 from services.rag.resilience import QueryDeadline
+
+
+def run(coroutine):
+    return asyncio.run(coroutine)
 
 
 class StubRAGService:
@@ -111,6 +116,7 @@ def test_deterministic_route_matrix(question, route, ticket, product):
     "question",
     [
         "What is the status of my ticket?",
+        "Check my ticket status",
         "Check TRF-482",
         "Check TRF-000000",
         "Compare TRF-000482 and TRF-000483",
@@ -145,7 +151,7 @@ def test_ticket_only_is_rag_lazy_and_checkpoint_is_deleted():
         rag_calls += 1
         return rag_context(StubRAGService())
 
-    def ticket_tool(session, payload, auth, deadline):
+    def ticket_tool(payload, deadline):
         return TicketLookupResult(
             ToolStatus.ok,
             incident_id=payload.incident_id,
@@ -156,14 +162,14 @@ def test_ticket_only_is_rag_lazy_and_checkpoint_is_deleted():
         )
 
     agent = ExternalSupportAgent()
-    execution = agent.execute(
+    execution = run(agent.execute(
         "Check ticket 482",
         session=object(),
         access=access(),
         deadline=QueryDeadline(80),
         rag_factory=factory,
         ticket_tool=ticket_tool,
-    )
+    ))
     assert rag_calls == 0
     assert execution.result.ticket.incident_id == "TRF-000482"
     trace = agent.tracer.get(execution.run_id)
@@ -184,7 +190,7 @@ def test_inventory_only_skips_ticket_and_rag():
         calls.append("forbidden")
         raise AssertionError("unnecessary source called")
 
-    def inventory_tool(session, payload, auth, deadline):
+    def inventory_tool(payload, deadline):
         calls.append("inventory")
         return InventoryLookupResult(
             ToolStatus.ok,
@@ -195,7 +201,7 @@ def test_inventory_only_skips_ticket_and_rag():
             current_stock=2,
         )
 
-    result = ExternalSupportAgent().execute(
+    result = run(ExternalSupportAgent().execute(
         "How much stock is available for product 17?",
         session=object(),
         access=access(),
@@ -203,16 +209,38 @@ def test_inventory_only_skips_ticket_and_rag():
         rag_factory=forbidden,
         ticket_tool=forbidden,
         inventory_tool=inventory_tool,
-    ).result
+    )).result
     assert calls == ["inventory"]
     assert result.inventory.current_stock == 2
+
+
+def test_knowledge_only_uses_deterministic_rag_without_operational_tools():
+    rag = StubRAGService()
+
+    def forbidden(*args):
+        raise AssertionError("knowledge route must not call operational tools")
+
+    result = run(ExternalSupportAgent().execute(
+        "Explain the returns policy",
+        session=object(),
+        access=access(),
+        deadline=QueryDeadline(80),
+        rag_factory=lambda: rag_context(rag),
+        ticket_tool=forbidden,
+        inventory_tool=forbidden,
+    )).result
+
+    assert result.route == "knowledge"
+    assert result.knowledge_status == "ok"
+    assert result.knowledge is not None
+    assert rag.retrieve_calls == rag.generate_calls == 1
 
 
 def test_mixed_execution_is_sequential_and_reuses_internal_rag_nodes():
     calls = []
     rag = StubRAGService()
 
-    def ticket_tool(session, payload, auth, deadline):
+    def ticket_tool(payload, deadline):
         calls.append("ticket")
         return TicketLookupResult(
             ToolStatus.ok,
@@ -223,7 +251,7 @@ def test_mixed_execution_is_sequential_and_reuses_internal_rag_nodes():
             updated_at=datetime(2026, 11, 9, tzinfo=timezone.utc),
         )
 
-    def inventory_tool(session, payload, auth, deadline):
+    def inventory_tool(payload, deadline):
         calls.append("inventory")
         return InventoryLookupResult(
             ToolStatus.ok,
@@ -235,7 +263,7 @@ def test_mixed_execution_is_sequential_and_reuses_internal_rag_nodes():
         )
 
     agent = ExternalSupportAgent()
-    execution = agent.execute(
+    execution = run(agent.execute(
         "Check ticket 482, product 17 stock, and explain the returns policy",
         session=object(),
         access=access(),
@@ -243,7 +271,7 @@ def test_mixed_execution_is_sequential_and_reuses_internal_rag_nodes():
         rag_factory=lambda: rag_context(rag),
         ticket_tool=ticket_tool,
         inventory_tool=inventory_tool,
-    )
+    ))
     assert calls == ["ticket", "inventory"]
     assert rag.retrieve_calls == rag.generate_calls == 1
     assert execution.result.inventory.current_stock == 0
@@ -269,10 +297,10 @@ def test_mixed_execution_is_sequential_and_reuses_internal_rag_nodes():
 
 
 def test_partial_result_preserves_successful_source():
-    def ticket_tool(session, payload, auth, deadline):
+    def ticket_tool(payload, deadline):
         return TicketLookupResult(ToolStatus.timeout)
 
-    def inventory_tool(session, payload, auth, deadline):
+    def inventory_tool(payload, deadline):
         return InventoryLookupResult(
             ToolStatus.ok,
             product_id=payload.product_id,
@@ -282,7 +310,7 @@ def test_partial_result_preserves_successful_source():
             current_stock=5,
         )
 
-    result = ExternalSupportAgent().execute(
+    result = run(ExternalSupportAgent().execute(
         "Check ticket 482 and product 17 stock",
         session=object(),
         access=access(),
@@ -290,7 +318,7 @@ def test_partial_result_preserves_successful_source():
         rag_factory=lambda: rag_context(StubRAGService()),
         ticket_tool=ticket_tool,
         inventory_tool=inventory_tool,
-    ).result
+    )).result
     assert result.partial is True
     assert result.ticket.status is ToolStatus.timeout
     assert result.inventory.current_stock == 5
@@ -302,14 +330,14 @@ def test_total_technical_failure_is_sanitized_and_cleans_checkpoint():
     agent = ExternalSupportAgent()
     run_id = "550e8400-e29b-41d4-a716-446655440099"
     with pytest.raises(SupportUnavailable):
-        agent.execute(
+        run(agent.execute(
             "Explain the returns policy",
             session=object(),
             access=access(),
             deadline=QueryDeadline(80),
             rag_factory=lambda: rag_context(rag),
             run_id=run_id,
-        )
+        ))
     serialized = json.dumps(agent.tracer.get(run_id))
     assert "returns policy" not in serialized
     assert "TRF-000482" not in serialized
@@ -323,7 +351,7 @@ def test_rag_failure_keeps_valid_ticket_as_partial_response():
         error=RAGProviderError("private provider error", category="timeout")
     )
 
-    def ticket_tool(session, payload, auth, deadline):
+    def ticket_tool(payload, deadline):
         return TicketLookupResult(
             ToolStatus.ok,
             incident_id=payload.incident_id,
@@ -334,14 +362,14 @@ def test_rag_failure_keeps_valid_ticket_as_partial_response():
         )
 
     agent = ExternalSupportAgent()
-    execution = agent.execute(
+    execution = run(agent.execute(
         "Check ticket 482 and explain the damage policy",
         session=object(),
         access=access(),
         deadline=QueryDeadline(80),
         rag_factory=lambda: rag_context(rag),
         ticket_tool=ticket_tool,
-    )
+    ))
     assert execution.result.partial is True
     assert execution.result.ticket.status is ToolStatus.ok
     assert execution.result.knowledge is None
@@ -357,7 +385,7 @@ def test_clarification_does_not_call_tools_or_rag():
         calls.append("called")
         raise AssertionError("source must remain lazy")
 
-    result = ExternalSupportAgent().execute(
+    result = run(ExternalSupportAgent().execute(
         "What is the status of my ticket?",
         session=object(),
         access=access(),
@@ -365,7 +393,7 @@ def test_clarification_does_not_call_tools_or_rag():
         rag_factory=forbidden,
         ticket_tool=forbidden,
         inventory_tool=forbidden,
-    ).result
+    )).result
     assert result.needs_clarification is True
     assert calls == []
 
@@ -381,7 +409,7 @@ def test_tools_and_rag_share_one_deadline_started_before_routing():
     deadline = QueryDeadline(80, clock=clock)
     remaining_at_rag = []
 
-    def ticket_tool(session, payload, auth, selected_deadline):
+    def ticket_tool(payload, selected_deadline):
         assert selected_deadline is deadline
         clock.value += 7.5
         return TicketLookupResult(ToolStatus.not_found)
@@ -391,14 +419,14 @@ def test_tools_and_rag_share_one_deadline_started_before_routing():
         remaining_at_rag.append(deadline.remaining())
         yield StubRAGService()
 
-    ExternalSupportAgent().execute(
+    run(ExternalSupportAgent().execute(
         "Check ticket 482 and explain the returns policy",
         session=object(),
         access=access(),
         deadline=deadline,
         rag_factory=factory,
         ticket_tool=ticket_tool,
-    )
+    ))
     assert remaining_at_rag == [72.5]
 
 
@@ -413,14 +441,14 @@ def test_lazy_rag_configuration_failure_is_controlled_and_checkpoint_is_deleted(
     agent = ExternalSupportAgent()
     run_id = "550e8400-e29b-41d4-a716-446655440088"
     with pytest.raises(SupportUnavailable):
-        agent.execute(
+        run(agent.execute(
             "Explain the returns policy",
             session=object(),
             access=access(),
             deadline=QueryDeadline(80),
             rag_factory=FailingContext,
             run_id=run_id,
-        )
+        ))
     trace = agent.tracer.get(run_id)
     assert trace["nodes"][1]["state"]["knowledge_error_category"] == "configuration_error"
     assert agent.checkpointer.get_tuple({"configurable": {"thread_id": run_id}}) is None

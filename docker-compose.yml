@@ -22,6 +22,11 @@ services:
     environment:
       # Server-side backend URL for Next.js rewrites (Docker DNS)
       - API_BACKEND_URL=${API_BACKEND_URL:-http://api:8000}
+      # Public Authorization Code + PKCE configuration for Support only.
+      # Never add a confidential-client secret to the browser environment.
+      - NEXT_PUBLIC_SUPPORT_OIDC_AUTHORIZATION_ENDPOINT=${NEXT_PUBLIC_SUPPORT_OIDC_AUTHORIZATION_ENDPOINT:-}
+      - NEXT_PUBLIC_SUPPORT_OIDC_TOKEN_ENDPOINT=${NEXT_PUBLIC_SUPPORT_OIDC_TOKEN_ENDPOINT:-}
+      - NEXT_PUBLIC_SUPPORT_OIDC_CLIENT_ID=${NEXT_PUBLIC_SUPPORT_OIDC_CLIENT_ID:-}
     volumes:
       # Bind mounts de código fuente (host → container)
       - ./uis/website:/app/uis/website

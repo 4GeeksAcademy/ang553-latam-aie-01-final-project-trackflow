@@ -17,11 +17,11 @@ from agents.customer_support.external_graph import (
     SupportUnavailable,
     get_external_support_agent,
 )
+from agents.customer_support.mcp_tools import SupportMCPSettings, SupportMCPTools
 from agents.customer_support.tools import apply_statement_timeout
 from services.api.access_control import build_access_context
-from services.api.auth_models import Role, UserInDB
-from services.api.auth_security import get_current_user
 from services.api.database import get_db
+from services.api.support_oidc import SupportIdentity, require_support_reader
 from services.rag.resilience import QueryDeadline
 from services.rag.runtime import rag_service_context
 
@@ -85,15 +85,17 @@ class SupportQueryResponse(BaseModel):
     knowledge: SupportKnowledgeResponse | None = None
 
 
-def require_support_reader(
-    user: Annotated[UserInDB, Depends(get_current_user)],
-) -> UserInDB:
-    if user.role not in {Role.admin, Role.manager}:
+def get_support_mcp_tools(
+    identity: Annotated[SupportIdentity, Depends(require_support_reader)],
+) -> SupportMCPTools:
+    try:
+        settings = SupportMCPSettings.from_env()
+    except (KeyError, ValueError):
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="admin or manager role required",
-        )
-    return user
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="support service unavailable",
+        ) from None
+    return SupportMCPTools(identity.bearer_for_mcp(), settings)
 
 
 def _to_response(result: ExternalSupportResult) -> SupportQueryResponse:
@@ -164,18 +166,19 @@ def _to_response(result: ExternalSupportResult) -> SupportQueryResponse:
         503: {"description": "All selected support sources are unavailable."},
     },
 )
-def query_support(
+async def query_support(
     payload: SupportQueryRequest,
     request: Request,
     response: Response,
-    user: Annotated[UserInDB, Depends(require_support_reader)],
+    identity: Annotated[SupportIdentity, Depends(require_support_reader)],
     session: Annotated[Session, Depends(get_db)],
     agent: Annotated[ExternalSupportAgent, Depends(get_external_support_agent)],
+    mcp_tools: Annotated[SupportMCPTools, Depends(get_support_mcp_tools)],
 ) -> SupportQueryResponse:
     deadline = QueryDeadline(SUPPORT_QUERY_BUDGET_SECONDS)
     try:
         apply_statement_timeout(session, deadline)
-        access = build_access_context(session, user)
+        access = build_access_context(session, identity.user)
     except (SQLAlchemyError, TimeoutError):
         try:
             session.rollback()
@@ -188,7 +191,7 @@ def query_support(
 
     run_id = str(uuid4())
     try:
-        execution = agent.execute(
+        execution = await agent.execute(
             payload.question,
             session=session,
             access=access,
@@ -196,6 +199,8 @@ def query_support(
             rag_factory=lambda: rag_service_context(deadline=deadline),
             request_id=getattr(request.state, "request_id", None),
             run_id=run_id,
+            ticket_tool=mcp_tools.lookup_ticket,
+            inventory_tool=mcp_tools.lookup_inventory_product,
         )
     except SupportUnavailable:
         raise HTTPException(
