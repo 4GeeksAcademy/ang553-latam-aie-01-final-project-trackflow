@@ -1,5 +1,78 @@
 # Progress: TrackFlow
 
+## TrackFlow MCP Server — implementation gates A–F
+
+- Gate A **PASS**: the root runtime pins `langchain-mcp-adapters==0.3.2` with
+  MCP SDK v1 (`mcp>=1.28,<2`). The independent `mcps/trackflow/` environment
+  isolates `mcpauth==0.2.0b1` from the root `requests`/email dependency
+  constraint; both uv locks and imports were verified on Python 3.12.
+- Gates B/B2 **PASS**: the MCP boundary uses `mcpauth`, Streamable HTTP and
+  Protected Resource Metadata with strict RS256 issuer/audience/signature/
+  expiration checks and exact scopes. Standard Token Exchange V2 produces a
+  distinct `trackflow-api` bearer. The API preserves local HS256 callers while
+  accepting OIDC only on the approved incident/inventory routes; roles and
+  tenant memberships always come from TrackFlow persistence.
+- Gate C **PASS**: five typed MCP tools expose incident create/read/status and
+  inventory list/read through existing HTTP endpoints. Safe projections,
+  scope-before-network enforcement, GET-only inventory, sanitized errors,
+  request correlation and secret-free structured logging are covered by
+  adversarial tests. No database or business service is imported by the MCP.
+- Gate E1 **PASS**: disposable Keycloak 26.8.2, PostgreSQL 16 `tmpfs`, temporary
+  TinyDB, API and MCP proved real PRM, RS256 claims, login, token exchange,
+  distinct audience bearer, identity mapping, 401/403 behavior, persistence,
+  version conflict, tenant isolation and inventory mutation rejection. The
+  opt-in E2E result was **1 PASS in 6.10 s**; MCP unit QA was **50 PASS in
+  4.78 s** and the root OIDC regression was **61 PASS in 17.18 s**. Secret/JWT/
+  payload scans were clean. All QA services and owned containers are stopped;
+  ports 18082, 55440, 18083 and 18084 were confirmed free.
+- Gate D alternative A **PASS**. `/support/query` now accepts only a Keycloak RS256
+  token for `trackflow-mcp` with both read scopes, links it to an active
+  TrackFlow user, and derives role/memberships from TrackFlow persistence. The
+  async endpoint and graph use `graph.ainvoke`; operational nodes call only MCP
+  tools through `langchain-mcp-adapters`, with no SQL/direct fallback.
+  Backoffice retains its local JWT globally and uses a separate, in-memory
+  Authorization Code + PKCE S256 token only for Support. Focused OIDC, adapter,
+  deadline, graph and endpoint QA was **54 PASS in 6.56 s**. A fresh disposable
+  Keycloak/API/MCP/PostgreSQL/LangGraph run completed **1 PASS in 13.90 s**
+  (18.38 s command wall time), including real PKCE, dual-session isolation,
+  token exchange, mixed and cross-tenant Support paths, optimistic concurrency
+  and inventory write rejection. Independent database reads confirmed one
+  closed version-2 incident with two history events, two unchanged SKUs and no
+  forbidden mutation. Runtime scans found no secrets, complete JWTs or payload/
+  PII markers in owned logs. All owned processes, containers and temporary data
+  were removed; ports 18082, 55440, 18083 and 18084 are free.
+- Gate F documents the disposable QA procedure and the identity decision. No
+  service, credential, persistent user/data store or Git state was modified by
+  this documentation gate.
+- The principal human functional acceptance with Backoffice and MCP Inspector
+  is complete. Interactive Keycloak OAuth, discovery of exactly five tools,
+  authorized incident and inventory reads, tenant isolation, and the complete
+  create/read/status lifecycle were verified manually. Incident `TRF-000002`
+  was created as `OPEN` version 1, changed to `CLOSED` version 2 and read back
+  with the persisted result. Backoffice Support manually passed the Ticket,
+  Inventory, Mixed and Clarification routes; the OIDC expiry redirect preserves
+  and replays the pending question.
+- Inventory read-only enforcement has two distinct evidence levels. Human MCP
+  Inspector acceptance verified the published discovery and permitted inventory
+  reads. The explicit rejection of an unknown inventory mutation tool, the
+  adapter's pre-network rejection of non-GET methods and the absence of a
+  downstream mutation were established by focused adversarial automation, not
+  by a manual inventory write attempt.
+- Private GitHub Codespaces QA infrastructure is prepared under
+  `mcps/trackflow/qa/codespaces/`. Its reproducible launcher, loopback-only
+  Compose topology, restrictive single-port gateway, exact public-origin and
+  callback validation, Keycloak hardening, route-denial checks and scoped
+  cleanup passed private/static QA. No port was published and no external
+  Playground validation is claimed.
+- The remaining acceptance work is explicit: start the stack in a real GitHub
+  Codespace, connect the designated public MCP Playground, complete external
+  academic certification, and validate the real Knowledge/RAG route when its
+  private provider configuration is available.
+- Repository-wide Backoffice ESLint is not PASS. Three historical errors and
+  one warning remain in files outside the MCP change set. Focused lint for the
+  modified MCP Backoffice files, TypeScript validation and the isolated
+  production build pass; the global ESLint debt is not attributed to MCP.
+
 ## Milestone 7 — final functional correction and live-test preparation
 
 - Historical generation inputs and outputs were re-audited without model

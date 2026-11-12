@@ -1,5 +1,6 @@
 """Focused contract tests for POST /support/query."""
 
+import asyncio
 from datetime import datetime, timezone
 
 import pytest
@@ -19,6 +20,8 @@ from services.api.routes.support import (
     query_support,
     require_support_reader,
 )
+from services.api.support_oidc import SupportIdentity
+from pydantic import SecretStr
 from services.rag.contracts import RAGConfigurationError
 
 
@@ -29,6 +32,27 @@ def user(role: Role) -> UserInDB:
         hashed_password="test-only",
         role=role,
     )
+
+
+def identity(role: Role) -> SupportIdentity:
+    return SupportIdentity(
+        user(role),
+        f"keycloak-{role.value}",
+        frozenset({"incidents:read", "inventory:read"}),
+        SecretStr("test-token"),
+    )
+
+
+def run(coroutine):
+    return asyncio.run(coroutine)
+
+
+class MCPTools:
+    async def lookup_ticket(self, payload, deadline):
+        raise AssertionError("fake agent should not call MCP tools")
+
+    async def lookup_inventory_product(self, payload, deadline):
+        raise AssertionError("fake agent should not call MCP tools")
 
 
 class FakeSession:
@@ -72,10 +96,10 @@ def ticket_result() -> ExternalSupportResult:
 
 
 def test_support_role_policy_allows_admin_manager_and_denies_user():
-    assert require_support_reader(user(Role.admin)).role is Role.admin
-    assert require_support_reader(user(Role.manager)).role is Role.manager
+    assert require_support_reader(identity(Role.admin)).user.role is Role.admin
+    assert require_support_reader(identity(Role.manager)).user.role is Role.manager
     with pytest.raises(HTTPException) as exc_info:
-        require_support_reader(user(Role.user))
+        require_support_reader(identity(Role.user))
     assert exc_info.value.status_code == 403
 
 
@@ -83,20 +107,21 @@ def test_support_handler_sets_run_header_and_starts_shared_80_second_deadline():
     captured = {}
 
     class Agent:
-        def execute(self, question, **kwargs):
+        async def execute(self, question, **kwargs):
             captured.update(kwargs)
             captured["question"] = question
             return ExternalSupportExecution(kwargs["run_id"], ticket_result())
 
     response = Response()
-    result = query_support(
+    result = run(query_support(
         SupportQueryRequest(question="Check ticket 482"),
         request(),
         response,
-        user(Role.admin),
+        identity(Role.admin),
         FakeSession(),
         Agent(),
-    )
+        MCPTools(),
+    ))
     assert result.route == "ticket"
     assert result.ticket.incident_id == "TRF-000482"
     assert response.headers["X-TrackFlow-Run-ID"] == captured["run_id"]
@@ -108,19 +133,20 @@ def test_support_handler_returns_sanitized_503_with_same_run_id():
     captured = {}
 
     class Agent:
-        def execute(self, question, **kwargs):
+        async def execute(self, question, **kwargs):
             captured.update(kwargs)
             raise SupportUnavailable("postgresql://private")
 
     with pytest.raises(HTTPException) as exc_info:
-        query_support(
+        run(query_support(
             SupportQueryRequest(question="Explain the returns policy"),
             request(),
             Response(),
-            user(Role.admin),
+            identity(Role.admin),
             FakeSession(),
             Agent(),
-        )
+            MCPTools(),
+        ))
     assert exc_info.value.status_code == 503
     assert exc_info.value.detail == "support service unavailable"
     assert exc_info.value.headers["X-TrackFlow-Run-ID"] == captured["run_id"]

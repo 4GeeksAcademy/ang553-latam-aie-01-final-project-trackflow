@@ -14,7 +14,7 @@ from sqlmodel import SQLModel, Session
 
 from services.api.access_control import AccessContext, build_access_context
 from services.api.auth_models import Role, UserInDB
-from services.api.auth_security import get_current_user
+from services.api.operational_oidc import get_operational_user
 from services.api.database import get_db
 from services.api.cache import orders_cache, products_cache
 from services.api.inventory_models import SKU, StockEntry
@@ -389,7 +389,7 @@ def test_operational_http_crud_auth_and_hidden_cross_tenant(session: Session):
         return current["user"]
 
     api.dependency_overrides[get_db] = db_override
-    api.dependency_overrides[get_current_user] = auth_override
+    api.dependency_overrides[get_operational_user] = auth_override
 
     async def scenario():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api), base_url="http://test") as client:
@@ -621,7 +621,7 @@ def test_status_endpoint_http_transport_and_unauthenticated_rejection(
         return current["user"]
 
     api.dependency_overrides[get_db] = db_override
-    api.dependency_overrides[get_current_user] = auth_override
+    api.dependency_overrides[get_operational_user] = auth_override
 
     async def scenario():
         async with httpx.AsyncClient(

@@ -15,7 +15,7 @@ from sqlmodel import SQLModel, Session, create_engine
 
 from services.api.auth_models import Role, UserInDB
 from services.api.access_control import AccessContext
-from services.api.auth_security import get_current_user
+from services.api.operational_oidc import get_operational_user
 from services.api.database import get_db
 from services.api.inventory_models import CommercialOrder, SKU
 from services.api.inventory_outbox import inventory_outbox_metadata
@@ -243,7 +243,7 @@ def test_service_write_facades_require_access_context_and_deny_user(
 def test_http_all_inventory_mutations_reject_role_user(secured_inventory: Session):
     api = FastAPI(); api.include_router(inventory_router)
     api.dependency_overrides[get_db] = lambda: secured_inventory
-    api.dependency_overrides[get_current_user] = lambda: _user("user-a", Role.user)
+    api.dependency_overrides[get_operational_user] = lambda: _user("user-a", Role.user)
     append_order_id = uuid4()
     requests = [
         ("POST", "/inventory/products", {"name":"X","sku":"X","client_id":CLIENT_A,"client_name":"Verified A","category":"electronics","warehouse":"LA"}),
