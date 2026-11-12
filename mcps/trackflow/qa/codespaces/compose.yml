@@ -1,0 +1,75 @@
+name: trackflow-mcp-codespaces-qa
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: "no"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+      POSTGRES_DB: ${POSTGRES_DB:?required}
+    ports:
+      - "127.0.0.1:55440:5432"
+    tmpfs:
+      - /var/lib/postgresql/data:rw,noexec,nosuid,size=512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    labels:
+      com.trackflow.qa.owner: codespaces-mcp
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.2
+    restart: "no"
+    command: ["start-dev", "--health-enabled=true"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${QA_KEYCLOAK_ADMIN_USER:?required}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${QA_KEYCLOAK_ADMIN_PASSWORD:?required}
+      KC_HOSTNAME: ${TRACKFLOW_CODESPACES_PUBLIC_ORIGIN:?required}
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HOSTNAME_STRICT: "true"
+    ports:
+      - "127.0.0.1:18082:8080"
+    tmpfs:
+      - /opt/keycloak/data:rw,noexec,nosuid,size=256m
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -ec
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000;
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3;
+          grep -q '200 OK' <&3
+      interval: 5s
+      timeout: 5s
+      retries: 48
+      start_period: 20s
+    labels:
+      com.trackflow.qa.owner: codespaces-mcp
+
+  gateway:
+    image: nginx:1.27.5-alpine
+    restart: "no"
+    environment:
+      QA_KEYCLOAK_REALM: ${QA_KEYCLOAK_REALM:?required}
+      TRACKFLOW_CODESPACES_PUBLIC_HOST: ${TRACKFLOW_CODESPACES_PUBLIC_HOST:?required}
+    ports:
+      - "127.0.0.1:18085:8080"
+    volumes:
+      - ./gateway.nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    labels:
+      com.trackflow.qa.owner: codespaces-mcp
