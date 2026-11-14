@@ -35,6 +35,9 @@ expect_status 404 "/realms/master/"
 expect_status 404 "/realms/not-the-selected-realm/.well-known/openid-configuration"
 expect_status 404 "/api/incidents"
 expect_status 404 "/unknown"
+expect_status 404 "/realms/${QA_KEYCLOAK_REALM}/protocol/openid-connect/auth"
+expect_status 404 "/realms/${QA_KEYCLOAK_REALM}/protocol/openid-connect/logout"
+expect_status 404 "/realms/${QA_KEYCLOAK_REALM}/account"
 
 oidc_json="$(curl --silent --show-error --fail --max-time 10 \
   "${gateway}/realms/${QA_KEYCLOAK_REALM}/.well-known/openid-configuration")"
@@ -53,6 +56,9 @@ prm = json.loads(sys.argv[4])
 expected_issuer = f"{origin}/realms/{realm}"
 if oidc.get("issuer") != expected_issuer:
     raise SystemExit("OIDC issuer does not use the public Codespaces origin.")
+expected_device = f"{expected_issuer}/protocol/openid-connect/auth/device"
+if oidc.get("device_authorization_endpoint") != expected_device:
+    raise SystemExit("OIDC discovery does not advertise the Device Authorization endpoint.")
 if prm.get("resource") != f"{origin}/mcp":
     raise SystemExit("Protected Resource Metadata advertises the wrong resource.")
 if expected_issuer not in str(prm.get("authorization_servers")):

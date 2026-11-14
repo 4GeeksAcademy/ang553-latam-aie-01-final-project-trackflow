@@ -6,7 +6,16 @@ import os
 
 import httpx
 
-from validate_config import public_origin, validate_playground, validate_realm
+from validate_config import public_origin, validate_realm
+
+
+DEVICE_GRANT_ATTRIBUTE = "oauth2.device.authorization.grant.enabled"
+OPERATION_SCOPES = {
+    "incidents:create",
+    "incidents:read",
+    "incidents:status",
+    "inventory:read",
+}
 
 
 def required(name: str) -> str:
@@ -27,11 +36,8 @@ def main() -> None:
     if required("TRACKFLOW_CODESPACES_PUBLIC_ORIGIN") != expected_origin:
         raise SystemExit("Public origin does not match the current Codespace.")
     realm = validate_realm(required("QA_KEYCLOAK_REALM"))
-    redirect_uri, web_origin = validate_playground(
-        required("TRACKFLOW_PLAYGROUND_REDIRECT_URI"),
-        required("TRACKFLOW_PLAYGROUND_ORIGIN"),
-    )
     public_client = required("QA_KEYCLOAK_PUBLIC_CLIENT_ID")
+    mcp_client = required("QA_KEYCLOAK_MCP_CLIENT_ID")
 
     with httpx.Client(timeout=15) as client:
         token_response = client.post(
@@ -51,6 +57,7 @@ def main() -> None:
         realm_config = realm_response.json()
         realm_config["sslRequired"] = "external"
         realm_config["registrationAllowed"] = False
+        realm_config["accessTokenLifespan"] = 300
         updated_realm = client.put(
             f"{base_url}/admin/realms/{realm}",
             headers=headers,
@@ -71,16 +78,19 @@ def main() -> None:
         client_config.update(
             {
                 "publicClient": True,
-                "standardFlowEnabled": True,
+                "standardFlowEnabled": False,
+                "implicitFlowEnabled": False,
                 "directAccessGrantsEnabled": False,
                 "serviceAccountsEnabled": False,
+                "authorizationServicesEnabled": False,
                 "fullScopeAllowed": False,
-                "redirectUris": [redirect_uri],
-                "webOrigins": [web_origin],
+                "redirectUris": [],
+                "webOrigins": [],
             }
         )
         attributes = dict(client_config.get("attributes") or {})
-        attributes["pkce.code.challenge.method"] = "S256"
+        attributes.pop("pkce.code.challenge.method", None)
+        attributes[DEVICE_GRANT_ATTRIBUTE] = "true"
         client_config["attributes"] = attributes
         updated_client = client.put(
             f"{base_url}/admin/realms/{realm}/clients/{client_config['id']}",
@@ -95,23 +105,126 @@ def main() -> None:
         )
         verification.raise_for_status()
         verified = verification.json()
+        verified_mappers = {
+            mapper.get("name"): mapper for mapper in verified.get("protocolMappers", [])
+        }
+        audience_mapper = verified_mappers.get("trackflow-mcp-audience", {})
+        identity_mapper = verified_mappers.get("trackflow-user-id", {})
         if (
             verified.get("publicClient") is not True
-            or verified.get("standardFlowEnabled") is not True
-            or
-            verified.get("directAccessGrantsEnabled") is not False
+            or verified.get("standardFlowEnabled") is not False
+            or verified.get("implicitFlowEnabled") is not False
+            or verified.get("directAccessGrantsEnabled") is not False
             or verified.get("serviceAccountsEnabled") is not False
+            or verified.get("authorizationServicesEnabled") is not False
             or verified.get("fullScopeAllowed") is not False
-            or verified.get("redirectUris") != [redirect_uri]
-            or verified.get("webOrigins") != [web_origin]
-            or (verified.get("attributes") or {}).get("pkce.code.challenge.method") != "S256"
+            or verified.get("redirectUris") not in ([], None)
+            or verified.get("webOrigins") not in ([], None)
+            or (verified.get("attributes") or {}).get(DEVICE_GRANT_ATTRIBUTE) != "true"
+            or set(verified.get("optionalClientScopes", [])) != OPERATION_SCOPES
+            or set(verified.get("defaultClientScopes", [])) != {"trackflow-sub"}
+            or (audience_mapper.get("config") or {}).get("included.client.audience")
+            != mcp_client
+            or (identity_mapper.get("config") or {}).get("claim.name")
+            != "trackflow_user_id"
         ):
             raise RuntimeError("Public QA client hardening verification failed.")
+
+        mcp_matches = client.get(
+            f"{base_url}/admin/realms/{realm}/clients",
+            headers=headers,
+            params={"clientId": mcp_client},
+        )
+        mcp_matches.raise_for_status()
+        mcp_clients = mcp_matches.json()
+        if len(mcp_clients) != 1:
+            raise RuntimeError("Expected exactly one confidential MCP client.")
+        mcp_config = mcp_clients[0]
+        mcp_config.update(
+            {
+                "publicClient": False,
+                "clientAuthenticatorType": "client-secret",
+                "standardFlowEnabled": False,
+                "implicitFlowEnabled": False,
+                "directAccessGrantsEnabled": False,
+                "serviceAccountsEnabled": False,
+                "authorizationServicesEnabled": False,
+                "fullScopeAllowed": False,
+            }
+        )
+        mcp_attributes = dict(mcp_config.get("attributes") or {})
+        mcp_attributes["standard.token.exchange.enabled"] = "true"
+        mcp_attributes[DEVICE_GRANT_ATTRIBUTE] = "false"
+        mcp_config["attributes"] = mcp_attributes
+        mcp_update = client.put(
+            f"{base_url}/admin/realms/{realm}/clients/{mcp_config['id']}",
+            headers=headers,
+            json=mcp_config,
+        )
+        mcp_update.raise_for_status()
+        mcp_verified = client.get(
+            f"{base_url}/admin/realms/{realm}/clients/{mcp_config['id']}",
+            headers=headers,
+        )
+        mcp_verified.raise_for_status()
+        mcp_verified_config = mcp_verified.json()
+        if (
+            mcp_verified_config.get("publicClient") is not False
+            or mcp_verified_config.get("clientAuthenticatorType") != "client-secret"
+            or mcp_verified_config.get("fullScopeAllowed") is not False
+            or any(
+                mcp_verified_config.get(flag) is not False
+                for flag in (
+                    "standardFlowEnabled",
+                    "implicitFlowEnabled",
+                    "directAccessGrantsEnabled",
+                    "serviceAccountsEnabled",
+                    "authorizationServicesEnabled",
+                )
+            )
+            or (mcp_verified_config.get("attributes") or {}).get(
+                "standard.token.exchange.enabled"
+            )
+            != "true"
+            or (mcp_verified_config.get("attributes") or {}).get(
+                DEVICE_GRANT_ATTRIBUTE
+            )
+            != "false"
+        ):
+            raise RuntimeError("MCP client grant hardening verification failed.")
+
+        client_credentials = client.post(
+            f"{base_url}/realms/{realm}/protocol/openid-connect/token",
+            data={
+                "grant_type": "client_credentials",
+                "client_id": mcp_client,
+                "client_secret": required("QA_KEYCLOAK_MCP_CLIENT_SECRET"),
+            },
+        )
+        if client_credentials.status_code not in {400, 401, 403}:
+            raise RuntimeError("Client Credentials Grant is not blocked.")
+
+        password_grant = client.post(
+            f"{base_url}/realms/{realm}/protocol/openid-connect/token",
+            data={
+                "grant_type": "password",
+                "client_id": public_client,
+                "username": required("QA_KEYCLOAK_USERNAME"),
+                "password": required("QA_KEYCLOAK_PASSWORD"),
+            },
+        )
+        if password_grant.status_code not in {400, 401, 403}:
+            raise RuntimeError("Direct Access Grant is not blocked.")
         verified_realm = client.get(
             f"{base_url}/admin/realms/{realm}", headers=headers
         )
         verified_realm.raise_for_status()
-        if verified_realm.json().get("sslRequired") != "external":
+        verified_realm_config = verified_realm.json()
+        if (
+            verified_realm_config.get("sslRequired") != "external"
+            or verified_realm_config.get("registrationAllowed") is not False
+            or verified_realm_config.get("accessTokenLifespan") != 300
+        ):
             raise RuntimeError("QA realm TLS policy hardening verification failed.")
 
         anonymous_dcr = client.post(

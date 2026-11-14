@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import re
-from urllib.parse import urlparse
 
 
 SAFE_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
@@ -32,43 +31,9 @@ def validate_realm(realm: str) -> str:
     return realm
 
 
-def validate_playground(redirect_uri: str, web_origin: str) -> tuple[str, str]:
-    if "*" in redirect_uri or "*" in web_origin:
-        raise ValueError("Playground URLs must not contain wildcards.")
-    forbidden = {"'", '"', "\\", "\r", "\n", "\t", " "}
-    if any(character in redirect_uri or character in web_origin for character in forbidden):
-        raise ValueError("Playground URLs contain unsafe shell or whitespace characters.")
-    redirect = urlparse(redirect_uri)
-    origin = urlparse(web_origin)
-    for label, parsed in (("redirect URI", redirect), ("web origin", origin)):
-        if (
-            parsed.scheme != "https"
-            or not parsed.hostname
-            or parsed.username
-            or parsed.password
-            or parsed.fragment
-        ):
-            raise ValueError(f"Playground {label} must be a credential-free HTTPS URL.")
-    if origin.path not in ("", "/") or origin.params or origin.query:
-        raise ValueError("Playground web origin must not contain path, query or parameters.")
-    if redirect.params or redirect.query:
-        raise ValueError("Playground redirect URI must not contain query or parameters.")
-    normalized_origin = f"{origin.scheme}://{origin.netloc}"
-    redirect_origin = f"{redirect.scheme}://{redirect.netloc}"
-    if normalized_origin != redirect_origin:
-        raise ValueError("Playground redirect URI and web origin must use the same origin.")
-    if redirect.path in ("", "/"):
-        raise ValueError("Playground redirect URI must contain an explicit callback path.")
-    return redirect_uri, normalized_origin
-
-
 def main() -> None:
     origin = public_origin()
     validate_realm(os.environ.get("QA_KEYCLOAK_REALM", ""))
-    validate_playground(
-        os.environ.get("TRACKFLOW_PLAYGROUND_REDIRECT_URI", ""),
-        os.environ.get("TRACKFLOW_PLAYGROUND_ORIGIN", ""),
-    )
     expected = os.environ.get("TRACKFLOW_CODESPACES_PUBLIC_ORIGIN")
     if expected and expected != origin:
         raise ValueError("Configured public origin does not match Codespaces.")

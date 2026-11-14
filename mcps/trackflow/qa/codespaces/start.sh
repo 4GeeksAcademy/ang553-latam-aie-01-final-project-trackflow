@@ -18,8 +18,6 @@ for command in docker uv curl python3; do
 done
 
 [[ "${CODESPACES:-}" == "true" ]] || fail "This launcher only runs inside GitHub Codespaces."
-[[ -n "${TRACKFLOW_PLAYGROUND_REDIRECT_URI:-}" ]] || fail "TRACKFLOW_PLAYGROUND_REDIRECT_URI is required."
-[[ -n "${TRACKFLOW_PLAYGROUND_ORIGIN:-}" ]] || fail "TRACKFLOW_PLAYGROUND_ORIGIN is required."
 [[ ! -e "${STATE_DIR}" ]] || fail "QA state already exists; run stop.sh first."
 
 existing="$(docker ps -aq --filter "label=com.docker.compose.project=${COMPOSE_PROJECT}")"
@@ -138,8 +136,8 @@ cat >"${STATE_DIR}/runtime.env" <<EOF
 QA_KEYCLOAK_REALM='${QA_KEYCLOAK_REALM}'
 TRACKFLOW_CODESPACES_PUBLIC_ORIGIN='${TRACKFLOW_CODESPACES_PUBLIC_ORIGIN}'
 TRACKFLOW_CODESPACES_PUBLIC_HOST='${TRACKFLOW_CODESPACES_PUBLIC_HOST}'
-TRACKFLOW_PLAYGROUND_REDIRECT_URI='${TRACKFLOW_PLAYGROUND_REDIRECT_URI}'
-TRACKFLOW_PLAYGROUND_ORIGIN='${TRACKFLOW_PLAYGROUND_ORIGIN}'
+QA_KEYCLOAK_PUBLIC_CLIENT_ID='${QA_KEYCLOAK_PUBLIC_CLIENT_ID}'
+QA_TRACKFLOW_USER_ID='${QA_TRACKFLOW_USER_ID}'
 EOF
 
 bash "${SCRIPT_DIR}/verify.sh"
@@ -151,4 +149,5 @@ unset QA_KEYCLOAK_MCP_CLIENT_SECRET JWT_SECRET_KEY
 printf 'PRIVATE_READY\n'
 printf 'MCP URL: %s/mcp\n' "${TRACKFLOW_CODESPACES_PUBLIC_ORIGIN}"
 printf 'QA username: %s\n' "${QA_KEYCLOAK_USERNAME}"
+printf 'Bearer helper: %s/device_token.py (stdout must be piped)\n' "${SCRIPT_DIR}"
 printf 'Port 18085 remains private; no visibility command was executed.\n'

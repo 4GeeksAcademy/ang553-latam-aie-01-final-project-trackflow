@@ -60,10 +60,17 @@
   by a manual inventory write attempt.
 - Private GitHub Codespaces QA infrastructure is prepared under
   `mcps/trackflow/qa/codespaces/`. Its reproducible launcher, loopback-only
-  Compose topology, restrictive single-port gateway, exact public-origin and
-  callback validation, Keycloak hardening, route-denial checks and scoped
-  cleanup passed private/static QA. No port was published and no external
-  Playground validation is claimed.
+  Compose topology and restrictive single-port gateway now support the
+  designated MCP Playground through a short-lived, exact-scope bearer obtained
+  with Keycloak Device Authorization Grant. No callback is invented. Direct
+  Access Grants, Client Credentials Grant, DCR, implicit flow,
+  service accounts and general browser authorization remain disabled. The
+  helper releases a validated token only through non-interactive stdout for a
+  direct clipboard pipe; it does not persist or display the bearer. Gateway,
+  claim, polling, malformed-response, secret-handling and cleanup contracts
+  passed private/static QA, including 89 focused MCP/Codespaces tests. No port
+  was published and no real Codespaces or external Playground validation is
+  claimed.
 - The remaining acceptance work is explicit: start the stack in a real GitHub
   Codespace, connect the designated public MCP Playground, complete external
   academic certification, and validate the real Knowledge/RAG route when its
