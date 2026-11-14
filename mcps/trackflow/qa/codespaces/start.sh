@@ -104,6 +104,7 @@ uv run --project mcps/trackflow --python 3.12 \
   python mcps/trackflow/qa/configure_keycloak.py
 uv run --project mcps/trackflow --python 3.12 \
   python mcps/trackflow/qa/codespaces/harden_keycloak.py
+uv run --python 3.12 python mcps/trackflow/qa/codespaces/provision_qa_ddl.py
 uv run --python 3.12 python mcps/trackflow/qa/seed_trackflow.py
 
 setsid uv run --python 3.12 uvicorn services.api.main:app \
@@ -112,7 +113,7 @@ printf '%s\n' "$!" >"${STATE_DIR}/api.pid"
 
 setsid uv run --project mcps/trackflow --python 3.12 \
   uvicorn trackflow_mcp.runtime:create_runtime_app --factory \
-  --host 127.0.0.1 --port 18084 >"${STATE_DIR}/mcp.log" 2>&1 &
+  --host 172.17.0.1 --port 18084 >"${STATE_DIR}/mcp.log" 2>&1 &
 printf '%s\n' "$!" >"${STATE_DIR}/mcp.pid"
 
 wait_http() {
@@ -128,7 +129,7 @@ wait_http() {
 }
 
 wait_http "http://127.0.0.1:18083/health"
-wait_http "http://127.0.0.1:18084/.well-known/oauth-protected-resource/mcp"
+wait_http "http://172.17.0.1:18084/.well-known/oauth-protected-resource/mcp"
 
 docker compose -p "${COMPOSE_PROJECT}" -f "${COMPOSE_FILE}" up -d --wait gateway
 

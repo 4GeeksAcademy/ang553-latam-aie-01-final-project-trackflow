@@ -116,7 +116,7 @@ def main() -> None:
             or verified.get("implicitFlowEnabled") is not False
             or verified.get("directAccessGrantsEnabled") is not False
             or verified.get("serviceAccountsEnabled") is not False
-            or verified.get("authorizationServicesEnabled") is not False
+            or verified.get("authorizationServicesEnabled") not in (False, None)
             or verified.get("fullScopeAllowed") is not False
             or verified.get("redirectUris") not in ([], None)
             or verified.get("webOrigins") not in ([], None)
@@ -179,9 +179,9 @@ def main() -> None:
                     "implicitFlowEnabled",
                     "directAccessGrantsEnabled",
                     "serviceAccountsEnabled",
-                    "authorizationServicesEnabled",
                 )
             )
+            or mcp_verified_config.get("authorizationServicesEnabled") not in (False, None)
             or (mcp_verified_config.get("attributes") or {}).get(
                 "standard.token.exchange.enabled"
             )
