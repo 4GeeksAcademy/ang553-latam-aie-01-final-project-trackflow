@@ -18,8 +18,6 @@ for command in docker uv curl python3; do
 done
 
 [[ "${CODESPACES:-}" == "true" ]] || fail "This launcher only runs inside GitHub Codespaces."
-[[ -n "${TRACKFLOW_PLAYGROUND_REDIRECT_URI:-}" ]] || fail "TRACKFLOW_PLAYGROUND_REDIRECT_URI is required."
-[[ -n "${TRACKFLOW_PLAYGROUND_ORIGIN:-}" ]] || fail "TRACKFLOW_PLAYGROUND_ORIGIN is required."
 [[ ! -e "${STATE_DIR}" ]] || fail "QA state already exists; run stop.sh first."
 
 existing="$(docker ps -aq --filter "label=com.docker.compose.project=${COMPOSE_PROJECT}")"
@@ -98,6 +96,7 @@ export TRACKFLOW_MCP_JWKS_URI="${PROTOCOL}/certs"
 export TRACKFLOW_MCP_KEYCLOAK_CLIENT_ID="trackflow-mcp"
 export TRACKFLOW_MCP_KEYCLOAK_CLIENT_SECRET="${QA_KEYCLOAK_MCP_CLIENT_SECRET}"
 export TRACKFLOW_API_BASE_URL="http://127.0.0.1:18083"
+export TRACKFLOW_MCP_ALLOWED_HOSTS="127.0.0.1:*, localhost:*, [::1]:*, ${TRACKFLOW_CODESPACES_PUBLIC_HOST}, ${TRACKFLOW_CODESPACES_PUBLIC_HOST}:*"
 
 cd "${REPOSITORY_ROOT}"
 docker compose -p "${COMPOSE_PROJECT}" -f "${COMPOSE_FILE}" up -d --wait postgres keycloak
@@ -106,6 +105,7 @@ uv run --project mcps/trackflow --python 3.12 \
   python mcps/trackflow/qa/configure_keycloak.py
 uv run --project mcps/trackflow --python 3.12 \
   python mcps/trackflow/qa/codespaces/harden_keycloak.py
+uv run --python 3.12 python mcps/trackflow/qa/codespaces/provision_qa_ddl.py
 uv run --python 3.12 python mcps/trackflow/qa/seed_trackflow.py
 
 setsid uv run --python 3.12 uvicorn services.api.main:app \
@@ -114,7 +114,7 @@ printf '%s\n' "$!" >"${STATE_DIR}/api.pid"
 
 setsid uv run --project mcps/trackflow --python 3.12 \
   uvicorn trackflow_mcp.runtime:create_runtime_app --factory \
-  --host 127.0.0.1 --port 18084 >"${STATE_DIR}/mcp.log" 2>&1 &
+  --host 172.17.0.1 --port 18084 >"${STATE_DIR}/mcp.log" 2>&1 &
 printf '%s\n' "$!" >"${STATE_DIR}/mcp.pid"
 
 wait_http() {
@@ -130,7 +130,7 @@ wait_http() {
 }
 
 wait_http "http://127.0.0.1:18083/health"
-wait_http "http://127.0.0.1:18084/.well-known/oauth-protected-resource/mcp"
+wait_http "http://172.17.0.1:18084/.well-known/oauth-protected-resource/mcp"
 
 docker compose -p "${COMPOSE_PROJECT}" -f "${COMPOSE_FILE}" up -d --wait gateway
 
@@ -138,8 +138,8 @@ cat >"${STATE_DIR}/runtime.env" <<EOF
 QA_KEYCLOAK_REALM='${QA_KEYCLOAK_REALM}'
 TRACKFLOW_CODESPACES_PUBLIC_ORIGIN='${TRACKFLOW_CODESPACES_PUBLIC_ORIGIN}'
 TRACKFLOW_CODESPACES_PUBLIC_HOST='${TRACKFLOW_CODESPACES_PUBLIC_HOST}'
-TRACKFLOW_PLAYGROUND_REDIRECT_URI='${TRACKFLOW_PLAYGROUND_REDIRECT_URI}'
-TRACKFLOW_PLAYGROUND_ORIGIN='${TRACKFLOW_PLAYGROUND_ORIGIN}'
+QA_KEYCLOAK_PUBLIC_CLIENT_ID='${QA_KEYCLOAK_PUBLIC_CLIENT_ID}'
+QA_TRACKFLOW_USER_ID='${QA_TRACKFLOW_USER_ID}'
 EOF
 
 bash "${SCRIPT_DIR}/verify.sh"
@@ -151,4 +151,5 @@ unset QA_KEYCLOAK_MCP_CLIENT_SECRET JWT_SECRET_KEY
 printf 'PRIVATE_READY\n'
 printf 'MCP URL: %s/mcp\n' "${TRACKFLOW_CODESPACES_PUBLIC_ORIGIN}"
 printf 'QA username: %s\n' "${QA_KEYCLOAK_USERNAME}"
+printf 'Bearer helper: %s/device_token.py (stdout must be piped)\n' "${SCRIPT_DIR}"
 printf 'Port 18085 remains private; no visibility command was executed.\n'

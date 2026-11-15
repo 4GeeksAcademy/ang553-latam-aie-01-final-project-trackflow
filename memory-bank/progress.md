@@ -60,10 +60,17 @@
   by a manual inventory write attempt.
 - Private GitHub Codespaces QA infrastructure is prepared under
   `mcps/trackflow/qa/codespaces/`. Its reproducible launcher, loopback-only
-  Compose topology, restrictive single-port gateway, exact public-origin and
-  callback validation, Keycloak hardening, route-denial checks and scoped
-  cleanup passed private/static QA. No port was published and no external
-  Playground validation is claimed.
+  Compose topology and restrictive single-port gateway now support the
+  designated MCP Playground through a short-lived, exact-scope bearer obtained
+  with Keycloak Device Authorization Grant. No callback is invented. Direct
+  Access Grants, Client Credentials Grant, DCR, implicit flow,
+  service accounts and general browser authorization remain disabled. The
+  helper releases a validated token only through non-interactive stdout for a
+  direct clipboard pipe; it does not persist or display the bearer. Gateway,
+  claim, polling, malformed-response, secret-handling and cleanup contracts
+  passed private/static QA, including 89 focused MCP/Codespaces tests. No port
+  was published and no real Codespaces or external Playground validation is
+  claimed.
 - The remaining acceptance work is explicit: start the stack in a real GitHub
   Codespace, connect the designated public MCP Playground, complete external
   academic certification, and validate the real Knowledge/RAG route when its
@@ -1313,3 +1320,59 @@ revisión y autorización arquitectónica.
   each affected incident and inventory authorization test passing three
   consecutive executions without timeout. Their test bodies and assertions
   remain unchanged; final combined QA is delegated to the independent gate.
+
+## Keycloak 26.8.2 Hardening Fix — 2026-11-14
+
+- **Issue:** QA launcher failed during Keycloak hardening verification:
+  `RuntimeError: Public QA client hardening verification failed.`
+  (line 131 of `mcps/trackflow/qa/codespaces/harden_keycloak.py`)
+
+- **Root Cause:** Keycloak 26.8.2 returns `null`/`None` for the
+  `authorizationServicesEnabled` field when disabled. Verification code
+  checked `is not False`, which rejected `None`, causing false negative.
+
+- **Fix Applied:** Modified verification logic to accept both `False` and
+  `None` as valid disabled states:
+  - Line 119: Public client check → `not in (False, None)`
+  - Line 183: MCP client check → separated, same logic
+
+- **Testing:** Added `test_keycloak_client_fields.py` with 3 regression tests
+  covering the field behavior and verification logic. All pass.
+  Full integration test (config → harden → verify) passes.
+
+- **Security:** No security degradation. OAuth controls, grants, scopes and
+  hardening policy remain unchanged. Fix corrects verification only.
+
+- **Status:** ✓ QA launcher now ready. Next: re-run `start.sh` for full
+  Codespaces QA environment and MCP Playground validation.
+
+## SQL Provisioning Fix for QA Launcher — 2026-11-14
+
+- **Issue:** After Keycloak hardening completed, launcher failed during seeding:
+  `psycopg2.errors.UndefinedTable: relation "trackflow_client" does not exist`
+
+- **Root Cause:** TrackFlow uses TWO separate table management systems:
+  - `SQLModel.metadata`: Inventory + auth (auto-created by `create_db_and_tables()`)
+  - `operational_security_metadata`: Incidents (explicitly provisioned via SQL)
+  Launcher never applied the explicit DDL (`infra/sql/incident_query_security.sql`).
+
+- **Fix Applied:**
+  1. Created `provision_qa_ddl.py` (124 lines): Applies incident DDL to QA database
+  2. Modified `start.sh`: Inserted DDL step after hardening, before seed
+  3. Added `test_qa_provisioning.py` (251 lines): 3 regression tests
+
+- **Regression Tests (All PASS):**
+  - `test_ddl_provisioning_creates_four_tables`: Verifies 4 tables created
+  - `test_seed_fails_without_ddl`: Confirms seed fails without DDL (as expected)
+  - `test_full_integration_ddl_then_seed`: Full flow succeeds
+
+- **Security:**
+  - Validates QA environment marker (`TRACKFLOW_MCP_QA=1`)
+  - Only operates on loopback QA instance (127.0.0.1:55440)
+  - No password logging or temporary files
+  - Transaction rollback on error
+  - No production schema modification
+
+- **Status:** ✓ Launcher sequence fixed. Full Codespaces QA should now proceed
+  from Keycloak hardening → DDL provisioning → seed → API startup → MCP runtime
+  → gateway → full `PRIVATE_READY` signal.
