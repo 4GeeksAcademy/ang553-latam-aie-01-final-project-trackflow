@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import base64
 import importlib.util
 import io
 import json
+import secrets
 import time
 from pathlib import Path
 
@@ -235,6 +237,7 @@ def test_device_poll_handles_pending_and_slow_down_without_leaking_payload() -> 
         "http://gateway/token",
         "public-client",
         "device-code",
+        "code-verifier",
         30,
         1,
         sleep=sleeps.append,
@@ -265,6 +268,7 @@ def test_device_poll_errors_are_sanitized(error: str, message: str) -> None:
             "http://gateway/token",
             "public-client",
             "device-code",
+            "code-verifier",
             30,
             1,
             monotonic=lambda: 0,
@@ -386,3 +390,147 @@ def test_device_token_rejects_claim_drift(override: dict[str, object]) -> None:
             "user-123",
             now=now,
         )
+
+
+def test_pkce_code_verifier_and_challenge_are_generated() -> None:
+    verifier, challenge = device._generate_pkce_pair()
+    assert isinstance(verifier, str)
+    assert isinstance(challenge, str)
+    assert 43 <= len(verifier) <= 128
+    assert 43 <= len(challenge) <= 128
+    assert verifier.count("=") == 0
+    assert challenge.count("=") == 0
+    assert "+" not in verifier
+    assert "+" not in challenge
+    assert "/" not in verifier
+    assert "/" not in challenge
+
+
+def test_pkce_challenge_derives_from_verifier_via_sha256() -> None:
+    import hashlib
+    verifier = "test-verifier-string-for-sha256-calculation-purpose"
+    expected_challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode("utf-8")).digest()
+    ).decode("utf-8").rstrip("=")
+
+    test_verifier, test_challenge = device._generate_pkce_pair()
+    assert test_verifier != test_challenge
+
+    actual_challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode("utf-8")).digest()
+    ).decode("utf-8").rstrip("=")
+    assert actual_challenge == expected_challenge
+
+
+def test_device_start_sends_code_challenge_and_method() -> None:
+    payload: dict[str, object] = {
+        "device_code": "device-code",
+        "user_code": "ABCD-EFGH",
+        "verification_uri": "https://codespace.example/realms/qa/device",
+        "expires_in": 600,
+        "interval": 5,
+    }
+    client = _PollingClient([_Response(200, payload)])
+    result = device.begin_device_flow(client, "http://gateway/auth/device", "public-client")
+
+    assert len(client.requests) == 1
+    request_data = client.requests[0]
+    assert "code_challenge" in request_data
+    assert "code_challenge_method" in request_data
+    assert request_data["code_challenge_method"] == "S256"
+    assert "code_verifier" in result
+    assert request_data["code_challenge"] != result["code_verifier"]
+
+
+def test_device_poll_includes_code_verifier_in_token_request() -> None:
+    client = _PollingClient(
+        [
+            _Response(400, {"error": "authorization_pending"}),
+            _Response(200, {"access_token": "opaque-bearer"}),
+        ]
+    )
+    verifier = "test-verifier-for-token-exchange"
+    token = device.poll_device_token(
+        client,
+        "http://gateway/token",
+        "public-client",
+        "device-code",
+        verifier,
+        30,
+        1,
+        sleep=lambda _: None,
+        monotonic=lambda: 0,
+    )
+
+    assert token == "opaque-bearer"
+    assert len(client.requests) == 2
+    for request_data in client.requests:
+        assert "code_verifier" in request_data
+        assert request_data["code_verifier"] == verifier
+
+
+def test_device_run_passes_code_verifier_through_flow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token, jwks, _now = _signed_token()
+    monkeypatch.setattr(
+        device,
+        "load_runtime",
+        lambda _path: {
+            "QA_KEYCLOAK_REALM": "trackflow-codespaces-qa",
+            "TRACKFLOW_CODESPACES_PUBLIC_ORIGIN": (
+                "https://trackflow-qa-abc123-18085.app.github.dev"
+            ),
+            "QA_KEYCLOAK_PUBLIC_CLIENT_ID": "mcp-playground-qa",
+            "QA_TRACKFLOW_USER_ID": "user-123",
+        },
+    )
+
+    class _VerifyingRunClient:
+        def __init__(self, token: str, jwks: dict[str, object]):
+            self.token = token
+            self.jwks = jwks
+            self.stored_verifier = None
+
+        def __enter__(self) -> "_VerifyingRunClient":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def post(self, endpoint: str, *, data: dict[str, str]) -> _Response:
+            if endpoint.endswith("/auth/device"):
+                assert "code_challenge" in data
+                assert "code_challenge_method" in data
+                assert data["code_challenge_method"] == "S256"
+                self.stored_verifier = secrets.token_urlsafe(32)
+                return _Response(
+                    200,
+                    {
+                        "device_code": "device-code",
+                        "user_code": "ABCD-EFGH",
+                        "verification_uri": (
+                            "https://trackflow-qa-abc123-18085.app.github.dev/"
+                            "realms/trackflow-codespaces-qa/device"
+                        ),
+                        "expires_in": 600,
+                        "interval": 5,
+                    },
+                )
+            if endpoint.endswith("/token"):
+                assert "code_verifier" in data
+                return _Response(200, {"access_token": self.token})
+            return _Response(404, {})
+
+        def get(self, endpoint: str) -> _Response:
+            return _Response(200, self.jwks)
+
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    result = device.run(
+        stdout=stdout,
+        stderr=stderr,
+        client_factory=lambda **_kwargs: _VerifyingRunClient(token, jwks),
+    )
+    assert result == 0
+    assert stdout.getvalue() == token

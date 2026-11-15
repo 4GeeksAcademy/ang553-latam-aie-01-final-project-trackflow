@@ -58,6 +58,7 @@ class MCPSettings:
     downstream_audience: str = "trackflow-api"
     keycloak_client_id: str | None = None
     keycloak_client_secret: SecretStr | None = None
+    allowed_hosts: list[str] | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -94,6 +95,7 @@ class MCPSettings:
             token_endpoint=f"{protocol}/token",
             jwks_uri=f"{protocol}/certs",
             api_base_url="http://127.0.0.1:8000",
+            allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*"],
         )
 
     @classmethod
@@ -101,6 +103,12 @@ class MCPSettings:
         issuer = os.environ["TRACKFLOW_MCP_ISSUER"].rstrip("/")
         protocol = f"{issuer}/protocol/openid-connect"
         secret = os.getenv("TRACKFLOW_MCP_KEYCLOAK_CLIENT_SECRET")
+
+        allowed_hosts_str = os.getenv("TRACKFLOW_MCP_ALLOWED_HOSTS")
+        allowed_hosts = None
+        if allowed_hosts_str:
+            allowed_hosts = [h.strip() for h in allowed_hosts_str.split(",") if h.strip()]
+
         return cls(
             resource_url=os.environ["TRACKFLOW_MCP_RESOURCE_URL"],
             issuer=issuer,
@@ -116,4 +124,5 @@ class MCPSettings:
             ),
             keycloak_client_id=os.getenv("TRACKFLOW_MCP_KEYCLOAK_CLIENT_ID"),
             keycloak_client_secret=SecretStr(secret) if secret else None,
+            allowed_hosts=allowed_hosts,
         )

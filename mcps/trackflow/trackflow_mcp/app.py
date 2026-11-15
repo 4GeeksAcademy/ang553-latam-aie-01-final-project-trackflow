@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 import httpx
 from starlette.applications import Starlette
 
@@ -21,12 +22,20 @@ def create_app(
 ) -> Starlette:
     """Create an OAuth-protected MCP app without FastMCP auth helpers."""
 
+    transport_security = None
+    if settings.allowed_hosts:
+        transport_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=settings.allowed_hosts,
+        )
+
     mcp = FastMCP(
         "TrackFlow",
         instructions="Authorized TrackFlow incident and inventory operations.",
         streamable_http_path="/mcp",
         stateless_http=True,
         json_response=True,
+        transport_security=transport_security,
     )
     streamable_app = mcp.streamable_http_app()
     runtime = build_auth_runtime(settings)

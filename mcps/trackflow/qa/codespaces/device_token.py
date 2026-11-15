@@ -6,8 +6,11 @@ only to a non-interactive stdout so it can be piped directly to a clipboard.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
+import secrets
 import shlex
 import sys
 import time
@@ -30,6 +33,19 @@ SCOPES = frozenset(
 )
 AUDIENCE = "trackflow-mcp"
 GATEWAY = "http://127.0.0.1:18085"
+
+
+def _generate_pkce_pair() -> tuple[str, str]:
+    """Generate PKCE code_verifier and code_challenge (S256).
+
+    Returns:
+        Tuple of (code_verifier, code_challenge)
+    """
+    code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode("utf-8").rstrip("=")
+    code_challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(code_verifier.encode("utf-8")).digest()
+    ).decode("utf-8").rstrip("=")
+    return code_verifier, code_challenge
 
 
 class DeviceFlowError(RuntimeError):
@@ -74,9 +90,15 @@ def begin_device_flow(
     endpoint: str,
     client_id: str,
 ) -> dict[str, Any]:
+    code_verifier, code_challenge = _generate_pkce_pair()
     response = client.post(
         endpoint,
-        data={"client_id": client_id, "scope": " ".join(sorted(SCOPES))},
+        data={
+            "client_id": client_id,
+            "scope": " ".join(sorted(SCOPES)),
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+        },
     )
     if response.status_code != 200:
         raise DeviceFlowError("Device authorization could not be started.")
@@ -103,7 +125,7 @@ def begin_device_flow(
         or not 1 <= interval <= 30
     ):
         raise DeviceFlowError("Identity provider returned an incomplete device response.")
-    return payload
+    return {**payload, "code_verifier": code_verifier}
 
 
 def poll_device_token(
@@ -111,6 +133,7 @@ def poll_device_token(
     endpoint: str,
     client_id: str,
     device_code: str,
+    code_verifier: str,
     expires_in: int,
     interval: int,
     *,
@@ -127,6 +150,7 @@ def poll_device_token(
                 "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
                 "device_code": device_code,
                 "client_id": client_id,
+                "code_verifier": code_verifier,
             },
         )
         payload = _json(response)
@@ -243,6 +267,7 @@ def run(
             f"{local_protocol}/token",
             client_id,
             str(device["device_code"]),
+            str(device["code_verifier"]),
             device["expires_in"],
             device["interval"] if "interval" in device else 5,
             status=lambda value: print(f"Status: {value}", file=stderr),
