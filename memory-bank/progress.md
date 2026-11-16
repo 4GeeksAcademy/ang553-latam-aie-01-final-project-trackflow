@@ -1376,3 +1376,181 @@ revisión y autorización arquitectónica.
 - **Status:** ✓ Launcher sequence fixed. Full Codespaces QA should now proceed
   from Keycloak hardening → DDL provisioning → seed → API startup → MCP runtime
   → gateway → full `PRIVATE_READY` signal.
+
+## MEM-092 — Memoria y auto-mejora de agentes, Parte 1 — 2026-11-15
+
+- **Estado técnico:** implementación local completa y pendiente de revisión humana,
+  migración/despliegue y PR. No se declara aceptación del hito.
+- Se añadió memoria episódica estructurada en PostgreSQL con ownership de
+  conversación por identidad, propuestas con consentimiento, decisiones
+  append-only, entradas versionadas y autorización aprobatoria verificable.
+- El mismo `ExternalSupportAgent` incorpora prefiltro determinista,
+  autoevaluación estructurada acotada, recuperación tenant-aware y renderizado
+  `user_reported` no confiable. RAG, Qdrant, MCP, OIDC y checkpoint efímero
+  mantienen sus contratos existentes.
+- `POST /support/query` se extendió aditivamente con continuidad, selección de
+  cliente/ámbito y propuesta segura. `POST /support/memory/decision` implementa
+  approve/reject/edit/ambiguous/topic_change con idempotencia, edición derivada en
+  backend y errores sanitizados. Backoffice mantiene la conversación solo en
+  `sessionStorage` namespaced por usuario.
+- DDL explícito: aplicar `infra/sql/incident_query_security.sql` y después
+  `infra/sql/agent_memory.sql`. No se ejecuta provisioning al importar y el DDL
+  de memoria todavía no se ha aplicado a una base persistente del proyecto.
+- Cleanup es funcional, transaccional e idempotente, pero requiere que un
+  scheduler u operador externo invoque `MemoryStore.expire_and_clean`; el hito no
+  instala el scheduler.
+- QA local segura cubre persistencia, consentimiento, concurrencia, aislamiento,
+  autoevaluación, recuperación, limpieza, API, ciclos de aprobación/rechazo,
+  contratos UI y regresión Support/RAG. El arnés PostgreSQL opt-in exige una base
+  loopback QA vacía y desechable. El gate final se repitió sobre PostgreSQL 16
+  fresh en `tmpfs`: 10 pruebas pasaron en 2.25 s, exit 0, y el contenedor se
+  autoeliminó al terminar.
+- **Pendientes honestos:** validar en vivo el JSON Schema del proveedor
+  estructurado; ejecutar E2E real de navegador y aceptación manual; resolver el
+  panic ambiental de Turbopack (el build Webpack sí compila); programar cleanup;
+  aplicar migración, desplegar, abrir/revisar PR y obtener aceptación humana.
+- Documentación técnica pública: `docs/agent-memory.md` y
+  `services/api/agent_memory/README.md`.
+- Correctivo de presupuesto de autoevaluación: el cap pasó de 6 a 22 segundos
+  para cubrir el timeout de generación configurado (20 s) más el pacing por
+  defecto (2 s), siempre limitado por `QueryDeadline` menos la reserva. Timeout
+  del proveedor permanece fail-closed, sin reintentos ni pérdida de la respuesta
+  principal. QA focal: **41 PASS en 7.70 s**; regresión independiente ampliada
+  de memoria, Support y pacing: **169 PASS en 16.16 s**.
+
+## MEM-092 — correctivo previo a aceptación humana — 2026-11-15
+
+- El siguiente turno de una conversación con propuesta pendiente se clasifica
+  ahora contra esa propuesta mediante el gateway FourGeeks y JSON Schema
+  estricto. El mismo flujo soporta aprobación, rechazo, edición con
+  reconfirmación, descarte ambiguo, cambio de tema y una pregunta adicional
+  separada que atraviesa una sola vez el agente Support normal.
+- La identidad, conversación, propuesta, tenant, categoría y ámbito continúan
+  recuperándose y validándose en backend. El contenido editado se deriva de la
+  propuesta original y vuelve a pasar por la política de memoria. Baja
+  confianza produce descarte ambiguo; el fallback sólo reconoce expresiones
+  completas exactas y nunca substrings.
+- El Backoffice ya no convierte preventivamente un nuevo mensaje en
+  `topic_change`: lo envía a `/support/query` para la clasificación
+  conversacional auténtica. Los botones explícitos Accept/Reject/Edit conservan
+  `/support/memory/decision` e idempotencia.
+- Añadido `python -m scripts.agent_memory_cleanup --execute` como invocador
+  operacional mínimo. Exige PostgreSQL, no provisiona, no instala scheduler y
+  emite sólo contadores. Reutiliza la limpieza transaccional existente para
+  expiración, capacidad e historial auditable.
+- QA del correctivo: regresión integrada memoria/Support **122 PASS en 15.37 s**;
+  regresión OIDC/MCP/RAG/Support **166 PASS en 22.29 s**; integración PostgreSQL
+  16 fresh en loopback/`tmpfs` **11 PASS en 3.39 s** y contenedor eliminado;
+  contratos frontend + cleanup CLI **16 PASS en 2.96 s**; ESLint focalizado,
+  TypeScript, compileall, `git diff --check` y build Webpack de 19 rutas PASS.
+- La función de secretos del runbook fue reemplazada por una forma compatible
+  con Windows PowerShell 5.1 y PowerShell 7; se validó una salida hexadecimal de
+  64 caracteres sin imprimir el secreto.
+- Pendiente honestamente: compatibilidad del JSON Schema contra el proveedor
+  vivo y aceptación humana con navegador. La periodicidad del comando de
+  cleanup debe configurarse en el mecanismo de mantenimiento del despliegue; no
+  se añadió otro servicio. No se aplicó DDL ni se modificaron datos persistentes.
+
+## MEM-092 — correctivo de contrato JSON Schema — 2026-11-15
+
+- La autoevaluación selecciona ahora un esquema cerrado específico para
+  `carrier_coverage`, `recurring_incident` o `b2b_report_preference`. Todos los
+  campos son obligatorios y estrictos, los objetos rechazan propiedades extra y
+  `country` sólo acepta `US` o `ES`; `should_propose=false` usa la forma cerrada
+  `proposals=[]`.
+- El contrato interno ya no conserva contenido arbitrario: usa modelos tipados
+  por categoría antes de volver a aplicar `canonical_key_for`,
+  `_validated_content` y las validaciones independientes de `MemoryStore`.
+- Las trazas distinguen únicamente códigos sanitizados de formato, país,
+  política de retención, autorización, conflicto y contrato; no incluyen el
+  prompt, JSON crudo ni contenido de memoria.
+- QA aislado del correctivo: **39 PASS en 6.86 s**; regresión ampliada de memoria,
+  consentimiento, API y Support: **165 PASS en 15.45 s**. `compileall`, validación
+  estructural de los tres schemas y `git diff --check` pasaron. No se usaron
+  PostgreSQL QA ni servicios activos.
+- Pendiente honestamente: el gateway se validó con transporte simulado; la
+  aceptación del JSON Schema por FourGeeks real sigue sin certificación externa.
+
+## MEM-092 — continuidad OIDC y recuperación de propuestas — 2026-11-15
+
+- Backoffice restaura la conversación en recargas ordinarias y callbacks OIDC,
+  y recupera la propuesta pendiente mediante una lectura autenticada que vuelve
+  a aplicar ownership, tenant, estado y expiración en backend.
+- Los intents de decisión guardan únicamente usuario, conversación, propuesta,
+  acción y clave idempotente. Una renovación nunca aprueba automáticamente: la
+  UI exige un reintento explícito y reutiliza la misma clave.
+- Cliente y ámbito se rehidratan desde la propuesta autorizada. Cambio de
+  usuario, propuesta resuelta/expirada, respuesta cruzada y `404/409` invalidan
+  el intent visible; las respuestas Support existentes se conservan durante
+  solicitudes del mismo usuario cuando es posible.
+- La clave legacy de aprobaciones/rechazos interrumpidos se migra únicamente
+  después de recuperar la propuesta para el usuario autenticado, permitiendo
+  retomar la propuesta original de aceptación sin duplicar la decisión. Si el
+  navegador perdió la conversación, el `proposal_id` se usa sólo como pista y
+  el backend obtiene la conversación después de validar ownership y tenant.
+- QA local aislada: contratos de recuperación y frontend **34 PASS**; regresión
+  ampliada Support/memoria **136 PASS**. TypeScript, ESLint focalizado,
+  `compileall` y `git diff --check` pasan. No se usaron servicios activos,
+  PostgreSQL QA, credenciales ni proveedor real.
+- Pendiente: repetir el escenario manual afectado después de actualizar el
+  proceso QA; la propuesta real no fue leída ni resuelta por estas pruebas.
+
+## MEM-092 — correctivo de consentimiento ambiguo — 2026-11-16
+
+- Una clasificación conservadora desconocida ya no conserva silenciosamente la
+  propuesta: atraviesa `ConsentCoordinator`, registra `ambiguous_discard` y no
+  crea memoria. El idempotency key determinista mantiene un solo registro ante
+  reintentos. Un `topic_change` estructurado conserva el procesamiento Support;
+  si el proveedor falla, prevalece el descarte fail-closed y la consulta puede
+  reenviarse después.
+- `FourGeeksStructuredConsentClassifier` selecciona ahora un JSON Schema cerrado
+  por categoría. Todos los campos raíz son obligatorios; edición y pregunta
+  adicional usan listas acotadas de cero o un elemento, sin `dict[str, Any]`,
+  `anyOf`, defaults ni objetos abiertos. El contenido editado continúa pasando
+  por la política y requiere una segunda confirmación.
+- El fallback registra únicamente diagnósticos sanitizados: timeout,
+  HTTP/esquema, respuesta inválida, validación, proveedor ausente o error
+  inesperado. No registra texto, propuesta, prompt, payload ni credenciales.
+- El límite de clasificación permanece en 6 segundos: la incidencia observada
+  no mostró timeout y este correctivo no altera latencia sin evidencia. Queda
+  pendiente validar el esquema contra FourGeeks real durante la aceptación.
+- QA aislada sin proveedor ni PostgreSQL QA: consentimiento/Support **46 PASS**;
+  regresión ampliada memoria, Support, grafo y frontend **146 PASS**;
+  `compileall` y validación estructural de los tres schemas PASS.
+
+## MEM-092 — cierre técnico y preparación de entrega — 2026-11-16
+
+- Esta sección reemplaza, para el estado actual, los pendientes históricos de
+  las secciones MEM-092 anteriores; sus cifras se conservan como evidencia de
+  los gates ejecutados en cada fecha.
+- **Veredicto aceptado:** `APROBADO CON OBSERVACIONES`. No se declara
+  certificación académica ni despliegue productivo.
+- La aceptación real completó el ciclo A de aprobación de cobertura SEUR, con
+  decisión auditable, memoria activa y recuperación en otra conversación; el
+  ciclo B de rechazo DHL, con auditoría y ninguna memoria; y la edición de una
+  preferencia B2B, con propuesta original `edited`, sustituta `pending` y cero
+  activaciones automáticas.
+- El JSON Schema cerrado del evaluador de memoria fue aceptado en vivo por
+  FourGeeks y produjo la propuesta real. El esquema corregido del clasificador
+  conversacional y la transición `ambiguous_discard` pasan QA determinista, pero
+  su repetición E2E posterior al correctivo continúa pendiente por autenticación
+  Keycloak. La propuesta sintética usada para ese escenario permaneció `pending`,
+  sin decisión y sin memoria; no debe contarse como PASS.
+- Cierre automatizado: **326 PASS en 35.89 s** para memoria, consentimiento,
+  Support, LangGraph, RAG, MCP y contratos frontend; **11 PASS en 2.52 s** contra
+  PostgreSQL 16 fresh, loopback y `tmpfs`; **38 PASS en 4.06 s** para OIDC. Total:
+  **375 pruebas aprobadas**. ESLint focalizado, TypeScript `--noEmit`,
+  `compileall` y `git diff --check` también pasaron.
+- Los metadatos de PostgreSQL QA confirmaron una propuesta aprobada con su única
+  memoria activa, una propuesta rechazada sin memoria, una propuesta editada y
+  su reemplazo pendiente. No había memorias activas sin decisión aprobatoria ni
+  propuestas aprobadas sin memoria activa.
+- Cleanup dispone del invocador operacional
+  `python -m scripts.agent_memory_cleanup --execute`. La periodicidad debe
+  configurarse en el mecanismo de mantenimiento existente, inyectando
+  `DATABASE_URL` mediante secretos, preservando el código de salida y evitando
+  solapamientos. Se recomienda ejecución horaria si el retraso posterior al TTL
+  de 24 horas debe limitarse aproximadamente a una hora; no se añadió scheduler.
+- Pendientes de entrega: revalidación E2E post-correctivo de ambigüedad cuando se
+  retome Keycloak, configuración operativa de cleanup, migración/despliegue,
+  revisión selectiva del worktree, commit, PR y revisión humana final.

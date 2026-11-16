@@ -232,6 +232,55 @@ class FourGeeksHTTPClient:
                 "Generation gateway request failed", exc
             ) from exc
 
+    def generate_structured(
+        self,
+        *,
+        system: str,
+        user: str,
+        schema: Mapping[str, Any],
+        schema_name: str,
+        timeout_seconds: float | None = None,
+    ) -> str:
+        """Return strict JSON using the already configured generation model."""
+        self.last_generation_status_code = None
+        try:
+            response = self._post(
+                f"{self.settings.base_url}/chat/completions",
+                request_kind="generation",
+                timeout_seconds=timeout_seconds,
+                headers=self._headers(),
+                json={
+                    "model": self.settings.generation_model,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    "temperature": 0,
+                    "response_format": {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": schema_name,
+                            "strict": True,
+                            "schema": dict(schema),
+                        },
+                    },
+                },
+            )
+            self.last_generation_status_code = response.status_code
+            response.raise_for_status()
+            body = response.json()
+            if not isinstance(body, Mapping):
+                raise TypeError("structured generation response is not an object")
+            self._record_usage(self.generation_usage, body)
+            content = body["choices"][0]["message"]["content"]
+            if not isinstance(content, str):
+                raise TypeError("structured generation content is not text")
+            return content
+        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
+            raise _sanitized_http_error(
+                "Structured generation gateway request failed", exc
+            ) from exc
+
     def close(self) -> None:
         if self._owns_client:
             self.client.close()
