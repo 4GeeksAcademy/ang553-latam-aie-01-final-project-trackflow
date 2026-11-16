@@ -20,6 +20,7 @@ from services.api.routes.support import (
     query_support,
     require_support_reader,
 )
+import services.api.routes.support as support_route
 from services.api.support_oidc import SupportIdentity
 from pydantic import SecretStr
 from services.rag.contracts import RAGConfigurationError
@@ -66,6 +67,14 @@ class FakeSession:
         return self.Bind()
 
     def rollback(self):
+        return None
+
+
+class FakeMemoryStore:
+    def bind_conversation(self, _session, conversation_id, _access, **_kwargs):
+        return conversation_id
+
+    def get_pending(self, _session, _conversation_id, _access):
         return None
 
 
@@ -121,12 +130,44 @@ def test_support_handler_sets_run_header_and_starts_shared_80_second_deadline():
         FakeSession(),
         Agent(),
         MCPTools(),
+        FakeMemoryStore(),
     ))
     assert result.route == "ticket"
     assert result.ticket.incident_id == "TRF-000482"
     assert response.headers["X-TrackFlow-Run-ID"] == captured["run_id"]
     assert 0 < captured["deadline"].remaining() <= 80
     assert captured["request_id"] == "550e8400-e29b-41d4-a716-446655440097"
+
+
+def test_conversation_binding_precedes_transaction_local_timeout(monkeypatch):
+    events = []
+
+    class OrderedStore(FakeMemoryStore):
+        def bind_conversation(self, _session, conversation_id, _access, **_kwargs):
+            events.append("bind")
+            return conversation_id
+
+    class Agent:
+        async def execute(self, _question, **kwargs):
+            events.append("agent")
+            return ExternalSupportExecution(kwargs["run_id"], ticket_result())
+
+    def record_timeout(_session, _deadline):
+        events.append("timeout")
+        return 5000
+
+    monkeypatch.setattr(support_route, "apply_statement_timeout", record_timeout)
+    run(query_support(
+        SupportQueryRequest(question="Check ticket 482"),
+        request(),
+        Response(),
+        identity(Role.admin),
+        FakeSession(),
+        Agent(),
+        MCPTools(),
+        OrderedStore(),
+    ))
+    assert events == ["bind", "timeout", "agent"]
 
 
 def test_support_handler_returns_sanitized_503_with_same_run_id():
@@ -146,6 +187,7 @@ def test_support_handler_returns_sanitized_503_with_same_run_id():
             FakeSession(),
             Agent(),
             MCPTools(),
+            FakeMemoryStore(),
         ))
     assert exc_info.value.status_code == 503
     assert exc_info.value.detail == "support service unavailable"
@@ -157,8 +199,8 @@ def test_support_question_remains_required_and_trimmed():
     with pytest.raises(ValueError):
         SupportQueryRequest()
     assert SupportQueryRequest(question="  policy  ").question == "policy"
-    with pytest.raises(ValueError):
-        SupportQueryRequest(question="policy", client_id="client-a")
+    request_with_memory = SupportQueryRequest(question="policy", client_id="client-a")
+    assert request_with_memory.client_id == "client-a"
 
 
 def test_support_response_contract_has_explicit_multi_source_shape():
@@ -170,6 +212,11 @@ def test_support_response_contract_has_explicit_multi_source_shape():
         "ticket",
         "inventory",
         "knowledge",
+        "conversation_id",
+        "memory_proposal",
+        "memory_evaluation",
+        "memory_read_status",
+            "memory_consent",
     }
 
 

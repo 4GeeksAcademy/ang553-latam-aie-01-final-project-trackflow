@@ -4,16 +4,34 @@ from __future__ import annotations
 
 import re
 import inspect
+import hashlib
 from contextlib import AbstractContextManager
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Callable, Literal, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
+from sqlalchemy import select
 from sqlmodel import Session
 
+from agents.customer_support.memory_evaluation import (
+    AUTOEVALUATION_MAX_SECONDS,
+    AUTOEVALUATION_MIN_SECONDS,
+    AUTOEVALUATION_RESPONSE_RESERVE_SECONDS,
+    FourGeeksStructuredMemoryEvaluator,
+    MemoryCandidate,
+    MemoryEvaluationInvalid,
+    MemoryEvaluationMetadata,
+    MemoryEvaluator,
+    prefilter_memory_candidate,
+)
+from agents.customer_support.memory_context import (
+    RetrievedMemoryContext,
+    append_memory_context,
+    retrieve_relevant_memory,
+)
 from agents.customer_support.graph import (
     SupportState,
     add_rag_nodes,
@@ -27,6 +45,26 @@ from agents.customer_support.tools import (
 )
 from agents.customer_support.tracing import TraceRecorder
 from services.api.access_control import AccessContext
+from services.api.agent_memory.contracts import (
+    ConsentClassification,
+    MemoryProposalCreate,
+    MemoryProposalRecord,
+    MemoryScope,
+)
+from services.api.agent_memory.consent import (
+    CONSENT_CLASSIFIER_MAX_SECONDS,
+    ConsentClassifier,
+    FourGeeksStructuredConsentClassifier,
+)
+from services.api.agent_memory.service import (
+    MemoryConflict,
+    MemoryForbidden,
+    MemoryPolicyViolation,
+    MemoryStore,
+    canonical_key_for,
+)
+from services.api.auth_models import Role
+from services.incidents.models import clients
 from services.rag.contracts import QueryResult, RAGConfigurationError, RAGProviderError
 from services.rag.resilience import QueryDeadline
 from services.rag.service import INSUFFICIENT_INFORMATION_ANSWER, RAGService
@@ -51,6 +89,12 @@ class ExternalSupportState(SupportState, total=False):
     partial: bool
     needs_clarification: bool
     assembled: "ExternalSupportResult"
+    memory_candidate: MemoryCandidate
+    memory_scope: MemoryScope
+    memory_client_id: str
+    memory_read_enabled: bool
+    memory_context: tuple[RetrievedMemoryContext, ...]
+    memory_read_status: str
 
 
 @dataclass(frozen=True)
@@ -74,12 +118,24 @@ class ExternalSupportResult:
     inventory: InventoryLookupResult | None
     knowledge: QueryResult | None
     knowledge_status: ComponentStatus | None
+    memory_proposal: MemoryProposalRecord | None = None
+    memory_evaluation: MemoryEvaluationMetadata = field(
+        default_factory=MemoryEvaluationMetadata
+    )
+    memory_context: tuple[RetrievedMemoryContext, ...] = ()
+    memory_read_status: str = "skipped"
 
 
 @dataclass(frozen=True)
 class ExternalSupportExecution:
     run_id: str
     result: ExternalSupportResult
+    memory_proposal: MemoryProposalRecord | None = None
+    memory_evaluation: MemoryEvaluationMetadata = field(
+        default_factory=MemoryEvaluationMetadata
+    )
+    memory_context: tuple[RetrievedMemoryContext, ...] = ()
+    memory_read_status: str = "skipped"
 
 
 class SupportUnavailable(RuntimeError):
@@ -210,6 +266,12 @@ class ExternalSupportRuntime:
         tracer: TraceRecorder,
         ticket_tool=None,
         inventory_tool=None,
+        memory_evaluator: MemoryEvaluator | None = None,
+        consent_classifier: ConsentClassifier | None = None,
+        memory_store: MemoryStore | None = None,
+        conversation_id: UUID | None = None,
+        memory_client_id: str | None = None,
+        memory_scope: MemoryScope | None = None,
     ) -> None:
         self.session = session
         self.access = access
@@ -220,6 +282,12 @@ class ExternalSupportRuntime:
         self.tracer = tracer
         self.ticket_tool = ticket_tool
         self.inventory_tool = inventory_tool
+        self.memory_evaluator = memory_evaluator
+        self.consent_classifier = consent_classifier
+        self.memory_store = memory_store or MemoryStore()
+        self.conversation_id = conversation_id
+        self.memory_client_id = memory_client_id
+        self.memory_scope = memory_scope
         self._rag_context: AbstractContextManager[RAGService] | None = None
         self._service: RAGService | None = None
 
@@ -237,6 +305,17 @@ class ExternalSupportRuntime:
             self._rag_context.__exit__(None, None, None)
             self._rag_context = None
             self._service = None
+
+    def compatible_memory_evaluator(self) -> MemoryEvaluator | None:
+        if self.memory_evaluator is not None:
+            return self.memory_evaluator
+        if self._service is None:
+            return None
+        generation = getattr(self._service, "generation_provider", None)
+        provider = getattr(generation, "provider", None)
+        if provider is None or not callable(getattr(provider, "generate_structured", None)):
+            return None
+        return FourGeeksStructuredMemoryEvaluator(provider)
 
 
 def _state_summary(state: ExternalSupportState) -> dict[str, object]:
@@ -257,6 +336,23 @@ def _state_summary(state: ExternalSupportState) -> dict[str, object]:
         "knowledge_source_count": 0 if knowledge is None else len(knowledge.sources),
         "partial": state.get("partial", False),
         "needs_clarification": state.get("needs_clarification", False),
+        "memory_candidate": (
+            None
+            if state.get("memory_candidate") is None
+            else state["memory_candidate"].category.value
+        ),
+        "memory_evaluation_status": (
+            None
+            if state.get("assembled") is None
+            else state["assembled"].memory_evaluation.status
+        ),
+        "memory_evaluation_diagnostic": (
+            None
+            if state.get("assembled") is None
+            else state["assembled"].memory_evaluation.diagnostic
+        ),
+        "memory_context_count": len(state.get("memory_context", ())),
+        "memory_read_status": state.get("memory_read_status"),
     }
 
 
@@ -385,13 +481,14 @@ def _rag_node(name: str, operation):
     return _recorded_node(name, adapted)
 
 
-def _route_node(state: ExternalSupportState, _runtime: ExternalSupportRuntime):
+def _route_node(state: ExternalSupportState, runtime: ExternalSupportRuntime):
     decision = route_support_query(state["question"])
     updates: ExternalSupportState = {
         "route": decision.route,
         "needs_ticket": decision.needs_ticket,
         "needs_inventory": decision.needs_inventory,
         "needs_knowledge": decision.needs_knowledge,
+        "memory_read_enabled": runtime.conversation_id is not None,
     }
     if decision.incident_id is not None:
         updates["incident_id"] = decision.incident_id
@@ -403,7 +500,7 @@ def _route_node(state: ExternalSupportState, _runtime: ExternalSupportRuntime):
     return updates, transition
 
 
-def _after_route(state: ExternalSupportState) -> str:
+def _after_route_sources(state: ExternalSupportState) -> str:
     if state["route"] == "clarification":
         return "assemble_response"
     if state.get("needs_ticket"):
@@ -411,6 +508,37 @@ def _after_route(state: ExternalSupportState) -> str:
     if state.get("needs_inventory"):
         return "inventory_lookup"
     return "retrieve_context"
+
+
+def _after_route(state: ExternalSupportState) -> str:
+    if state["route"] != "clarification" and state.get("memory_read_enabled"):
+        return "retrieve_memory"
+    return _after_route_sources(state)
+
+
+def _retrieve_memory_node(
+    state: ExternalSupportState,
+    runtime: ExternalSupportRuntime,
+):
+    try:
+        contexts = retrieve_relevant_memory(
+            runtime.session,
+            runtime.access,
+            state["question"],
+            store=runtime.memory_store,
+        )
+        status = "used" if contexts else "empty"
+    except Exception:
+        contexts = ()
+        status = "unavailable"
+    return {
+        "memory_context": contexts,
+        "memory_read_status": status,
+    }, _after_route_sources(state)
+
+
+def _after_memory(state: ExternalSupportState) -> str:
+    return _after_route_sources(state)
 
 
 async def _ticket_node(state: ExternalSupportState, runtime: ExternalSupportRuntime):
@@ -483,7 +611,76 @@ def _component_sentence(label: str, status: ToolStatus) -> str:
     return f"{label} service is unavailable."
 
 
-def _assemble_node(state: ExternalSupportState, _runtime: ExternalSupportRuntime):
+def _memory_plan(
+    question: str,
+    runtime: ExternalSupportRuntime,
+) -> tuple[
+    MemoryCandidate | None,
+    MemoryScope | None,
+    str | None,
+    MemoryEvaluationMetadata,
+]:
+    candidate = prefilter_memory_candidate(question)
+    if candidate is None:
+        return None, None, None, MemoryEvaluationMetadata()
+    unresolved = MemoryEvaluationMetadata(
+        status="scope_unresolved",
+        candidate_category=candidate.category,
+        evaluator_called=False,
+    )
+    if runtime.conversation_id is None or runtime.access.role is Role.user:
+        return None, None, None, unresolved
+
+    requested_scope = runtime.memory_scope or MemoryScope.client
+    if requested_scope is MemoryScope.global_:
+        if (
+            runtime.access.role is not Role.admin
+            or not runtime.access.global_access
+            or candidate.category.value != "carrier_coverage"
+        ):
+            return None, None, None, unresolved
+        return (
+            candidate,
+            MemoryScope.global_,
+            None,
+            MemoryEvaluationMetadata(
+                status="not_proposed",
+                candidate_category=candidate.category,
+                evaluator_called=False,
+            ),
+        )
+
+    client_id = runtime.memory_client_id
+    if client_id is None:
+        if len(runtime.access.allowed_client_ids) != 1:
+            return None, None, None, unresolved
+        client_id = next(iter(runtime.access.allowed_client_ids))
+    if not runtime.access.can_access_client(client_id):
+        return None, None, None, unresolved
+    try:
+        active = runtime.session.execute(
+            select(clients.c.client_id).where(
+                clients.c.client_id == client_id,
+                clients.c.is_active.is_(True),
+            )
+        ).first()
+    except Exception:
+        return None, None, None, unresolved
+    if active is None:
+        return None, None, None, unresolved
+    return (
+        candidate,
+        MemoryScope.client,
+        client_id,
+        MemoryEvaluationMetadata(
+            status="not_proposed",
+            candidate_category=candidate.category,
+            evaluator_called=False,
+        ),
+    )
+
+
+def _assemble_node(state: ExternalSupportState, runtime: ExternalSupportRuntime):
     route = state["route"]
     if route == "clarification":
         result = ExternalSupportResult(
@@ -546,7 +743,10 @@ def _assemble_node(state: ExternalSupportState, _runtime: ExternalSupportRuntime
         raise SupportUnavailable("all selected support sources failed")
     partial = bool(technical)
     result = ExternalSupportResult(
-        answer="\n\n".join(parts),
+        answer=append_memory_context(
+            "\n\n".join(parts),
+            state.get("memory_context", ()),
+        ),
         route=route,
         partial=partial,
         needs_clarification=False,
@@ -554,12 +754,135 @@ def _assemble_node(state: ExternalSupportState, _runtime: ExternalSupportRuntime
         inventory=inventory,
         knowledge=knowledge,
         knowledge_status=knowledge_status,
+        memory_context=state.get("memory_context", ()),
+        memory_read_status=state.get("memory_read_status", "skipped"),
     )
-    return {
+    candidate, scope, client_id, metadata = _memory_plan(state["question"], runtime)
+    result = replace(result, memory_evaluation=metadata)
+    updates: ExternalSupportState = {
         "partial": partial,
         "needs_clarification": False,
         "assembled": result,
-    }, "__end__"
+    }
+    if candidate is not None and scope is not None:
+        updates["memory_candidate"] = candidate
+        updates["memory_scope"] = scope
+        if client_id is not None:
+            updates["memory_client_id"] = client_id
+    return updates, "evaluate_memory" if candidate is not None else "__end__"
+
+
+def _after_assemble(state: ExternalSupportState) -> str:
+    return "evaluate_memory" if state.get("memory_candidate") is not None else "__end__"
+
+
+def _memory_policy_diagnostic(exc: MemoryPolicyViolation) -> str:
+    message = str(exc)
+    if message == "country must be US or ES":
+        return "invalid_country"
+    if message == "memory content violates TrackFlow retention policy":
+        return "prohibited_content"
+    return "contract_validation"
+
+
+def _evaluate_memory_node(
+    state: ExternalSupportState,
+    runtime: ExternalSupportRuntime,
+):
+    primary = state["assembled"]
+    candidate = state["memory_candidate"]
+    evaluator = runtime.compatible_memory_evaluator()
+    base = {
+        "candidate_category": candidate.category,
+        "evaluator_called": False,
+    }
+    if evaluator is None:
+        metadata = MemoryEvaluationMetadata(status="provider_unavailable", **base)
+        return {"assembled": replace(primary, memory_evaluation=metadata)}, "__end__"
+    try:
+        timeout = runtime.deadline.operation_timeout(
+            AUTOEVALUATION_MAX_SECONDS,
+            reserve=AUTOEVALUATION_RESPONSE_RESERVE_SECONDS,
+        )
+    except RAGProviderError:
+        metadata = MemoryEvaluationMetadata(status="insufficient_budget", **base)
+        return {"assembled": replace(primary, memory_evaluation=metadata)}, "__end__"
+    if timeout < AUTOEVALUATION_MIN_SECONDS:
+        metadata = MemoryEvaluationMetadata(status="insufficient_budget", **base)
+        return {"assembled": replace(primary, memory_evaluation=metadata)}, "__end__"
+
+    called = {
+        "candidate_category": candidate.category,
+        "evaluator_called": True,
+    }
+    diagnostic = None
+    try:
+        decision = evaluator.evaluate(
+            question=state["question"],
+            answer=primary.answer,
+            candidate=candidate,
+            timeout_seconds=timeout,
+        )
+        if not decision.should_propose:
+            metadata = MemoryEvaluationMetadata(status="not_proposed", **called)
+            return {"assembled": replace(primary, memory_evaluation=metadata)}, "__end__"
+        if decision.category is not candidate.category or decision.content is None:
+            raise MemoryEvaluationInvalid("contract_validation")
+        scope = state["memory_scope"]
+        content = decision.content.model_dump(mode="python")
+        proposal_payload = MemoryProposalCreate(
+            conversation_id=runtime.conversation_id,
+            origin_interaction_id=runtime.run_id,
+            origin_message_sha256=hashlib.sha256(
+                state["question"].encode("utf-8")
+            ).hexdigest(),
+            scope=scope,
+            client_id=(
+                None if scope is MemoryScope.global_ else state.get("memory_client_id")
+            ),
+            category=decision.category,
+            content=content,
+            canonical_key=canonical_key_for(decision.category, content),
+        )
+        proposal = runtime.memory_store.create_proposal(
+            runtime.session,
+            proposal_payload,
+            runtime.access,
+        )
+        metadata = MemoryEvaluationMetadata(status="proposed", **called)
+        result = replace(
+            primary,
+            memory_proposal=proposal,
+            memory_evaluation=metadata,
+        )
+        return {"assembled": result}, "__end__"
+    except MemoryEvaluationInvalid as exc:
+        status = "invalid"
+        diagnostic = exc.diagnostic
+    except (TimeoutError,):
+        status = "timeout"
+    except RAGProviderError as exc:
+        status = "timeout" if exc.category in {"timeout", "deadline_exhausted"} else "error"
+    except MemoryPolicyViolation as exc:
+        status = "policy_rejected"
+        diagnostic = _memory_policy_diagnostic(exc)
+    except MemoryForbidden:
+        status = "policy_rejected"
+        diagnostic = "authorization"
+    except MemoryConflict:
+        status = "policy_rejected"
+        diagnostic = "proposal_conflict"
+    except ValueError:
+        status = "policy_rejected"
+        diagnostic = "contract_validation"
+    except Exception:
+        status = "error"
+    metadata = MemoryEvaluationMetadata(
+        status=status,
+        diagnostic=diagnostic,
+        **called,
+    )
+    return {"assembled": replace(primary, memory_evaluation=metadata)}, "__end__"
 
 
 class ExternalSupportAgent:
@@ -570,9 +893,13 @@ class ExternalSupportAgent:
         *,
         checkpointer: InMemorySaver | None = None,
         tracer: TraceRecorder | None = None,
+        memory_evaluator: MemoryEvaluator | None = None,
+        memory_store: MemoryStore | None = None,
     ) -> None:
         self.checkpointer = checkpointer or InMemorySaver()
         self.tracer = tracer or TraceRecorder()
+        self.memory_evaluator = memory_evaluator
+        self.memory_store = memory_store or MemoryStore()
         builder = StateGraph(ExternalSupportState, context_schema=ExternalSupportRuntime)
         builder.add_node("route_query", _recorded_node("route_query", _route_node))
         builder.add_node(
@@ -583,7 +910,15 @@ class ExternalSupportAgent:
             _recorded_async_node("inventory_lookup", _inventory_node),
         )
         builder.add_node(
+            "retrieve_memory",
+            _recorded_node("retrieve_memory", _retrieve_memory_node),
+        )
+        builder.add_node(
             "assemble_response", _recorded_node("assemble_response", _assemble_node)
+        )
+        builder.add_node(
+            "evaluate_memory",
+            _recorded_node("evaluate_memory", _evaluate_memory_node),
         )
         add_rag_nodes(
             builder,
@@ -598,9 +933,20 @@ class ExternalSupportAgent:
             _after_route,
             {
                 "assemble_response": "assemble_response",
+                "retrieve_memory": "retrieve_memory",
                 "ticket_lookup": "ticket_lookup",
                 "inventory_lookup": "inventory_lookup",
                 "retrieve_context": "retrieve_context",
+            },
+        )
+        builder.add_conditional_edges(
+            "retrieve_memory",
+            _after_memory,
+            {
+                "ticket_lookup": "ticket_lookup",
+                "inventory_lookup": "inventory_lookup",
+                "retrieve_context": "retrieve_context",
+                "assemble_response": "assemble_response",
             },
         )
         builder.add_conditional_edges(
@@ -620,11 +966,46 @@ class ExternalSupportAgent:
                 "assemble_response": "assemble_response",
             },
         )
-        builder.add_edge("assemble_response", END)
+        builder.add_conditional_edges(
+            "assemble_response",
+            _after_assemble,
+            {
+                "evaluate_memory": "evaluate_memory",
+                "__end__": END,
+            },
+        )
+        builder.add_edge("evaluate_memory", END)
         self.graph = builder.compile(
             checkpointer=self.checkpointer,
             name="trackflow_external_support",
         )
+
+    def classify_pending_consent(
+        self,
+        text: str,
+        proposal: MemoryProposalRecord,
+        *,
+        deadline: QueryDeadline,
+        rag_factory: Callable[[], AbstractContextManager[RAGService]],
+    ) -> ConsentClassification:
+        """Classify a pending proposal without changing graph or RAG contracts."""
+        if self.consent_classifier is not None:
+            return self.consent_classifier.classify(text, proposal)
+        timeout = deadline.operation_timeout(
+            CONSENT_CLASSIFIER_MAX_SECONDS,
+            reserve=AUTOEVALUATION_RESPONSE_RESERVE_SECONDS,
+        )
+        with rag_factory() as service:
+            generation = getattr(service, "generation_provider", None)
+            provider = getattr(generation, "provider", None)
+            if provider is None or not callable(
+                getattr(provider, "generate_structured", None)
+            ):
+                raise SupportUnavailable("structured consent provider unavailable")
+            return FourGeeksStructuredConsentClassifier(
+                provider,
+                timeout_seconds=timeout,
+            ).classify(text, proposal)
 
     async def execute(
         self,
@@ -638,6 +1019,9 @@ class ExternalSupportAgent:
         run_id: str | None = None,
         ticket_tool=None,
         inventory_tool=None,
+        conversation_id: UUID | None = None,
+        memory_client_id: str | None = None,
+        memory_scope: MemoryScope | None = None,
     ) -> ExternalSupportExecution:
         selected_run_id = run_id or str(uuid4())
         runtime = ExternalSupportRuntime(
@@ -650,6 +1034,11 @@ class ExternalSupportAgent:
             tracer=self.tracer,
             ticket_tool=ticket_tool,
             inventory_tool=inventory_tool,
+            memory_evaluator=self.memory_evaluator,
+            memory_store=self.memory_store,
+            conversation_id=conversation_id,
+            memory_client_id=memory_client_id,
+            memory_scope=memory_scope,
         )
         self.tracer.begin(selected_run_id)
         try:
@@ -667,7 +1056,14 @@ class ExternalSupportAgent:
                 else "answered"
             )
             self.tracer.finish(selected_run_id, outcome=outcome)
-            return ExternalSupportExecution(selected_run_id, result)
+            return ExternalSupportExecution(
+                selected_run_id,
+                result,
+                memory_proposal=result.memory_proposal,
+                memory_evaluation=result.memory_evaluation,
+                memory_context=result.memory_context,
+                memory_read_status=result.memory_read_status,
+            )
         except Exception as exc:
             self.tracer.finish(selected_run_id, outcome="technical_error", error=exc)
             raise

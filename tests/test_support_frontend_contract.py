@@ -96,9 +96,9 @@ def test_support_ui_replays_one_pending_question_after_pkce_callback():
     assert "if (!retainAcrossRedirect) clearPendingSupportQuestion();" in page
     assert "initializeSupportAuthorizationOnce()" in page
     assert "const pending = consumePendingSupportQuestion();" in page
-    assert "void executeQuestion(pending, false);" in page
+    assert "void executeQuestionRef.current(pending, false);" in page
     assert page.index("const pending = consumePendingSupportQuestion();") < page.index(
-        "void executeQuestion(pending, false);"
+        "void executeQuestionRef.current(pending, false);"
     )
     assert "clearPendingSupportQuestion();\n        setError(" in page
     assert "localStorage" not in page
@@ -112,3 +112,107 @@ def test_support_pending_question_is_consumed_before_callback_replay():
     assert clear < normalize
     assert "supportAuthorizationInitialization ??=" in page
     assert "normalized.length <= 2000" in page
+
+
+def test_support_memory_contract_is_additive_validated_and_session_scoped():
+    page = (BACKOFFICE / "app/backoffice/support/page.tsx").read_text(encoding="utf-8")
+    client = (BACKOFFICE / "lib/supportApi.ts").read_text(encoding="utf-8")
+    types = (BACKOFFICE / "types/support.ts").read_text(encoding="utf-8")
+    assert '`${BASE_URL}/support/memory/decision`' in client
+    assert "isMemoryProposal(item.memory_proposal)" in client
+    assert "UUID_PATTERN.test(item.conversation_id)" in client
+    assert "item.verification_status === \"user_reported\"" in client
+    assert "continue_support_question" in client
+    assert "continue_support_question" in types
+    assert "continue_with_user_text" not in client + types
+    assert "memory_proposal?:" in types
+    assert "conversation_id?:" in types
+    assert "window.sessionStorage.setItem" in page
+    assert "conversationStorageKey(userId)" in page
+    assert "storedConversationId(userId)" in page
+    assert "SUPPORT_CONVERSATION_KEY_PREFIX" in page
+    assert "crypto.subtle.digest" in page
+    assert "${suffix}" not in page
+    assert "executeQuestionRef.current" in page
+    assert "}, [userId]);" in page
+    assert "const activeConversationId = conversationIdRef.current;" in page
+    assert 'action: "topic_change"' not in page
+    assert "caught.statusCode === 404" in page
+    assert "memory_consent" in client
+    assert "memory_consent?:" in types
+    assert "localStorage" not in page
+    assert "decisionLoading" in page
+    assert 'void decideMemory("edit")' in page
+
+
+def test_support_restores_conversation_and_recovers_pending_memory_after_oidc():
+    page = (BACKOFFICE / "app/backoffice/support/page.tsx").read_text(encoding="utf-8")
+    client = (BACKOFFICE / "lib/supportApi.ts").read_text(encoding="utf-8")
+    types = (BACKOFFICE / "types/support.ts").read_text(encoding="utf-8")
+    restore = page.index("const stored = storedConversationId(userId);")
+    initialize = page.index("initializeSupportAuthorizationOnce()", restore)
+    assert restore < initialize
+    assert "getPendingSupportMemory(recoveryIdentifier)" in page
+    assert "findLegacyDecisionReference()" in page
+    assert "proposalId: legacyReference.proposal_id" in page
+    assert '`${BASE_URL}/support/memory/pending?${query.toString()}`' in client
+    assert "SupportPendingMemoryResponse" in types
+    assert "body.proposal.conversation_id !== body.conversation_id" in client
+    assert "body.proposal.id !== identifier.proposalId" in client
+    assert "setMemoryScope(recoveredProposal.scope)" in page
+    assert 'setClientId(recoveredProposal.client_id ?? "")' in page
+    assert "conversationStorageKey(userId)" in page
+
+
+def test_support_decision_redirect_persists_only_user_bound_minimal_intent():
+    page = (BACKOFFICE / "app/backoffice/support/page.tsx").read_text(encoding="utf-8")
+    start = page.index("interface StoredDecisionIntent")
+    end = page.index("function decisionIntentStorageKey", start)
+    intent_contract = page[start:end]
+    assert "user_id: string" in intent_contract
+    assert "conversation_id: string" in intent_contract
+    assert "proposal_id: string" in intent_contract
+    assert "action: SupportMemoryAction" in intent_contract
+    assert "idempotency_key: string" in intent_contract
+    assert "content" not in intent_contract
+    assert "token" not in intent_contract.lower()
+    assert "password" not in intent_contract.lower()
+    assert '`${SUPPORT_DECISION_INTENT_KEY_PREFIX}:${userId}`' in page
+    persist = page.index("storeDecisionIntent(intent);", page.index("const decideMemory"))
+    send = page.index("await submitDecision(intent", persist)
+    assert persist < send
+    assert "caught instanceof SupportAuthorizationRedirect" in page
+
+
+def test_support_interrupted_decision_requires_explicit_same_key_retry():
+    page = (BACKOFFICE / "app/backoffice/support/page.tsx").read_text(encoding="utf-8")
+    assert "Reintentar aprobación" in page
+    assert "no se ha reenviado automáticamente" in page
+    assert "retryInterruptedDecision" in page
+    retry = page[page.index("const retryInterruptedDecision"):page.index("const submit = async")]
+    assert "interruptedIntent.idempotency_key" not in retry
+    assert "submitDecision(" in retry
+    submit = page[page.index("const submitDecision"):page.index("const decideMemory")]
+    assert "idempotency_key: intent.idempotency_key" in submit
+    assert "decideSupportMemory" in submit
+    assert "crypto.randomUUID" not in submit
+
+
+def test_support_change_of_user_clears_visible_state_and_stale_intent():
+    page = (BACKOFFICE / "app/backoffice/support/page.tsx").read_text(encoding="utf-8")
+    start = page.index("if (!userId) {")
+    unauthenticated = page[start:page.index("const stored = storedConversationId(userId);", start)]
+    assert "setConversationId(null)" in unauthenticated
+    assert "setProposal(null)" in unauthenticated
+    assert "setInterruptedIntent(null)" in unauthenticated
+    assert "setResult(null)" in unauthenticated
+    assert "intent.user_id !== userId" in page
+    assert "intent.proposal_id" in page
+    assert "intent.conversation_id" in page
+
+
+def test_support_preserves_visible_answer_during_same_user_request():
+    page = (BACKOFFICE / "app/backoffice/support/page.tsx").read_text(encoding="utf-8")
+    execute = page[page.index("const executeQuestion = useCallback"):page.index("useEffect(() => {")]
+    assert "setResult(null)" not in execute
+    assert "setResult(next)" in execute

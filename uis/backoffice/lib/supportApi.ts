@@ -1,4 +1,10 @@
-import type { SupportQueryResponse } from "@/types/support";
+import type {
+  SupportMemoryDecisionRequest,
+  SupportMemoryDecisionResponse,
+  SupportPendingMemoryResponse,
+  SupportQueryOptions,
+  SupportQueryResponse,
+} from "@/types/support";
 import {
   clearSupportAccessToken,
   getSupportAccessToken,
@@ -8,6 +14,7 @@ import {
 import { telemetryService } from "@/lib/telemetry";
 
 const BASE_URL: string = process.env.NEXT_PUBLIC_API_URL ?? "";
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export class SupportApiError extends Error {
   constructor(message: string, public readonly statusCode?: number) {
@@ -16,7 +23,22 @@ export class SupportApiError extends Error {
   }
 }
 
-function isSupportResponse(value: unknown): value is SupportQueryResponse {
+function isMemoryProposal(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const item = value as Record<string, unknown>;
+  return (
+    typeof item.id === "string" && UUID_PATTERN.test(item.id) &&
+    typeof item.conversation_id === "string" && UUID_PATTERN.test(item.conversation_id) &&
+    ["client", "global"].includes(String(item.scope)) &&
+    (item.client_id === null || typeof item.client_id === "string") &&
+    ["carrier_coverage", "recurring_incident", "b2b_report_preference"].includes(String(item.category)) &&
+    typeof item.content === "object" && item.content !== null && !Array.isArray(item.content) &&
+    item.verification_status === "user_reported" &&
+    typeof item.expires_at === "string"
+  );
+}
+
+export function isSupportResponse(value: unknown): value is SupportQueryResponse {
   if (typeof value !== "object" || value === null) return false;
   const item = value as Record<string, unknown>;
   return (
@@ -28,11 +50,70 @@ function isSupportResponse(value: unknown): value is SupportQueryResponse {
     typeof item.needs_clarification === "boolean" &&
     (item.ticket === null || typeof item.ticket === "object") &&
     (item.inventory === null || typeof item.inventory === "object") &&
-    (item.knowledge === null || typeof item.knowledge === "object")
+    (item.knowledge === null || typeof item.knowledge === "object") &&
+    (item.conversation_id === undefined || item.conversation_id === null ||
+      (typeof item.conversation_id === "string" && UUID_PATTERN.test(item.conversation_id))) &&
+    (item.memory_proposal === undefined || item.memory_proposal === null ||
+      isMemoryProposal(item.memory_proposal)) &&
+    (item.memory_evaluation === undefined || item.memory_evaluation === null ||
+      (typeof item.memory_evaluation === "object" &&
+        typeof (item.memory_evaluation as Record<string, unknown>).status === "string" &&
+        typeof (item.memory_evaluation as Record<string, unknown>).evaluator_called === "boolean")) &&
+    (item.memory_read_status === undefined || item.memory_read_status === null ||
+      typeof item.memory_read_status === "string") &&
+    (item.memory_consent === undefined || item.memory_consent === null ||
+      (typeof item.memory_consent === "object" &&
+        ["approve", "reject", "edit", "ambiguous", "topic_change"].includes(
+          String((item.memory_consent as Record<string, unknown>).action),
+        ) &&
+        ["approved", "rejected", "replacement_pending", "discarded", "expired"].includes(
+          String((item.memory_consent as Record<string, unknown>).disposition),
+        ) &&
+        typeof (item.memory_consent as Record<string, unknown>).continue_support_question === "boolean"))
   );
 }
 
-export async function askSupport(question: string): Promise<SupportQueryResponse> {
+function isMemoryDecisionResponse(
+  value: unknown,
+): value is SupportMemoryDecisionResponse {
+  if (typeof value !== "object" || value === null) return false;
+  const item = value as Record<string, unknown>;
+  return (
+    typeof item.conversation_id === "string" && UUID_PATTERN.test(item.conversation_id) &&
+    typeof item.disposition === "string" &&
+    typeof item.memory_active === "boolean" &&
+    typeof item.continue_support_question === "boolean" &&
+    (item.proposal === null || isMemoryProposal(item.proposal))
+  );
+}
+
+function isPendingMemoryResponse(
+  value: unknown,
+): value is SupportPendingMemoryResponse {
+  if (typeof value !== "object" || value === null) return false;
+  const item = value as Record<string, unknown>;
+  return (
+    typeof item.conversation_id === "string" && UUID_PATTERN.test(item.conversation_id) &&
+    (item.proposal === null || isMemoryProposal(item.proposal))
+  );
+}
+
+function messageForStatus(status: number): string {
+  const messages: Record<number, string> = {
+    401: "La sesión OIDC de soporte expiró. Vuelve a autorizar el asistente.",
+    403: "Tu rol no tiene acceso al asistente de soporte.",
+    404: "La conversación o propuesta ya no está disponible.",
+    409: "La propuesta ya fue resuelta o cambió. Actualiza la consulta.",
+    422: "La memoria propuesta no cumple la política de datos.",
+    503: "El asistente de soporte no está disponible temporalmente.",
+  };
+  return messages[status] ?? `La solicitud falló con estado ${status}.`;
+}
+
+export async function askSupport(
+  question: string,
+  options: SupportQueryOptions = {},
+): Promise<SupportQueryResponse> {
   let response: Response;
   const startedAt =
     typeof performance === "undefined" ? Date.now() : performance.now();
@@ -48,7 +129,14 @@ export async function askSupport(question: string): Promise<SupportQueryResponse
     response = await fetch(`${BASE_URL}/support/query`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({
+        question,
+        ...(options.conversationId
+          ? { conversation_id: options.conversationId }
+          : {}),
+        ...(options.clientId ? { client_id: options.clientId } : {}),
+        ...(options.memoryScope ? { memory_scope: options.memoryScope } : {}),
+      }),
     });
   } catch (error) {
     if (error instanceof SupportAuthorizationRedirect) throw error;
@@ -74,13 +162,8 @@ export async function askSupport(question: string): Promise<SupportQueryResponse
   }
 
   if (!response.ok) {
-    const messages: Record<number, string> = {
-      401: "La sesión OIDC de soporte expiró. Vuelve a autorizar el asistente.",
-      403: "Tu rol no tiene acceso al asistente de soporte.",
-      503: "El asistente de soporte no está disponible temporalmente.",
-    };
     throw new SupportApiError(
-      messages[response.status] ?? `La consulta falló con estado ${response.status}.`,
+      messageForStatus(response.status),
       response.status,
     );
   }
@@ -91,5 +174,90 @@ export async function askSupport(question: string): Promise<SupportQueryResponse
     return body;
   } catch {
     throw new SupportApiError("El asistente devolvió una respuesta inválida.");
+  }
+}
+
+export async function decideSupportMemory(
+  decision: SupportMemoryDecisionRequest,
+): Promise<SupportMemoryDecisionResponse> {
+  let response: Response;
+  try {
+    const token = await getSupportAccessToken();
+    response = await fetch(`${BASE_URL}/support/memory/decision`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(decision),
+    });
+  } catch (error) {
+    if (error instanceof SupportAuthorizationRedirect) throw error;
+    if (error instanceof SupportAuthorizationError) {
+      throw new SupportApiError(error.message);
+    }
+    throw new SupportApiError("No se pudo registrar la decisión de memoria.");
+  }
+  if (response.status === 401) clearSupportAccessToken();
+  if (!response.ok) {
+    throw new SupportApiError(messageForStatus(response.status), response.status);
+  }
+  try {
+    const body: unknown = await response.json();
+    if (!isMemoryDecisionResponse(body)) throw new Error("invalid response");
+    return body;
+  } catch {
+    throw new SupportApiError("El asistente devolvió una decisión inválida.");
+  }
+}
+
+export async function getPendingSupportMemory(
+  identifier: { conversationId: string } | { proposalId: string },
+): Promise<SupportPendingMemoryResponse> {
+  let response: Response;
+  try {
+    const token = await getSupportAccessToken();
+    const query = new URLSearchParams(
+      "conversationId" in identifier
+        ? { conversation_id: identifier.conversationId }
+        : { proposal_id: identifier.proposalId },
+    );
+    response = await fetch(`${BASE_URL}/support/memory/pending?${query.toString()}`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    });
+  } catch (error) {
+    if (error instanceof SupportAuthorizationRedirect) throw error;
+    if (error instanceof SupportAuthorizationError) {
+      throw new SupportApiError(error.message);
+    }
+    throw new SupportApiError("No se pudo recuperar la propuesta pendiente.");
+  }
+  if (response.status === 401) clearSupportAccessToken();
+  if (!response.ok) {
+    throw new SupportApiError(messageForStatus(response.status), response.status);
+  }
+  try {
+    const body: unknown = await response.json();
+    if (!isPendingMemoryResponse(body)) throw new Error("invalid response");
+    if (body.proposal !== null && body.proposal.conversation_id !== body.conversation_id) {
+      throw new Error("mismatched recovery response");
+    }
+    if (
+      "conversationId" in identifier &&
+      body.conversation_id !== identifier.conversationId
+    ) throw new Error("mismatched recovery response");
+    if (
+      "proposalId" in identifier &&
+      body.proposal !== null &&
+      body.proposal.id !== identifier.proposalId
+    ) throw new Error("mismatched recovery response");
+    return body;
+  } catch {
+    throw new SupportApiError("El asistente devolvió una propuesta inválida.");
   }
 }

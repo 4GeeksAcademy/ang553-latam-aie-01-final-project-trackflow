@@ -51,3 +51,32 @@ produces a leakage-safe recursive forecast for 2024-2025, compares it with the
 seasonal baseline, and regenerates the documented files in
 `artifacts/sales_forecast/`. Dependencies come from
 `pyproject.toml`/`uv.lock`; do not use `pip install`.
+
+## MEM-092 agent-memory cleanup
+
+Run one explicit maintenance pass from the repository root with the reviewed
+PostgreSQL `DATABASE_URL` already present in the process environment:
+
+```powershell
+uv run --python 3.12 python -m scripts.agent_memory_cleanup --execute
+```
+
+The command refuses to run without `--execute`, rejects non-PostgreSQL targets,
+does not provision tables, and prints only content-free expiration counts. It
+reuses `MemoryStore.expire_and_clean`, whose default capacity is 100 active
+entries per scope/client/category bucket. An operator may deliberately use a
+smaller positive bound with `--max-active-per-scope-category COUNT`.
+
+Schedule the command through the deployment's existing maintenance facility if
+periodic cleanup is required. MEM-092 does not add another scheduler or service.
+The command is transactional and idempotent, so a successful no-op run reports
+zero counts. A nonzero exit code means the pass did not complete and must not be
+reported as successful.
+
+Inject `DATABASE_URL` from the deployment's secret store instead of placing it
+in the task definition or command line. Run from the repository root, preserve
+the process exit code, alert on nonzero results, and avoid deliberately
+overlapping invocations. An hourly cadence is recommended when the 24-hour
+proposal TTL should have no more than about one hour of operational delay; using
+a daily cadence requires accepting retention until the next pass. Validate the
+job first with one supervised execution followed by an idempotent second pass.
