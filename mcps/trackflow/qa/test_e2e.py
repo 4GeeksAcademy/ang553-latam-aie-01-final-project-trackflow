@@ -11,6 +11,7 @@ import re
 import secrets
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
+from uuid import UUID, uuid4
 
 import httpx
 import jwt
@@ -58,7 +59,9 @@ def password_token(scopes: tuple[str, ...]) -> str:
     return response.json()["access_token"]
 
 
-def pkce_support_token() -> str:
+def pkce_support_token(
+    *, username_env: str = "QA_KEYCLOAK_USERNAME", password_env: str = "QA_KEYCLOAK_PASSWORD"
+) -> str:
     """Complete a real Authorization Code + PKCE S256 flow without a browser."""
 
     verifier = secrets.token_urlsafe(64)
@@ -94,7 +97,8 @@ def pkce_support_token() -> str:
         login_url = urlparse(str(login_page.url))
         assert action_url.scheme == login_url.scheme == "http"
         assert action_url.hostname == login_url.hostname in {"127.0.0.1", "localhost"}
-        assert action_url.port == login_url.port == 18082
+        expected_issuer = urlparse(env("QA_ISSUER"))
+        assert action_url.port == login_url.port == expected_issuer.port
         # Keycloak 26 emits Secure authentication-session cookies even in its
         # loopback-only development mode. Browsers treat loopback as a secure
         # context, while Python's http.cookiejar refuses to resend them over
@@ -107,8 +111,8 @@ def pkce_support_token() -> str:
         authenticated = client.post(
             action,
             data={
-                "username": env("QA_KEYCLOAK_USERNAME"),
-                "password": env("QA_KEYCLOAK_PASSWORD"),
+                "username": env(username_env),
+                "password": env(password_env),
                 "credentialId": "",
             },
             headers={
@@ -192,6 +196,7 @@ async def call_real_tools(token: str) -> tuple[set[str], str]:
                     "update_incident_status",
                     "list_inventory_products",
                     "get_inventory_product",
+                    "get_authorized_tracking",
                 }
                 created = await session.call_tool(
                     "create_incident",
@@ -274,7 +279,8 @@ async def call_real_tools(token: str) -> tuple[set[str], str]:
                     "get_inventory_product", {"input": {"product_id": VISIBLE_PRODUCT_ID}}
                 )
                 assert not product.isError
-                assert product.structuredContent["current_stock"] == 7
+                expected_stock = 6 if os.getenv("TRACKFLOW_SEC114_QA") == "1" else 7
+                assert product.structuredContent["current_stock"] == expected_stock
                 hidden = await session.call_tool(
                     "get_inventory_product", {"input": {"product_id": HIDDEN_PRODUCT_ID}}
                 )
@@ -311,6 +317,64 @@ async def call_with_insufficient_scope(token: str) -> None:
                 )
                 assert denied.isError
                 assert "forbidden" in denied.content[0].text
+
+
+async def call_real_tracking(token: str, tracking_number: str) -> dict[str, object]:
+    """Invoke the deployed sixth MCP tool; no fabricated ToolMessage is used."""
+
+    async with httpx.AsyncClient(
+        headers={"Authorization": f"Bearer {token}"}, timeout=15
+    ) as http:
+        async with streamable_http_client(
+            env("QA_MCP_URL"), http_client=http
+        ) as (read_stream, write_stream, _session_id):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                result = await session.call_tool(
+                    "get_authorized_tracking",
+                    {"input": {"tracking_number": tracking_number}},
+                )
+                assert not result.isError
+                assert result.structuredContent is not None
+                return result.structuredContent
+
+
+async def assert_tracking_scope_denied(token: str) -> None:
+    async with httpx.AsyncClient(
+        headers={"Authorization": f"Bearer {token}"}, timeout=15
+    ) as http:
+        async with streamable_http_client(
+            env("QA_MCP_URL"), http_client=http
+        ) as (read_stream, write_stream, _session_id):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                result = await session.call_tool(
+                    "get_authorized_tracking",
+                    {"input": {"tracking_number": "45821"}},
+                )
+                assert result.isError
+                assert "forbidden" in result.content[0].text
+
+
+def support_tracking(
+    token: str, tracking_number: str, conversation_id: str | None = None
+) -> dict:
+    payload = {"question": f"Check tracking {tracking_number}."}
+    if conversation_id is not None:
+        payload["conversation_id"] = conversation_id
+    response = httpx.post(
+        f"{env('QA_API_URL')}/support/query",
+        headers={"Authorization": f"Bearer {token}"},
+        json=payload,
+        timeout=20,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    # SupportQueryResponse preserves its pre-SEC-114 public shape; the bounded
+    # tracking projection is rendered into the answer and is verified in
+    # structured form through the deployed sixth MCP tool below.
+    assert body["route"] == "clarification"
+    return body
 
 
 def test_real_keycloak_api_and_mcp_gate() -> None:
@@ -426,7 +490,8 @@ def test_real_keycloak_api_and_mcp_gate() -> None:
     assert support_body["ticket"]["incident_id"] == incident_id
     assert support_body["ticket"]["incident_status"] == "CLOSED"
     assert support_body["inventory"]["product_id"] == VISIBLE_PRODUCT_ID
-    assert support_body["inventory"]["current_stock"] == 7
+    expected_stock = 6 if os.getenv("TRACKFLOW_SEC114_QA") == "1" else 7
+    assert support_body["inventory"]["current_stock"] == expected_stock
 
     hidden_support = httpx.post(
         f"{env('QA_API_URL')}/support/query",
@@ -452,3 +517,70 @@ def test_real_keycloak_api_and_mcp_gate() -> None:
     )
     assert inventory_after.status_code == 200
     assert [item["id"] for item in inventory_after.json()] == [VISIBLE_PRODUCT_ID]
+
+    if os.getenv("TRACKFLOW_SEC114_QA") == "1":
+        tenant_b_token = pkce_support_token(
+            username_env="QA_KEYCLOAK_USERNAME_B",
+            password_env="QA_KEYCLOAK_PASSWORD_B",
+        )
+        tenant_b_claims = decode(tenant_b_token, "trackflow-mcp")
+        assert tenant_b_claims["trackflow_user_id"] == env("QA_TRACKFLOW_USER_ID_B")
+        assert "inventory:read" in set(str(tenant_b_claims["scope"]).split())
+
+        # A cannot distinguish B's 45821 from an identifier absent everywhere.
+        denied = support_tracking(support_token, "45821")
+        absent = support_tracking(support_token, "SEC114-ABSENT")
+        assert denied["answer"] == absent["answer"]
+        assert "tenant" not in denied["answer"].lower()
+
+        # The owner traverses Support -> real MCP -> API -> PostgreSQL.
+        owner = support_tracking(tenant_b_token, "45821")
+        lowered = owner["answer"].lower()
+        assert "recorded dispatch" in lowered
+        assert "bbbbbbbb-2222-4222-8222-222222222222" in lowered
+        assert "delivered" not in lowered
+        assert "location" not in lowered
+        assert "eta" not in lowered
+
+        # The sixth deployed MCP tool exposes the same bounded projection.
+        direct_owner = asyncio.run(call_real_tracking(tenant_b_token, "45821"))
+        assert direct_owner == {
+            "status": "found",
+            "tracking_number": "45821",
+            "dispatch_state": "recorded_dispatch",
+            "commercial_order_id": "bbbbbbbb-2222-4222-8222-222222222222",
+        }
+
+        # A and B may share a tracking string without cross-tenant ambiguity.
+        shared_a_before = support_tracking(support_token, "SEC114-SHARED")
+        conversation = shared_a_before["conversation_id"]
+        shared_b = support_tracking(tenant_b_token, "SEC114-SHARED")
+        assert "aaaaaaaa-1111-4111-8111-111111111111" in shared_a_before[
+            "answer"
+        ].lower()
+        assert "bbbbbbbb-3333-4333-8333-333333333333" in shared_b[
+            "answer"
+        ].lower()
+
+        # Removing B's authorized row cannot change A's observable response.
+        from sqlalchemy import delete
+
+        from services.api.database import open_db_session
+        from services.api.inventory_models import StockExit
+
+        with open_db_session() as session:
+            session.execute(
+                delete(StockExit).where(
+                    StockExit.dispatch_id
+                    == UUID("bbbbbbbb-6666-4666-8666-666666666666")
+                )
+            )
+            session.commit()
+        shared_a_after = support_tracking(
+            support_token, "SEC114-SHARED", conversation
+        )
+        assert shared_a_after == shared_a_before
+
+        # Scope attenuation remains enforced at the deployed tracking tool.
+        limited_tracking = password_token(("incidents:read",))
+        asyncio.run(assert_tracking_scope_denied(limited_tracking))

@@ -256,6 +256,46 @@ class CommercialOrderMutationResponse(BaseModel):
     dispatch_ids: list[UUID]
 
 
+class AuthorizedTrackingStatus(str, Enum):
+    """Closed result states for an authorized recorded-dispatch lookup."""
+
+    FOUND = "found"
+    NOT_FOUND = "not_found"
+    UNAVAILABLE = "unavailable"
+
+
+class DispatchState(str, Enum):
+    """The only shipment state supported by TrackFlow's current database."""
+
+    RECORDED_DISPATCH = "recorded_dispatch"
+
+
+class AuthorizedTrackingResponse(BaseModel):
+    """Tenant-scoped projection; this is not live carrier tracking."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: AuthorizedTrackingStatus
+    tracking_number: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$",
+    )
+    dispatch_state: DispatchState | None = None
+    commercial_order_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_projection(self) -> "AuthorizedTrackingResponse":
+        if self.status is AuthorizedTrackingStatus.FOUND:
+            if self.dispatch_state is not DispatchState.RECORDED_DISPATCH:
+                raise ValueError("found tracking requires recorded_dispatch")
+            if self.commercial_order_id is None:
+                raise ValueError("found tracking requires commercial_order_id")
+        elif self.dispatch_state is not None or self.commercial_order_id is not None:
+            raise ValueError("non-found tracking must not expose order data")
+        return self
+
+
 class InventoryPhysicalCountCreate(BaseModel):
     """One observed count; expected stock is derived by the service."""
 

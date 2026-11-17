@@ -169,3 +169,25 @@ produced the real carrier proposal. The corrected conversational-consent schema
 and `ambiguous_discard` path pass deterministic regression tests, but their E2E
 revalidation after the ambiguity fix remains pending because the QA Keycloak
 login could not be completed. This pending check must not be reported as PASS.
+
+## SEC-114 guardrail harness
+
+Support now applies a deterministic, bilingual input guard before consent,
+RAG, MCP, or memory evaluation, then validates every external boundary and the
+complete HTTP response. The rules target high-confidence cases and are not a
+claim of perfect jailbreak detection. Authorization, closed projections,
+canonical RAG payloads, output validation, and safe fallbacks provide the
+complementary controls.
+
+Authorized tracking uses the existing `StockExit`/`CommercialOrder`
+relationship through the sixth MCP tool. It can assert only
+`recorded_dispatch`; it does not expose another tenant or infer carrier status,
+location, delivery, ETA, or jurisdiction. See
+`docs/sec-114-agent-harness-guardrails.md` for contracts, reproducible QA, and
+the explicit acceptance limitations.
+
+Content-free guardrail counters can be exercised locally with:
+
+```powershell
+.\.venv\Scripts\python.exe -m agents.customer_support.guardrail_observability --controlled-session
+```

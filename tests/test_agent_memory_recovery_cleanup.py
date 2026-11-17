@@ -54,7 +54,13 @@ class StubRAG:
         self.retrieve_calls += 1
         return (
             RetrievalResult(
-                KnowledgeChunk("point", "policy.md", "Policy", 0, "safe policy"),
+                KnowledgeChunk(
+                    "point",
+                    "returns-policy",
+                    "standard-return-process",
+                    0,
+                    "safe policy",
+                ),
                 0.9,
             ),
         )

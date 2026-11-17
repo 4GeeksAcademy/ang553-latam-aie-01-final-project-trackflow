@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime
+import logging
 import math
 import os
 from time import monotonic
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 from uuid import uuid4
+from uuid import UUID
 
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
@@ -22,12 +24,16 @@ from agents.customer_support.tools import (
     InventoryLookupResult,
     TicketLookupInput,
     TicketLookupResult,
+    TrackingLookupInput,
+    TrackingLookupResult,
     ToolStatus,
 )
+from agents.customer_support.guardrail_contracts import DispatchState
 from services.rag.resilience import QueryDeadline
 
 
 _TOOL_TIMEOUT_RESERVE_SECONDS = 3.0
+_LOGGER = logging.getLogger("agent.customer_support.mcp")
 
 
 def _tool_error_category(name: str, content: object) -> str | None:
@@ -55,21 +61,59 @@ def _tool_error_category(name: str, content: object) -> str | None:
 
 
 class _IncidentProjection(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     incident_id: str = Field(pattern=r"^TRF-\d{6}$")
-    category: str
-    status: str
+    category: Literal[
+        "LOST_PARCEL",
+        "DELAYED_DELIVERY",
+        "WRONG_ADDRESS",
+        "RETURN_REQUEST",
+        "DAMAGE",
+    ]
+    status: Literal["OPEN", "CLOSED", "DISCARDED"]
+    created_at: datetime
     updated_at: datetime
     version: int = Field(ge=1, strict=True)
 
 
 class _InventoryProjection(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     id: int = Field(gt=0, strict=True)
-    name: str
-    sku: str
-    warehouse: str
-    current_stock: int
+    name: str = Field(min_length=1, max_length=200)
+    sku: str = Field(min_length=1, max_length=100)
+    category: Literal["fashion", "electronics", "cosmetics"]
+    warehouse: Literal["LA", "ZGZ"]
+    current_stock: int = Field(strict=True)
+
+
+class _TrackingProjection(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    status: Literal["found", "not_found", "unavailable"]
+    tracking_number: str | None = Field(default=None, min_length=1, max_length=128)
+    dispatch_state: Literal["recorded_dispatch"] | None = None
+    commercial_order_id: UUID | None = None
+
+    @classmethod
+    def _empty_failure(cls, value: "_TrackingProjection") -> bool:
+        return all(
+            item is None
+            for item in (
+                value.tracking_number,
+                value.dispatch_state,
+                value.commercial_order_id,
+            )
+        )
+
+    def model_post_init(self, _context: Any) -> None:
+        if self.status == "found":
+            if (
+                self.tracking_number is None
+                or self.dispatch_state != "recorded_dispatch"
+                or self.commercial_order_id is None
+            ):
+                raise ValueError("found tracking requires its safe dispatch projection")
+        elif not self._empty_failure(self):
+            raise ValueError("non-found tracking must not expose order data")
 
 
 @dataclass(frozen=True)
@@ -102,7 +146,7 @@ class SupportMCPSettings:
 
 
 class SupportMCPTools:
-    """Load and call the two read tools through langchain-mcp-adapters."""
+    """Load and call the three read tools through langchain-mcp-adapters."""
 
     def __init__(
         self,
@@ -136,7 +180,11 @@ class SupportMCPTools:
             if self._tools is None:
                 tools = await self._client.get_tools(server_name="trackflow")
                 indexed = {tool.name: tool for tool in tools}
-                required = {"get_incident", "get_inventory_product"}
+                required = {
+                    "get_incident",
+                    "get_inventory_product",
+                    "get_authorized_tracking",
+                }
                 if not required.issubset(indexed):
                     raise RuntimeError("required MCP read tools are unavailable")
                 self._tools = indexed
@@ -173,7 +221,12 @@ class SupportMCPTools:
             )
         except asyncio.TimeoutError:
             return ToolStatus.timeout, None
-        except Exception:
+        except Exception as exc:
+            _LOGGER.warning(
+                "Support MCP call unavailable | operation=%s error_type=%s",
+                name,
+                type(exc).__name__,
+            )
             return ToolStatus.unavailable, None
 
         if not isinstance(result, ToolMessage):
@@ -207,6 +260,8 @@ class SupportMCPTools:
             incident = _IncidentProjection.model_validate(structured)
         except ValidationError:
             return TicketLookupResult(status=ToolStatus.unavailable)
+        if incident.incident_id != payload.incident_id:
+            return TicketLookupResult(status=ToolStatus.unavailable)
         return TicketLookupResult(
             status=ToolStatus.ok,
             incident_id=incident.incident_id,
@@ -230,6 +285,8 @@ class SupportMCPTools:
             product = _InventoryProjection.model_validate(structured)
         except ValidationError:
             return InventoryLookupResult(status=ToolStatus.unavailable)
+        if product.id != payload.product_id:
+            return InventoryLookupResult(status=ToolStatus.unavailable)
         return InventoryLookupResult(
             status=ToolStatus.ok,
             product_id=product.id,
@@ -237,4 +294,33 @@ class SupportMCPTools:
             sku=product.sku,
             warehouse=product.warehouse,
             current_stock=product.current_stock,
+        )
+
+    async def lookup_tracking(
+        self,
+        payload: TrackingLookupInput,
+        deadline: QueryDeadline,
+    ) -> TrackingLookupResult:
+        status, structured = await self._invoke(
+            "get_authorized_tracking",
+            {"tracking_number": payload.tracking_number},
+            deadline,
+        )
+        if status is not ToolStatus.ok or structured is None:
+            return TrackingLookupResult(status=status)
+        try:
+            tracking = _TrackingProjection.model_validate(structured)
+        except (ValidationError, ValueError):
+            return TrackingLookupResult(status=ToolStatus.unavailable)
+        if tracking.status == "not_found":
+            return TrackingLookupResult(status=ToolStatus.not_found)
+        if tracking.status == "unavailable":
+            return TrackingLookupResult(status=ToolStatus.unavailable)
+        if tracking.tracking_number != payload.tracking_number:
+            return TrackingLookupResult(status=ToolStatus.unavailable)
+        return TrackingLookupResult(
+            status=ToolStatus.ok,
+            tracking_number=tracking.tracking_number,
+            dispatch_state=DispatchState.recorded_dispatch,
+            commercial_order_id=tracking.commercial_order_id,
         )

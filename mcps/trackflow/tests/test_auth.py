@@ -368,6 +368,7 @@ def test_app_uses_stateless_streamable_http_without_fastmcp_auth_helpers(
         "update_incident_status",
         "list_inventory_products",
         "get_inventory_product",
+        "get_authorized_tracking",
     }
     paths = [getattr(route, "path", None) for route in app.routes]
     assert "/.well-known/oauth-protected-resource/mcp" in paths

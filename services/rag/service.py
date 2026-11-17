@@ -10,7 +10,7 @@ import re
 import time
 import unicodedata
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from functools import lru_cache
 from uuid import UUID
 
@@ -115,6 +115,44 @@ def _canonical_token_document_frequency() -> Counter[str]:
     for chunk in load_knowledge_chunks():
         frequencies.update(_content_tokens(chunk.text))
     return frequencies
+
+
+@lru_cache(maxsize=1)
+def _canonical_chunks_by_id() -> dict[str, KnowledgeChunk]:
+    """Return the closed manifest accepted from the vector-store boundary."""
+    return {chunk.point_id: chunk for chunk in load_knowledge_chunks()}
+
+
+def _validated_vector_candidate(
+    point_id: object,
+    score: object,
+    payload: object,
+) -> RetrievalResult:
+    """Reject vector data that is not an exact canonical corpus projection."""
+    try:
+        numeric_score = float(score)
+    except (TypeError, ValueError) as exc:
+        raise RAGProviderError(
+            "Vector store returned an invalid payload",
+            category="validation_error",
+        ) from exc
+    if not math.isfinite(numeric_score) or not isinstance(point_id, str):
+        raise RAGProviderError(
+            "Vector store returned an invalid payload",
+            category="validation_error",
+        )
+    canonical = _canonical_chunks_by_id().get(point_id)
+    if canonical is None or not isinstance(payload, Mapping):
+        raise RAGProviderError(
+            "Vector store returned an invalid payload",
+            category="validation_error",
+        )
+    if dict(payload) != canonical.payload():
+        raise RAGProviderError(
+            "Vector store returned an invalid payload",
+            category="validation_error",
+        )
+    return RetrievalResult(canonical, numeric_score)
 
 
 def _has_strong_lexical_evidence(query: str, chunk: KnowledgeChunk) -> bool:
@@ -323,17 +361,7 @@ class RAGService:
         )
         candidates: list[RetrievalResult] = []
         for point_id, score, payload in raw_results:
-            try:
-                chunk = KnowledgeChunk(
-                    point_id=point_id,
-                    source_document=str(payload["source_document"]),
-                    section=str(payload["section"]),
-                    chunk_index=int(payload["chunk_index"]),
-                    text=str(payload["text"]),
-                )
-            except (KeyError, TypeError, ValueError) as exc:
-                raise RAGProviderError("Vector store returned an invalid payload") from exc
-            candidates.append(RetrievalResult(chunk, float(score)))
+            candidates.append(_validated_vector_candidate(point_id, score, payload))
 
         semantic_primary_indexes = {
             index

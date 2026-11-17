@@ -6,6 +6,7 @@ import asyncio
 import json
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from uuid import uuid4
 
 import pytest
 
@@ -18,8 +19,10 @@ from agents.customer_support.external_graph import (
 from agents.customer_support.tools import (
     InventoryLookupResult,
     TicketLookupResult,
+    TrackingLookupResult,
     ToolStatus,
 )
+from agents.customer_support.guardrail_contracts import DispatchState
 from services.api.access_control import AccessContext
 from services.api.auth_models import Role
 from services.rag.contracts import (
@@ -52,8 +55,8 @@ class StubRAGService:
             RetrievalResult(
                 KnowledgeChunk(
                     point_id="point",
-                    source_document="policy.md",
-                    section="Returns",
+                    source_document="returns-policy",
+                    section="standard-return-process",
                     chunk_index=0,
                     text="private policy text",
                 ),
@@ -143,6 +146,34 @@ def test_stock_policy_without_product_id_routes_to_knowledge():
     assert decision.product_id is None
 
 
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Check tracking #45821",
+        "Consulta el seguimiento del pedido #45821",
+        "Where is package 45821?",
+    ],
+)
+def test_tracking_identifier_routes_to_authorized_tracking_lookup(question):
+    decision = route_support_query(question)
+    assert decision.route == "tracking"
+    assert decision.tracking_number == "45821"
+    assert decision.needs_tracking is True
+    assert decision.needs_knowledge is False
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Check tracking status",
+        "¿Dónde está mi pedido?",
+        "Compare tracking 45821 and tracking 45822",
+    ],
+)
+def test_missing_or_multiple_tracking_identifiers_require_clarification(question):
+    assert route_support_query(question).route == "clarification"
+
+
 def test_ticket_only_is_rag_lazy_and_checkpoint_is_deleted():
     rag_calls = 0
 
@@ -212,6 +243,119 @@ def test_inventory_only_skips_ticket_and_rag():
     )).result
     assert calls == ["inventory"]
     assert result.inventory.current_stock == 2
+
+
+def test_tracking_only_reports_recorded_dispatch_and_skips_other_sources():
+    calls = []
+    order_id = uuid4()
+
+    def forbidden(*_args):
+        raise AssertionError("tracking-only route must not call unrelated sources")
+
+    def tracking_tool(payload, _deadline):
+        calls.append(payload.tracking_number)
+        return TrackingLookupResult(
+            status=ToolStatus.ok,
+            tracking_number=payload.tracking_number,
+            dispatch_state=DispatchState.recorded_dispatch,
+            commercial_order_id=order_id,
+        )
+
+    agent = ExternalSupportAgent()
+    execution = run(agent.execute(
+        "Check tracking #45821",
+        session=object(),
+        access=access(),
+        deadline=QueryDeadline(80),
+        rag_factory=forbidden,
+        ticket_tool=forbidden,
+        inventory_tool=forbidden,
+        tracking_tool=tracking_tool,
+    ))
+    assert calls == ["45821"]
+    assert execution.result.route == "tracking"
+    assert execution.result.tracking.commercial_order_id == order_id
+    assert "recorded dispatch" in execution.result.answer
+    assert "delivered" not in execution.result.answer.lower()
+    assert "in transit" not in execution.result.answer.lower()
+    trace = agent.tracer.get(execution.run_id)
+    assert [node["node"] for node in trace["nodes"]] == [
+        "route_query",
+        "tracking_lookup",
+        "assemble_response",
+    ]
+
+
+def test_tracking_not_found_does_not_expose_order_data():
+    def tracking_tool(_payload, _deadline):
+        return TrackingLookupResult(status=ToolStatus.not_found)
+
+    result = run(ExternalSupportAgent().execute(
+        "Check tracking #45821",
+        session=object(),
+        access=access(),
+        deadline=QueryDeadline(80),
+        rag_factory=lambda: rag_context(StubRAGService()),
+        tracking_tool=tracking_tool,
+    )).result
+    assert result.tracking.status is ToolStatus.not_found
+    assert "not found or is not visible" in result.answer
+    assert "commercial order" not in result.answer
+
+
+def test_incompatible_authorized_tracking_duplicates_fail_safely():
+    def tracking_tool(_payload, _deadline):
+        return TrackingLookupResult(status=ToolStatus.unavailable)
+
+    with pytest.raises(SupportUnavailable):
+        run(ExternalSupportAgent().execute(
+            "Check tracking #45821",
+            session=object(),
+            access=access(),
+            deadline=QueryDeadline(80),
+            rag_factory=lambda: rag_context(StubRAGService()),
+            tracking_tool=tracking_tool,
+        ))
+
+
+def test_spanish_inventory_query_preserves_internal_inventory_route():
+    calls = []
+
+    def forbidden(*_args):
+        raise AssertionError("Spanish inventory route must remain operational-only")
+
+    def inventory_tool(payload, _deadline):
+        calls.append(payload.product_id)
+        return InventoryLookupResult(
+            ToolStatus.ok,
+            product_id=payload.product_id,
+            name="Widget",
+            sku="W-1",
+            warehouse="ZGZ",
+            current_stock=4,
+        )
+
+    result = run(ExternalSupportAgent().execute(
+        "¿Cuánto stock queda del producto 17?",
+        session=object(),
+        access=access(),
+        deadline=QueryDeadline(80),
+        rag_factory=forbidden,
+        ticket_tool=forbidden,
+        inventory_tool=inventory_tool,
+    )).result
+    assert calls == [17]
+    assert result.route == "inventory"
+    assert result.inventory.current_stock == 4
+
+
+def test_spanish_mixed_ticket_and_policy_query_routes_both_sources():
+    decision = route_support_query(
+        "Revisa la incidencia TRF-000482 y explica el procedimiento de devoluciones"
+    )
+    assert decision.route == "mixed"
+    assert decision.needs_ticket is True
+    assert decision.needs_knowledge is True
 
 
 def test_knowledge_only_uses_deterministic_rag_without_operational_tools():

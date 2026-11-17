@@ -1554,3 +1554,132 @@ revisión y autorización arquitectónica.
 - Pendientes de entrega: revalidación E2E post-correctivo de ambigüedad cuando se
   retome Keycloak, configuración operativa de cleanup, migración/despliegue,
   revisión selectiva del worktree, commit, PR y revisión humana final.
+
+## SEC-114 — Harness y guardrails — 2026-11-16
+
+- **Veredicto técnico:** `APROBADO CON OBSERVACIONES`; pendiente de revisión
+  humana, operaciones Git y aceptación manual. No se declara despliegue ni
+  certificación productiva.
+- Support aplica guardrails de entrada antes de consentimiento/RAG/MCP/memoria,
+  conserva la precedencia e invariantes MEM-092 y valida fronteras externas y
+  la respuesta HTTP completa antes de serializar. Los fallos usan respuestas
+  seguras compatibles y no activan el evaluador de memoria.
+- Se añadió el lookup real tenant-aware por `StockExit.tracking_number`, filtrado
+  en SQL mediante `CommercialOrder.client_id`, y el sexto tool MCP
+  `get_authorized_tracking`. Sólo se afirma `recorded_dispatch`; no se aceptan
+  tenants desde el modelo ni se exponen ubicación, entrega o ETA.
+- La jurisdicción permanece como control con contexto autoritativo sintético:
+  una solicitud ES no sustituye `applicable_country=US`; sin procedencia
+  confiable el agente se abstiene. No se añadieron campos persistentes ni
+  políticas comerciales.
+- PostgreSQL 16 real en loopback/`tmpfs`: **2 PASS**, incluyendo noninterference
+  y flujo servicio → adaptador MCP → grafo. Contenedor detenido y eliminado.
+  MCP aislado: **65 PASS, 1 SKIP**. Regresión raíz: **1263 PASS, 41 SKIP,
+  1 fallo de baseline** en la invalidación de caché con bind no
+  weak-referenceable, idéntico en `HEAD` y no modificado por SEC-114.
+- Observabilidad registra sólo metadatos cerrados y UUID de correlación. El
+  comando de sesión controlada mostró `blocked=2`, `redirected=1`.
+- Pendientes honestos: proveedor real, E2E OAuth/manual, E2E histórico de
+  ambigüedad MEM-092, TypeScript sin dependencias instaladas y decisión separada
+  sobre la deuda de caché. Detalle: `docs/sec-114-agent-harness-guardrails.md`.
+
+## SEC-114 — correctivos Gate 6.2 — 2026-11-16
+
+- Los guardrails contextuales bloquean solicitudes y respuestas que combinan
+  intención de divulgación con tarifas/condiciones negociadas o detalles
+  físicos internos. Se preservan tarifas estándar documentadas, condiciones
+  generales, tarifas preferenciales sujetas a Miguel Torres, LA/ZGZ, cobertura
+  y SLA; no se añadieron bloqueos globales de palabras.
+- La frontera MCP reduce respuestas `not_found`/`unavailable` del lookup de
+  tracking antes de exponerlas: el identificador ecoado por la API no cruza el
+  tool. Payloads con campos inesperados o datos de pedido en un fallo continúan
+  rechazándose como deriva contractual.
+- E2E real exclusivo SEC-114: **1 PASS en 63.09 s**. Dos identidades PKCE,
+  Keycloak 26.8.2, MCP real, API, PostgreSQL 16 `tmpfs` y agente Support probaron
+  denegación de `45821` para A, lectura positiva de B, tracking compartido sin
+  interferencia, scopes y proyección `recorded_dispatch`. Puertos/contenedores
+  quedaron limpios; evidencia sanitizada y hashes están fuera del repositorio.
+- Verificación focal: **224 PASS, 2 SKIP** (los skips PostgreSQL opt-in quedaron
+  cubiertos por el E2E real); MCP completo: **66 PASS**. Regresión raíz:
+  **1282 PASS, 41 SKIP, 1 FAIL**. El único fallo sigue siendo
+  `test_invalidate_products_preserves_orders`; `cache.py` y `test_cache.py`
+  conservan exactamente los hashes del baseline `3fad3ca` y SEC-114 no usa esa
+  caché para tracking.
+- Frontend: `npm ci --ignore-scripts` desde el lockfile y TypeScript
+  `--noEmit --incremental false` PASS. Los hashes de ambos manifiestos quedaron
+  sin cambios. npm reportó 7 vulnerabilidades moderadas y 4 altas heredadas; no
+  se ejecutó `audit fix`.
+- FourGeeks real permanece **PENDIENTE**: no existe `FOUR_GEEKS_API_KEY` legítima
+  en este entorno. No se fabricaron credenciales ni se convirtió QA determinista
+  en aceptación viva. El E2E histórico de ambigüedad MEM-092 también permanece
+  pendiente como prueba viva, aunque sus invariantes deterministas pasan.
+
+## SEC-114 — correctivo de respuestas humanas — 2026-11-16
+
+- Las acciones y códigos de guardrail se conservaron. La decisión interna añade
+  únicamente `response_language` (`en`/`es`), que no forma parte de HTTP ni de
+  observabilidad.
+- Small talk presenta al sistema como asistente de soporte TrackFlow del área CX,
+  nunca como Valentina Cruz. El prompt FourGeeks también deja explícito que el
+  asistente no es una persona empleada o manager.
+- Jailbreak, información comercial confidencial, detalles físicos internos y
+  tareas personales tienen rechazos breves, diferenciados, bilingües y no
+  reflectivos. Las respuestas redirigen a soporte permitido sin prometer tracking
+  de transportista en tiempo real.
+- Regresión focal de contenido/HTTP/RAG: **162 PASS**; observabilidad,
+  consentimiento y tools: **122 PASS**; verificación final de archivos tocados:
+  **124 PASS**. No se repitió E2E ni se modificó infraestructura.
+
+## SEC-114 — Backoffice human-acceptance mode — 2026-11-16
+
+- `mcps/trackflow/qa/run_sec114.ps1` now has an explicit opt-in interactive
+  lifecycle (`Validate`, `Start`, `Status`, `Credential`, `Stop`). Omitting
+  `-Interactive` preserves the approved automated E2E and cleanup behavior.
+- Interactive acceptance reuses the isolated SEC-114 Keycloak, PostgreSQL,
+  API, MCP, synthetic seed, ownership checks, and sanitized evidence flow, and
+  adds the real Backoffice on loopback port `28080`. It does not rerun the
+  tracking E2E.
+- Ephemeral local and tenant-A OIDC passwords are kept in a Windows DPAPI blob
+  under the session temp directory. The retrieval action copies only the
+  selected password to the clipboard and never prints it. A pre-existing
+  session blocks a second start and credential rotation.
+- The stop action captures content-free guardrail counters/readiness and hashes
+  sanitized human evidence before verifying and stopping only exact resources
+  owned by that session. MEM-092 ports and historical services are untouched.
+- Keycloak QA retains its previous callbacks and adds only the isolated
+  `http://127.0.0.1:28080/backoffice/support` PKCE callback/origin.
+- Gate 6.4.1 makes the runner compatible with Windows PowerShell 5.1 by loading
+  `System.Security` explicitly when needed and using a disposable
+  `RandomNumberGenerator.Create()` instance with caller-provided bytes. RNG and
+  DPAPI now run as non-persistent preflight probes before interactive startup.
+- The corrected preflight passed under Windows PowerShell `5.1.26100.9711`
+  (Desktop, CLR `4.0.30319.42000`), including RNG and DPAPI round-trip. It left
+  no SEC-114 session state, listeners or containers. The two failed starts left
+  only the already designated empty acceptance-evidence directory; historical
+  processes on `18083`, `18084` and MEM-092 `18184` were inspected but untouched.
+- Gate 6.4.2 replaces direct listener-PID/command matching with bounded process
+  ancestry to the exact recorded launcher, plus loopback, command marker,
+  session-time and creation-order checks. The existing Next.js chain was proven
+  as `57784 -> 59760 -> 86268 -> 101116 -> 99664` where `99664` is the recorded
+  launcher. Recovered `Status` reported all five services ready, 5 Support
+  requests and 0 MCP POSTs. Deterministic coverage accepts a legitimate child
+  tree and rejects an identically marked listener outside the recorded tree.
+- Gate 6.4.4 corrects the acceptance stock expectation to `6`, reads MCP
+  transport access lines from stdout, and separates transport POSTs, typed
+  business-tool events, and unclassified legacy events. Guardrail INFO logging
+  now emits only guard/action/category/reason; MCP typed events emit only
+  tool/result/duration/downstream status. Neither includes prompts, responses,
+  tokens, credentials, client IDs or correlation IDs. Historical absent events
+  remain unrecoverable and are not inferred.
+
+## SEC-114 — aceptación humana final — 2026-11-16
+
+- Backoffice A–F: PASS funcional. Producto sintético `91001`: `6` unidades.
+- Una segunda sesión con procesos nuevos confirmó bloqueos `security` y
+  `content`, redirecciones `content` y `structural`, y el evento empresarial
+  tipado `get_inventory_product.success = 1`; transporte MCP y tools permanecen
+  separados.
+- Ambas sesiones SEC-114 cerraron sus procesos y contenedores exclusivos. Los
+  puertos quedaron libres y la evidencia externa verificó sus hashes SHA-256.
+- El prompt SEC-114 no fue revalidado contra FourGeeks real. La credencial y el
+  gate live posteriores pertenecen a MEM-092 y no acreditan este hito.

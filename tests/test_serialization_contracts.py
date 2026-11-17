@@ -12,7 +12,11 @@ from services.api.auth_models import (
     TokenResponse,
 )
 from services.api.main import HealthResponse, IncidentAnalysisResponse, app
-from services.api.inventory_schemas import InventoryOrderListItem, MovementCreatedResponse
+from services.api.inventory_schemas import (
+    AuthorizedTrackingResponse,
+    InventoryOrderListItem,
+    MovementCreatedResponse,
+)
 from services.api.models import SupplierCreatedResponse, SupplierMutationResponse, SupplierResponse
 
 
@@ -117,6 +121,16 @@ def test_inventory_response_contracts_are_exact() -> None:
     assert _route("POST", "/inventory/orders/inbound").response_model is MovementCreatedResponse
     assert _route("POST", "/inventory/orders/outbound").response_model is MovementCreatedResponse
     assert _route("GET", "/inventory/orders").response_model == list[InventoryOrderListItem]
+    assert set(AuthorizedTrackingResponse.model_fields) == {
+        "status",
+        "tracking_number",
+        "dispatch_state",
+        "commercial_order_id",
+    }
+    assert (
+        _route("GET", "/inventory/tracking/{tracking_number}").response_model
+        is AuthorizedTrackingResponse
+    )
     assert (
         openapi["paths"]["/health"]["get"]["responses"]["200"]["content"]
         ["application/json"]["schema"]["$ref"]

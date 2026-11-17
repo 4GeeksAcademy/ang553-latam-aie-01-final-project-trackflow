@@ -23,7 +23,12 @@ def main() -> None:
         raise SystemExit("Refusing to configure Keycloak without TRACKFLOW_MCP_QA=1")
 
     base_url = required("QA_KEYCLOAK_BASE_URL").rstrip("/")
-    if base_url != "http://127.0.0.1:18082":
+    expected_base_url = (
+        "http://127.0.0.1:28082"
+        if os.getenv("TRACKFLOW_SEC114_QA") == "1"
+        else "http://127.0.0.1:18082"
+    )
+    if base_url != expected_base_url:
         raise SystemExit("QA Keycloak URL must be the isolated loopback endpoint")
 
     admin_user = required("QA_KEYCLOAK_ADMIN_USER")
@@ -36,6 +41,22 @@ def main() -> None:
     username = required("QA_KEYCLOAK_USERNAME")
     password = required("QA_KEYCLOAK_PASSWORD")
     trackflow_user_id = required("QA_TRACKFLOW_USER_ID")
+    backoffice_origin = os.getenv("QA_BACKOFFICE_ORIGIN")
+    if backoffice_origin and (
+        os.getenv("TRACKFLOW_SEC114_QA") != "1"
+        or backoffice_origin != "http://127.0.0.1:28080"
+    ):
+        raise SystemExit("QA Backoffice origin must be the isolated SEC-114 loopback endpoint")
+    redirect_uris = [
+        "http://localhost:6274/oauth/callback",
+        "http://127.0.0.1:6274/oauth/callback",
+        "http://localhost:3001/backoffice/support",
+        "http://127.0.0.1:3001/backoffice/support",
+    ]
+    web_origins = ["http://localhost:3001", "http://127.0.0.1:3001"]
+    if backoffice_origin:
+        redirect_uris.append(f"{backoffice_origin}/backoffice/support")
+        web_origins.append(backoffice_origin)
 
     with httpx.Client(timeout=15) as client:
         admin_response = client.post(
@@ -118,16 +139,8 @@ def main() -> None:
                     "fullScopeAllowed": False,
                     "defaultClientScopes": ["trackflow-sub"],
                     "optionalClientScopes": scopes,
-                    "redirectUris": [
-                        "http://localhost:6274/oauth/callback",
-                        "http://127.0.0.1:6274/oauth/callback",
-                        "http://localhost:3001/backoffice/support",
-                        "http://127.0.0.1:3001/backoffice/support",
-                    ],
-                    "webOrigins": [
-                        "http://localhost:3001",
-                        "http://127.0.0.1:3001",
-                    ],
+                    "redirectUris": redirect_uris,
+                    "webOrigins": web_origins,
                     "attributes": {"pkce.code.challenge.method": "S256"},
                     "protocolMappers": [
                         {
@@ -223,6 +236,28 @@ def main() -> None:
                 }
             ],
         }
+        if os.getenv("TRACKFLOW_SEC114_QA") == "1":
+            realm_config["users"].append(
+                {
+                    "username": required("QA_KEYCLOAK_USERNAME_B"),
+                    "enabled": True,
+                    "firstName": "SEC114",
+                    "lastName": "TenantB",
+                    "email": "sec114-tenant-b@example.invalid",
+                    "emailVerified": True,
+                    "requiredActions": [],
+                    "attributes": {
+                        "trackflow_user_id": [required("QA_TRACKFLOW_USER_ID_B")]
+                    },
+                    "credentials": [
+                        {
+                            "type": "password",
+                            "value": required("QA_KEYCLOAK_PASSWORD_B"),
+                            "temporary": False,
+                        }
+                    ],
+                }
+            )
         response = client.post(
             f"{base_url}/admin/realms",
             headers=admin_headers,

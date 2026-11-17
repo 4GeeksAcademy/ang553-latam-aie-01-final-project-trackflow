@@ -17,7 +17,7 @@ from services.api.auth_models import Role, UserInDB
 from services.api.access_control import AccessContext
 from services.api.operational_oidc import get_operational_user
 from services.api.database import get_db
-from services.api.inventory_models import CommercialOrder, SKU
+from services.api.inventory_models import CommercialOrder, SKU, StockExit
 from services.api.inventory_outbox import inventory_outbox_metadata
 from services.api.cache import inventory_cache_key
 from services.api.inventory_schemas import (
@@ -38,6 +38,7 @@ from services.api.routes.inventory import (
     create_order_with_dispatches,
     create_outbound_order,
     create_product,
+    get_authorized_tracking,
     router as inventory_router,
 )
 import services.api.inventory_service as inventory_service
@@ -45,6 +46,47 @@ from services.incidents.models import clients, operational_security_metadata, us
 
 CLIENT_A = "11111111-1111-4111-8111-111111111111"
 CLIENT_B = "22222222-2222-4222-8222-222222222222"
+
+
+def _add_recorded_dispatch(
+    session: Session,
+    *,
+    client_id: str,
+    tracking_number: str,
+    suffix: str,
+):
+    sku = SKU(
+        name=f"Tracked {suffix}",
+        sku=f"TRACK-{suffix}",
+        client_id=client_id,
+        client_name=f"Client {suffix}",
+        category="electronics",
+        warehouse="LA",
+    )
+    order = CommercialOrder(
+        order_id=uuid4(),
+        client_id=client_id,
+        warehouse="LA",
+    )
+    session.add(sku)
+    session.add(order)
+    session.commit()
+    session.refresh(sku)
+    session.refresh(order)
+    dispatch = StockExit(
+        sku_id=sku.id,
+        quantity=1,
+        exit_type="dispatch",
+        tracking_number=tracking_number,
+        warehouse="LA",
+        user_uuid="test-user",
+        commercial_order_id=order.id,
+        dispatch_id=uuid4(),
+    )
+    session.add(dispatch)
+    session.commit()
+    session.refresh(dispatch)
+    return sku, order, dispatch
 
 
 def _user(user_id: str, role: Role) -> UserInDB:
@@ -202,6 +244,184 @@ def test_access_context_user_never_views_sensitive_data():
         sensitive_client_ids=frozenset({CLIENT_A}),
     )
     assert context.can_view_sensitive(CLIENT_A) is False
+
+
+def test_tracking_lookup_is_tenant_first_and_noninterfering(
+    secured_inventory: Session,
+):
+    session = secured_inventory
+    _sku_a, order_a, _dispatch_a = _add_recorded_dispatch(
+        session,
+        client_id=CLIENT_A,
+        tracking_number="45821",
+        suffix="A",
+    )
+    access_a = AccessContext(
+        user_id="manager-a",
+        role=Role.manager,
+        allowed_client_ids=frozenset({CLIENT_A}),
+        sensitive_client_ids=frozenset(),
+    )
+    baseline = inventory_service.lookup_authorized_tracking(
+        session,
+        tracking_number="45821",
+        access=access_a,
+    )
+    assert baseline.status.value == "found"
+    assert baseline.dispatch_state.value == "recorded_dispatch"
+    assert baseline.commercial_order_id == order_a.order_id
+
+    _sku_b, _order_b, dispatch_b = _add_recorded_dispatch(
+        session,
+        client_id=CLIENT_B,
+        tracking_number="45821",
+        suffix="B",
+    )
+    with_foreign_duplicate = inventory_service.lookup_authorized_tracking(
+        session,
+        tracking_number="45821",
+        access=access_a,
+    )
+    assert with_foreign_duplicate == baseline
+
+    session.delete(dispatch_b)
+    session.commit()
+    after_foreign_removal = inventory_service.lookup_authorized_tracking(
+        session,
+        tracking_number="45821",
+        access=access_a,
+    )
+    assert after_foreign_removal == baseline
+
+
+def test_foreign_only_tracking_is_indistinguishable_from_missing(
+    secured_inventory: Session,
+):
+    session = secured_inventory
+    _add_recorded_dispatch(
+        session,
+        client_id=CLIENT_B,
+        tracking_number="FOREIGN-ONLY",
+        suffix="FOREIGN",
+    )
+    access_a = AccessContext(
+        user_id="manager-a",
+        role=Role.manager,
+        allowed_client_ids=frozenset({CLIENT_A}),
+        sensitive_client_ids=frozenset(),
+    )
+    foreign = inventory_service.lookup_authorized_tracking(
+        session,
+        tracking_number="FOREIGN-ONLY",
+        access=access_a,
+    )
+    missing = inventory_service.lookup_authorized_tracking(
+        session,
+        tracking_number="MISSING",
+        access=access_a,
+    )
+    assert foreign.status.value == missing.status.value == "not_found"
+    assert foreign.dispatch_state is missing.dispatch_state is None
+    assert foreign.commercial_order_id is missing.commercial_order_id is None
+
+
+def test_incompatible_authorized_tracking_duplicates_fail_closed(
+    secured_inventory: Session,
+):
+    session = secured_inventory
+    _add_recorded_dispatch(
+        session,
+        client_id=CLIENT_A,
+        tracking_number="DUPLICATE-A",
+        suffix="A1",
+    )
+    _add_recorded_dispatch(
+        session,
+        client_id=CLIENT_A,
+        tracking_number="DUPLICATE-A",
+        suffix="A2",
+    )
+    access_a = AccessContext(
+        user_id="manager-a",
+        role=Role.manager,
+        allowed_client_ids=frozenset({CLIENT_A}),
+        sensitive_client_ids=frozenset(),
+    )
+    result = inventory_service.lookup_authorized_tracking(
+        session,
+        tracking_number="DUPLICATE-A",
+        access=access_a,
+    )
+    assert result.status.value == "unavailable"
+    assert result.dispatch_state is None
+    assert result.commercial_order_id is None
+
+
+def test_multiple_authorized_lines_for_same_order_are_aggregated(
+    secured_inventory: Session,
+):
+    session = secured_inventory
+    _sku, order, _dispatch = _add_recorded_dispatch(
+        session,
+        client_id=CLIENT_A,
+        tracking_number="MULTILINE-A",
+        suffix="LINE1",
+    )
+    second_sku = SKU(
+        name="Second line",
+        sku="SEC-A-LINE2",
+        client_id=CLIENT_A,
+        client_name="Verified A",
+        category="electronics",
+        warehouse="LA",
+    )
+    session.add(second_sku)
+    session.commit()
+    session.refresh(second_sku)
+    session.add(
+        StockExit(
+            sku_id=second_sku.id,
+            quantity=1,
+            exit_type="dispatch",
+            tracking_number="MULTILINE-A",
+            warehouse="LA",
+            user_uuid="manager-a",
+            commercial_order_id=order.id,
+            dispatch_id=uuid4(),
+        )
+    )
+    session.commit()
+    result = inventory_service.lookup_authorized_tracking(
+        session,
+        tracking_number="MULTILINE-A",
+        access=AccessContext(
+            user_id="manager-a",
+            role=Role.manager,
+            allowed_client_ids=frozenset({CLIENT_A}),
+            sensitive_client_ids=frozenset(),
+        ),
+    )
+    assert result.status.value == "found"
+    assert result.commercial_order_id == order.order_id
+
+
+def test_tracking_endpoint_exposes_no_tenant_identifier(
+    secured_inventory: Session,
+):
+    session = secured_inventory
+    _add_recorded_dispatch(
+        session,
+        client_id=CLIENT_A,
+        tracking_number="VISIBLE-A",
+        suffix="ENDPOINT",
+    )
+    response = get_authorized_tracking(
+        tracking_number="VISIBLE-A",
+        session=session,
+        current_user=_user("manager-a", Role.manager),
+    )
+    assert response.status.value == "found"
+    assert "client_id" not in response.model_dump()
 
 
 def test_cache_database_tokens_are_not_reused():

@@ -21,8 +21,10 @@ from agents.customer_support.external_graph import ExternalSupportAgent, Support
 from agents.customer_support.tools import (
     InventoryLookupInput,
     TicketLookupInput,
+    TrackingLookupInput,
     ToolStatus,
 )
+from agents.customer_support.guardrail_contracts import DispatchState
 from services.rag.resilience import QueryDeadline
 from services.api.access_control import AccessContext
 from services.api.auth_models import Role
@@ -124,12 +126,22 @@ def test_support_adapter_projects_both_mcp_read_tools_and_reuses_discovery() -> 
                     "current_stock": 4,
                 },
             ),
+            "get_authorized_tracking": CallToolResult(
+                content=[TextContent(type="text", text="ok")],
+                structuredContent={
+                    "status": "found",
+                    "tracking_number": "45821",
+                    "dispatch_state": "recorded_dispatch",
+                    "commercial_order_id": "550e8400-e29b-41d4-a716-446655440001",
+                },
+            ),
         }
     )
     client = Client(
         [
             converted(session, "get_incident"),
             converted(session, "get_inventory_product"),
+            converted(session, "get_authorized_tracking"),
         ]
     )
     adapter = SupportMCPTools(
@@ -145,16 +157,192 @@ def test_support_adapter_projects_both_mcp_read_tools_and_reuses_discovery() -> 
         product = await adapter.lookup_inventory_product(
             InventoryLookupInput(17), QueryDeadline(20)
         )
-        return ticket, product
+        tracking = await adapter.lookup_tracking(
+            TrackingLookupInput("45821"), QueryDeadline(20)
+        )
+        return ticket, product, tracking
 
-    ticket, product = asyncio.run(scenario())
+    ticket, product, tracking = asyncio.run(scenario())
     assert ticket.status is ToolStatus.ok and ticket.version == 2
     assert product.status is ToolStatus.ok and product.current_stock == 4
+    assert tracking.status is ToolStatus.ok
+    assert tracking.dispatch_state is DispatchState.recorded_dispatch
     assert client.calls == 1
     assert session.calls == [
         ("get_incident", {"input": {"incident_id": "TRF-000001"}}),
         ("get_inventory_product", {"input": {"product_id": 17}}),
+        ("get_authorized_tracking", {"input": {"tracking_number": "45821"}}),
     ]
+
+
+def _adapter_for_structured_results(incident, product, tracking=None):
+    session = Session(
+        {
+            "get_incident": CallToolResult(
+                content=[TextContent(type="text", text="ok")],
+                structuredContent=incident,
+            ),
+            "get_inventory_product": CallToolResult(
+                content=[TextContent(type="text", text="ok")],
+                structuredContent=product,
+            ),
+            "get_authorized_tracking": CallToolResult(
+                content=[TextContent(type="text", text="ok")],
+                structuredContent=(
+                    tracking
+                    if tracking is not None
+                    else {
+                        "status": "found",
+                        "tracking_number": "45821",
+                        "dispatch_state": "recorded_dispatch",
+                        "commercial_order_id": "550e8400-e29b-41d4-a716-446655440001",
+                    }
+                ),
+            ),
+        }
+    )
+    client = Client(
+        [
+            converted(session, "get_incident"),
+            converted(session, "get_inventory_product"),
+            converted(session, "get_authorized_tracking"),
+        ]
+    )
+    return SupportMCPTools(
+        SecretStr("subject-token"),
+        SupportMCPSettings("http://127.0.0.1:18084/mcp", 2),
+        client=client,
+    )
+
+
+def _valid_incident_projection():
+    now = datetime(2026, 11, 10, tzinfo=timezone.utc).isoformat()
+    return {
+        "incident_id": "TRF-000001",
+        "category": "DAMAGE",
+        "status": "OPEN",
+        "created_at": now,
+        "updated_at": now,
+        "version": 2,
+    }
+
+
+def _valid_inventory_projection():
+    return {
+        "id": 17,
+        "name": "System Prompt T-shirt",
+        "sku": "W-17",
+        "category": "fashion",
+        "warehouse": "LA",
+        "current_stock": 4,
+    }
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"private_client_id": "client-b"},
+        {"incident_id": "TRF-000002"},
+        {"category": "UNRECOGNIZED"},
+        {"status": "INTERNAL_ONLY"},
+    ],
+)
+def test_incident_projection_rejects_extra_mismatched_or_invalid_data(mutation) -> None:
+    incident = {**_valid_incident_projection(), **mutation}
+    adapter = _adapter_for_structured_results(
+        incident, _valid_inventory_projection()
+    )
+    result = asyncio.run(
+        adapter.lookup_ticket(TicketLookupInput("TRF-000001"), QueryDeadline(20))
+    )
+    assert result.status is ToolStatus.unavailable
+    assert result.incident_id is None
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"client_id": "client-b"},
+        {"id": 18},
+        {"warehouse": "MAD"},
+        {"category": "weapons"},
+        {"current_stock": "4"},
+    ],
+)
+def test_inventory_projection_rejects_extra_mismatched_or_invalid_data(mutation) -> None:
+    product = {**_valid_inventory_projection(), **mutation}
+    adapter = _adapter_for_structured_results(_valid_incident_projection(), product)
+    result = asyncio.run(
+        adapter.lookup_inventory_product(InventoryLookupInput(17), QueryDeadline(20))
+    )
+    assert result.status is ToolStatus.unavailable
+    assert result.product_id is None
+
+
+def test_legitimate_product_name_with_security_words_is_not_globally_blocked() -> None:
+    adapter = _adapter_for_structured_results(
+        _valid_incident_projection(), _valid_inventory_projection()
+    )
+    result = asyncio.run(
+        adapter.lookup_inventory_product(InventoryLookupInput(17), QueryDeadline(20))
+    )
+    assert result.status is ToolStatus.ok
+    assert result.name == "System Prompt T-shirt"
+
+
+@pytest.mark.parametrize(
+    ("tracking", "expected"),
+    [
+        (
+            {
+                "status": "found",
+                "tracking_number": "DIFFERENT-1",
+                "dispatch_state": "recorded_dispatch",
+                "commercial_order_id": "550e8400-e29b-41d4-a716-446655440001",
+            },
+            ToolStatus.unavailable,
+        ),
+        (
+            {
+                "status": "not_found",
+                "tracking_number": "45821",
+                "dispatch_state": None,
+                "commercial_order_id": None,
+            },
+            ToolStatus.unavailable,
+        ),
+        (
+            {
+                "status": "not_found",
+                "tracking_number": None,
+                "dispatch_state": None,
+                "commercial_order_id": None,
+            },
+            ToolStatus.not_found,
+        ),
+        (
+            {
+                "status": "found",
+                "tracking_number": "45821",
+                "dispatch_state": "delivered",
+                "commercial_order_id": "550e8400-e29b-41d4-a716-446655440001",
+            },
+            ToolStatus.unavailable,
+        ),
+    ],
+)
+def test_tracking_projection_is_closed_and_request_bound(tracking, expected) -> None:
+    adapter = _adapter_for_structured_results(
+        _valid_incident_projection(),
+        _valid_inventory_projection(),
+        tracking,
+    )
+    result = asyncio.run(
+        adapter.lookup_tracking(TrackingLookupInput("45821"), QueryDeadline(20))
+    )
+    assert result.status is expected
+    if expected is not ToolStatus.ok:
+        assert result.commercial_order_id is None
 
 
 def test_not_found_and_mcp_outage_are_sanitized() -> None:
@@ -178,6 +366,7 @@ def test_not_found_and_mcp_outage_are_sanitized() -> None:
         [
             converted(not_found, "get_incident"),
             converted(not_found, "get_inventory_product"),
+            converted(not_found, "get_authorized_tracking"),
         ]
     )
     adapter = SupportMCPTools(
@@ -319,7 +508,11 @@ def test_discovery_and_invocation_share_one_timeout_budget() -> None:
     class SlowClient:
         async def get_tools(self, *, server_name=None):
             await asyncio.sleep(0.07)
-            return [SlowTool("get_incident"), SlowTool("get_inventory_product")]
+            return [
+                SlowTool("get_incident"),
+                SlowTool("get_inventory_product"),
+                SlowTool("get_authorized_tracking"),
+            ]
 
     adapter = SupportMCPTools(
         SecretStr("never-logged"),
