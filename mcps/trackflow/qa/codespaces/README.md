@@ -110,12 +110,13 @@ anonymous MCP access.
 ## Acceptance evidence
 
 1. Inspect the Playground's displayed discovery catalog without executing a
-   tool. Confirm exactly these five names and review their descriptions and
+   tool. Confirm exactly these six names and review their descriptions and
    schemas: `create_incident`, `get_incident`, `update_incident_status`,
-   `list_inventory_products`, `get_inventory_product`. This is read-only. Do
+   `list_inventory_products`, `get_inventory_product`,
+   `get_authorized_tracking`. This is read-only. Do
    not report a raw protocol call such as `tools/list` unless the Playground
    actually exposes that transcript.
-2. Using only disposable QA values, execute each of the five tools once. Use
+2. Using only disposable QA values, execute each of the six tools once. Use
    the incident returned by `create_incident` for the subsequent read and
    status update; use a product returned by `list_inventory_products` for the
    product read. Do not invent or reuse production identifiers.

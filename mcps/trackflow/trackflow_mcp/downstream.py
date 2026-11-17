@@ -9,7 +9,11 @@ from typing import Any
 import httpx
 from pydantic import SecretStr, ValidationError
 
-from .contracts import IncidentProjection, InventoryProductProjection
+from .contracts import (
+    AuthorizedTrackingProjection,
+    IncidentProjection,
+    InventoryProductProjection,
+)
 
 
 class DownstreamError(RuntimeError):
@@ -192,7 +196,9 @@ class InventoryReadAdapter:
         correlation_id: str,
     ) -> DownstreamResult:
         if method.upper() != "GET" or not re.fullmatch(
-            r"/inventory/products(?:/[1-9]\d*)?", path
+            r"/inventory/(?:products(?:/[1-9]\d*)?|"
+            r"tracking/[A-Za-z0-9][A-Za-z0-9-]{0,127})",
+            path,
         ):
             raise DownstreamError(
                 "inventory_read_only", "Inventory mutations are not supported."
@@ -205,6 +211,29 @@ class InventoryReadAdapter:
                 if not isinstance(response.data, list):
                     raise ValueError
                 data = [InventoryProductProjection.model_validate(item) for item in response.data]
+            elif path.startswith("/inventory/tracking/"):
+                raw = response.data
+                requested = path.rsplit("/", 1)[-1]
+                allowed = {
+                    "status",
+                    "tracking_number",
+                    "dispatch_state",
+                    "commercial_order_id",
+                }
+                if isinstance(raw, dict) and raw.get("status") in {
+                    "not_found",
+                    "unavailable",
+                }:
+                    if (
+                        not set(raw).issubset(allowed)
+                        or raw.get("tracking_number") not in {None, requested}
+                        or raw.get("dispatch_state") is not None
+                        or raw.get("commercial_order_id") is not None
+                    ):
+                        raise ValueError
+                    data = AuthorizedTrackingProjection(status=raw["status"])
+                else:
+                    data = AuthorizedTrackingProjection.model_validate(raw)
             else:
                 data = InventoryProductProjection.model_validate(response.data)
         except (ValidationError, ValueError, TypeError):
@@ -228,6 +257,16 @@ class InventoryReadAdapter:
         return await self.request(
             "GET",
             f"/inventory/products/{product_id}",
+            token=token,
+            correlation_id=correlation_id,
+        )
+
+    async def get_authorized_tracking(
+        self, tracking_number: str, *, token: SecretStr, correlation_id: str
+    ) -> DownstreamResult:
+        return await self.request(
+            "GET",
+            f"/inventory/tracking/{tracking_number}",
             token=token,
             correlation_id=correlation_id,
         )

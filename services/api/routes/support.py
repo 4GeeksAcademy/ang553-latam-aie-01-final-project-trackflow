@@ -22,6 +22,27 @@ from agents.customer_support.external_graph import (
     SupportUnavailable,
     get_external_support_agent,
 )
+from agents.customer_support.guardrail_contracts import (
+    GuardrailAction,
+    GuardrailDecision,
+    GuardrailEvent,
+    GuardrailEventAction,
+    GuardrailInput,
+    OutputValidationStatus,
+)
+from agents.customer_support.guardrail_observability import (
+    record_guardrail_event,
+    record_input_decision,
+)
+from agents.customer_support.input_guardrails import (
+    classify_support_input,
+    safe_guardrail_response,
+)
+from agents.customer_support.output_guardrails import (
+    SAFE_OUTPUT_MESSAGE,
+    validate_http_response,
+    validate_memory_proposal,
+)
 from agents.customer_support.mcp_tools import SupportMCPSettings, SupportMCPTools
 from agents.customer_support.tools import apply_statement_timeout
 from services.api.access_control import build_access_context
@@ -36,6 +57,7 @@ from services.api.agent_memory.contracts import (
     ConsentDisposition,
     ConsentRequest,
     ConsentResult,
+    ConsentSource,
     MemoryCategory,
     MemoryProposalCreate,
     MemoryProposalRecord,
@@ -62,6 +84,7 @@ from services.rag.runtime import rag_service_context
 router = APIRouter(prefix="/support", tags=["Customer Support"])
 SUPPORT_QUERY_BUDGET_SECONDS = 80.0
 _CONSENT_LOGGER = logging.getLogger("agent.customer_support.consent")
+_SUPPORT_LOGGER = logging.getLogger("agent.customer_support.runtime")
 
 
 class SupportQueryRequest(BaseModel):
@@ -272,6 +295,8 @@ def _safe_proposal(
 ) -> SupportMemoryProposalResponse | None:
     if proposal is None:
         return None
+    if validate_memory_proposal(proposal).status is OutputValidationStatus.blocked:
+        return None
     return SupportMemoryProposalResponse(
         id=proposal.id,
         conversation_id=proposal.conversation_id,
@@ -288,7 +313,25 @@ def _to_response(
     conversation_id: UUID | None = None,
     memory_proposal: MemoryProposalRecord | None = None,
     memory_consent: ConsentResult | None = None,
+    correlation_id: str | None = None,
 ) -> SupportQueryResponse:
+    selected_correlation_id = correlation_id or str(uuid4())
+    selected_proposal = memory_proposal or result.memory_proposal
+    proposal_validation = validate_memory_proposal(
+        selected_proposal,
+        conversation_id=conversation_id,
+    )
+    if proposal_validation.status is OutputValidationStatus.blocked:
+        record_guardrail_event(
+            GuardrailEvent(
+                guard_id="support.output.proposal.v1",
+                failure_category=proposal_validation.failure_category,
+                action=GuardrailEventAction.blocked,
+                reason_code=proposal_validation.reason_code,
+                correlation_id=selected_correlation_id,
+            )
+        )
+        return _safe_http_response(conversation_id)
     ticket = (
         None
         if result.ticket is None
@@ -336,16 +379,34 @@ def _to_response(
                 ]
             ),
         )
-    return SupportQueryResponse(
+    public_route: Literal["clarification", "knowledge", "ticket", "inventory", "mixed"]
+    if result.tracking is None:
+        public_route = (
+            "clarification" if result.route == "tracking" else result.route
+        )
+    else:
+        public_components = [
+            ("ticket", ticket),
+            ("inventory", inventory),
+            ("knowledge", knowledge),
+        ]
+        present = [name for name, component in public_components if component is not None]
+        if not present:
+            public_route = "clarification"
+        elif len(present) == 1:
+            public_route = present[0]
+        else:
+            public_route = "mixed"
+    candidate = SupportQueryResponse(
         answer=result.answer,
-        route=result.route,
+        route=public_route,
         partial=result.partial,
         needs_clarification=result.needs_clarification,
         ticket=ticket,
         inventory=inventory,
         knowledge=knowledge,
         conversation_id=conversation_id,
-        memory_proposal=_safe_proposal(memory_proposal or result.memory_proposal),
+        memory_proposal=_safe_proposal(selected_proposal),
         memory_evaluation=SupportMemoryEvaluationResponse(
             status=result.memory_evaluation.status,
             candidate_category=result.memory_evaluation.candidate_category,
@@ -361,6 +422,40 @@ def _to_response(
                 continue_support_question=memory_consent.continue_support_question,
             )
         ),
+    )
+    response_validation = validate_http_response(candidate)
+    if response_validation.status is OutputValidationStatus.blocked:
+        record_guardrail_event(
+            GuardrailEvent(
+                guard_id="support.output.http.v1",
+                failure_category=response_validation.failure_category,
+                action=GuardrailEventAction.blocked,
+                reason_code=response_validation.reason_code,
+                correlation_id=selected_correlation_id,
+            )
+        )
+        return _safe_http_response(conversation_id)
+    return candidate
+
+
+def _safe_http_response(conversation_id: UUID | None) -> SupportQueryResponse:
+    return SupportQueryResponse(
+        answer=SAFE_OUTPUT_MESSAGE,
+        route="clarification",
+        partial=False,
+        needs_clarification=False,
+        ticket=None,
+        inventory=None,
+        knowledge=None,
+        conversation_id=conversation_id,
+        memory_proposal=None,
+        memory_evaluation=SupportMemoryEvaluationResponse(
+            status="not_candidate",
+            candidate_category=None,
+            evaluator_called=False,
+        ),
+        memory_read_status="skipped",
+        memory_consent=None,
     )
 
 
@@ -396,6 +491,63 @@ def _consent_only_result(message: str) -> ExternalSupportResult:
         inventory=None,
         knowledge=None,
         knowledge_status=None,
+    )
+
+
+def _guardrail_only_result(decision: GuardrailDecision) -> ExternalSupportResult:
+    return ExternalSupportResult(
+        answer=safe_guardrail_response(decision),
+        route="clarification",
+        partial=False,
+        needs_clarification=decision.action is GuardrailAction.clarify,
+        ticket=None,
+        inventory=None,
+        knowledge=None,
+        knowledge_status=None,
+    )
+
+
+def _guardrail_is_terminal(decision: GuardrailDecision) -> bool:
+    return decision.action not in {
+        GuardrailAction.allow_support,
+        GuardrailAction.allow_internal_inventory,
+    }
+
+
+def _query_consent_idempotency_key(
+    *, user_id: str, proposal_id: UUID, user_text: str
+) -> str:
+    return "query:" + hashlib.sha256(
+        (f"{user_id}:{proposal_id}:" + " ".join(user_text.split())).encode()
+    ).hexdigest()[:58]
+
+
+def _resolve_query_consent(
+    *,
+    session: Session,
+    memory_store: MemoryStore,
+    access,
+    conversation_id: UUID,
+    proposal: MemoryProposalRecord,
+    user_text: str,
+    classification: ConsentClassification,
+) -> ConsentResult:
+    return ConsentCoordinator(
+        memory_store,
+        _FixedConsentClassifier(classification),
+    ).handle(
+        session,
+        ConsentRequest(
+            conversation_id=conversation_id,
+            proposal_id=proposal.id,
+            idempotency_key=_query_consent_idempotency_key(
+                user_id=access.user_id,
+                proposal_id=proposal.id,
+                user_text=user_text,
+            ),
+            user_text=user_text,
+        ),
+        access,
     )
 
 
@@ -488,12 +640,20 @@ async def query_support(
         apply_statement_timeout(session, deadline)
     except (MemoryNotFound, MemoryConflict, MemoryForbidden, MemoryPolicyViolation) as exc:
         raise _memory_http_error(exc) from None
-    except MemoryPersistenceError:
+    except MemoryPersistenceError as exc:
+        _SUPPORT_LOGGER.warning(
+            "Support preparation unavailable | error_type=%s",
+            type(exc).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="support memory unavailable",
         ) from None
-    except (SQLAlchemyError, TimeoutError):
+    except (SQLAlchemyError, TimeoutError) as exc:
+        _SUPPORT_LOGGER.warning(
+            "Support preparation unavailable | error_type=%s",
+            type(exc).__name__,
+        )
         try:
             session.rollback()
         except SQLAlchemyError:
@@ -508,6 +668,48 @@ async def query_support(
     support_question = payload.question
     try:
         pending_before_query = memory_store.get_pending(session, conversation_id, access)
+        input_decision = classify_support_input(
+            GuardrailInput(
+                user_text=payload.question,
+                has_pending_proposal=pending_before_query is not None,
+            )
+        )
+        if _guardrail_is_terminal(input_decision):
+            record_input_decision(input_decision, run_id)
+            if pending_before_query is not None:
+                forced_action = (
+                    ConsentAction.ambiguous
+                    if input_decision.action is GuardrailAction.reject_security
+                    else ConsentAction.topic_change
+                )
+                forced_classification = ConsentClassification(
+                    proposal_id=pending_before_query.id,
+                    action=forced_action,
+                    confidence=1.0,
+                    source=ConsentSource.classifier,
+                    support_question=(
+                        None
+                        if forced_action is ConsentAction.ambiguous
+                        else payload.question
+                    ),
+                )
+                consent_result = _resolve_query_consent(
+                    session=session,
+                    memory_store=memory_store,
+                    access=access,
+                    conversation_id=conversation_id,
+                    proposal=pending_before_query,
+                    user_text=payload.question,
+                    classification=forced_classification,
+                )
+            response.headers["X-TrackFlow-Run-ID"] = run_id
+            return _to_response(
+                _guardrail_only_result(input_decision),
+                conversation_id,
+                None,
+                consent_result,
+                run_id,
+            )
         if pending_before_query is not None:
             classification: ConsentClassification | None = None
             classify = getattr(agent, "classify_pending_consent", None)
@@ -529,24 +731,14 @@ async def query_support(
                 classification = ConservativeTextConsentClassifier().classify(
                     payload.question, pending_before_query
                 )
-            idempotency_key = "query:" + hashlib.sha256(
-                (
-                    f"{access.user_id}:{pending_before_query.id}:"
-                    + " ".join(payload.question.split())
-                ).encode()
-            ).hexdigest()[:58]
-            consent_result = ConsentCoordinator(
-                memory_store,
-                _FixedConsentClassifier(classification),
-            ).handle(
-                session,
-                ConsentRequest(
-                    conversation_id=conversation_id,
-                    proposal_id=pending_before_query.id,
-                    idempotency_key=idempotency_key,
-                    user_text=payload.question,
-                ),
-                access,
+            consent_result = _resolve_query_consent(
+                session=session,
+                memory_store=memory_store,
+                access=access,
+                conversation_id=conversation_id,
+                proposal=pending_before_query,
+                user_text=payload.question,
+                classification=classification,
             )
             message = _consent_message(consent_result)
             if not consent_result.continue_support_question:
@@ -556,11 +748,34 @@ async def query_support(
                     conversation_id,
                     consent_result.resolution.replacement_proposal,
                     consent_result,
+                    run_id,
                 )
             support_question = consent_result.support_question or payload.question
+            continued_decision = classify_support_input(
+                GuardrailInput(user_text=support_question)
+            )
+            if _guardrail_is_terminal(continued_decision):
+                record_input_decision(continued_decision, run_id)
+                response.headers["X-TrackFlow-Run-ID"] = run_id
+                result = _guardrail_only_result(continued_decision)
+                return _to_response(
+                    replace(
+                        result,
+                        answer=(
+                            f"{_consent_message(consent_result)}\n\n{result.answer}"
+                        ),
+                    ),
+                    conversation_id,
+                    None,
+                    consent_result,
+                    run_id,
+                )
+            support_question = continued_decision.effective_question or support_question
             # Consent persistence commits. Restore the transaction-local timeout
             # before processing the separate support question.
             apply_statement_timeout(session, deadline)
+        else:
+            support_question = input_decision.effective_question or payload.question
     except (MemoryNotFound, MemoryConflict, MemoryForbidden, MemoryPolicyViolation) as exc:
         raise _memory_http_error(exc) from None
     except (MemoryPersistenceError, SQLAlchemyError, TimeoutError):
@@ -584,17 +799,26 @@ async def query_support(
             run_id=run_id,
             ticket_tool=mcp_tools.lookup_ticket,
             inventory_tool=mcp_tools.lookup_inventory_product,
+            tracking_tool=getattr(mcp_tools, "lookup_tracking", None),
             conversation_id=conversation_id,
             memory_client_id=payload.client_id,
             memory_scope=payload.memory_scope,
         )
-    except SupportUnavailable:
+    except SupportUnavailable as exc:
+        _SUPPORT_LOGGER.warning(
+            "Support graph unavailable | error_type=%s",
+            type(exc).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="support service unavailable",
             headers={"X-TrackFlow-Run-ID": run_id},
         ) from None
-    except Exception:
+    except Exception as exc:
+        _SUPPORT_LOGGER.warning(
+            "Support graph unavailable | error_type=%s",
+            type(exc).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="support service unavailable",
@@ -615,7 +839,7 @@ async def query_support(
             result,
             answer=f"{_consent_message(consent_result)}\n\n{result.answer}",
         )
-    return _to_response(result, conversation_id, pending, consent_result)
+    return _to_response(result, conversation_id, pending, consent_result, run_id)
 
 
 @router.post(

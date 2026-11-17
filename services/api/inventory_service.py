@@ -24,9 +24,12 @@ from sqlalchemy import text
 from sqlmodel import Session, func, select
 
 from services.api.inventory_schemas import (
+    AuthorizedTrackingResponse,
+    AuthorizedTrackingStatus,
     CommercialOrderCreate,
     CommercialOrderDispatchAppend,
     InventoryPhysicalCountCreate,
+    DispatchState,
     SKUResponse,
     StockEntryCreate,
     StockExitCreate,
@@ -59,6 +62,74 @@ class InventoryDataIntegrityError(RuntimeError):
 
 class InventoryProductNotFound(RuntimeError):
     """A product is absent or outside the caller's authorized tenant scope."""
+
+
+def lookup_authorized_tracking(
+    session: Session,
+    *,
+    tracking_number: str,
+    access: AccessContext,
+) -> AuthorizedTrackingResponse:
+    """Resolve only recorded commercial dispatches visible to ``access``.
+
+    Tenant authorization is part of the SQL statement. Duplicate analysis is
+    therefore limited to authorized rows and cannot be influenced by a record
+    belonging to another tenant.
+    """
+    from services.api.inventory_models import CommercialOrder, StockExit
+
+    normalized = tracking_number.strip()
+    if (
+        not normalized
+        or len(normalized) > 128
+        or not all(char.isalnum() or char in "._/-" for char in normalized)
+        or not normalized[0].isalnum()
+    ):
+        raise ValueError("invalid tracking number")
+
+    if not access.global_access and not access.allowed_client_ids:
+        return AuthorizedTrackingResponse(
+            status=AuthorizedTrackingStatus.NOT_FOUND,
+            tracking_number=normalized,
+        )
+
+    statement = (
+        select(CommercialOrder.order_id)
+        .select_from(StockExit)
+        .join(
+            CommercialOrder,
+            CommercialOrder.id == StockExit.commercial_order_id,
+        )
+        .where(
+            StockExit.tracking_number == normalized,
+            StockExit.exit_type == "dispatch",
+            StockExit.dispatch_id.is_not(None),
+        )
+    )
+    if not access.global_access:
+        statement = statement.where(
+            CommercialOrder.client_id.in_(access.allowed_client_ids)
+        )
+    rows = session.exec(statement).all()
+    if not rows:
+        return AuthorizedTrackingResponse(
+            status=AuthorizedTrackingStatus.NOT_FOUND,
+            tracking_number=normalized,
+        )
+
+    authorized_orders = set(rows)
+    if len(authorized_orders) != 1:
+        return AuthorizedTrackingResponse(
+            status=AuthorizedTrackingStatus.UNAVAILABLE,
+            tracking_number=normalized,
+        )
+    order_id = next(iter(authorized_orders))
+    return AuthorizedTrackingResponse(
+        status=AuthorizedTrackingStatus.FOUND,
+        tracking_number=normalized,
+        dispatch_state=DispatchState.RECORDED_DISPATCH,
+        commercial_order_id=order_id,
+    )
 
 
 def _lock_idempotency_keys(session: Session, values: list[UUID]) -> None:

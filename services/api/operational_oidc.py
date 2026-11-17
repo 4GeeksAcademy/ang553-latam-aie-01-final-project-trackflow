@@ -93,6 +93,7 @@ _ROUTE_SCOPES: dict[tuple[str, str], str] = {
     ("PATCH", "/api/incidents/{incident_id}/status"): INCIDENTS_STATUS_SCOPE,
     ("GET", "/inventory/products"): INVENTORY_READ_SCOPE,
     ("GET", "/inventory/products/{id}"): INVENTORY_READ_SCOPE,
+    ("GET", "/inventory/tracking/{tracking_number}"): INVENTORY_READ_SCOPE,
 }
 
 

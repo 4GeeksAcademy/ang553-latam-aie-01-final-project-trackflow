@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from sqlmodel import Session, select
 
 from services.api.auth_models import UserInDB
@@ -34,6 +34,7 @@ from services.api.cache import (
 from services.api.database import get_db
 from services.api.inventory_models import SKU
 from services.api.inventory_schemas import (
+    AuthorizedTrackingResponse,
     InventoryOrderListItem,
     CommercialOrderCreate,
     CommercialOrderDispatchAppend,
@@ -58,6 +59,7 @@ from services.api.inventory_service import (
     get_current_stock,
     get_current_stocks,
     list_orders,
+    lookup_authorized_tracking,
     read_inventory_product,
     require_active_inventory_client,
     update_sku_threshold,
@@ -405,6 +407,33 @@ def create_outbound_order(
         request_id=getattr(request.state, "request_id", None),
     )
     return MovementCreatedResponse(id=exit_record.id)
+
+
+# ── GET /inventory/orders ───────────────────────────────────────────────────
+
+
+@router.get(
+    "/tracking/{tracking_number}",
+    response_model=AuthorizedTrackingResponse,
+)
+def get_authorized_tracking(
+    tracking_number: Annotated[
+        str,
+        Path(
+            min_length=1,
+            max_length=128,
+            pattern=r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$",
+        ),
+    ],
+    session: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[UserInDB, Depends(get_operational_user)],
+) -> AuthorizedTrackingResponse:
+    """Return only a tenant-authorized recorded dispatch projection."""
+    return lookup_authorized_tracking(
+        session,
+        tracking_number=tracking_number,
+        access=build_access_context(session, current_user),
+    )
 
 
 # ── GET /inventory/orders ───────────────────────────────────────────────────

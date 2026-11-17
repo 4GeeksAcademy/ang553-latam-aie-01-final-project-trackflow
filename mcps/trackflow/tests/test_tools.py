@@ -53,6 +53,13 @@ PRODUCT_RESPONSE = {
     "current_stock": 4,
 }
 
+TRACKING_RESPONSE = {
+    "status": "found",
+    "tracking_number": "45821",
+    "dispatch_state": "recorded_dispatch",
+    "commercial_order_id": "550e8400-e29b-41d4-a716-446655440001",
+}
+
 CREATE_INPUT = {
     "client_id": "client-a",
     "incident_date": "2026-11-09",
@@ -125,7 +132,7 @@ def make_app(handler) -> tuple[Any, RecordingExchange, httpx.AsyncClient]:
     return app, exchange, http
 
 
-def test_discovery_exposes_only_five_named_described_tools_and_real_schemas() -> None:
+def test_discovery_exposes_only_six_named_described_tools_and_real_schemas() -> None:
     app, _exchange, http = make_app(lambda _request: httpx.Response(500))
     tools = {tool.name: tool for tool in run(app.state.mcp_server.list_tools())}
 
@@ -135,6 +142,7 @@ def test_discovery_exposes_only_five_named_described_tools_and_real_schemas() ->
         "update_incident_status",
         "list_inventory_products",
         "get_inventory_product",
+        "get_authorized_tracking",
     }
     assert all(tool.description for tool in tools.values())
     create_schema = tools["create_incident"].inputSchema["$defs"]["CreateIncidentInput"]
@@ -151,6 +159,11 @@ def test_discovery_exposes_only_five_named_described_tools_and_real_schemas() ->
         "satisfaction_score",
     }
     assert tools["list_inventory_products"].inputSchema["properties"] == {}
+    tracking_schema = tools["get_authorized_tracking"].inputSchema["$defs"][
+        "GetAuthorizedTrackingInput"
+    ]
+    assert set(tracking_schema["properties"]) == {"tracking_number"}
+    assert tracking_schema["additionalProperties"] is False
     run(http.aclose())
 
 
@@ -281,6 +294,8 @@ def test_inventory_tools_are_get_only_and_return_safe_projections() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
+        if request.url.path == "/inventory/tracking/45821":
+            return httpx.Response(200, json=TRACKING_RESPONSE)
         if request.url.path == "/inventory/products":
             return httpx.Response(200, json=[PRODUCT_RESPONSE])
         return httpx.Response(200, json=PRODUCT_RESPONSE)
@@ -295,18 +310,54 @@ def test_inventory_tools_are_get_only_and_return_safe_projections() -> None:
         {"input": {"product_id": 17}},
         scopes=(INVENTORY_READ_SCOPE,),
     )
+    tracking = authenticated_call(
+        app,
+        "get_authorized_tracking",
+        {"input": {"tracking_number": "#45821"}},
+        scopes=(INVENTORY_READ_SCOPE,),
+    )
 
     assert [(item.method, item.url.path) for item in requests] == [
         ("GET", "/inventory/products"),
         ("GET", "/inventory/products/17"),
+        ("GET", "/inventory/tracking/45821"),
     ]
     safe_fields = {"id", "name", "sku", "category", "warehouse", "current_stock"}
     assert set(listed["result"][0]) == safe_fields
     assert set(product) == safe_fields
+    assert tracking == TRACKING_RESPONSE
     assert exchange.calls == [
         ("external-mcp-token", (INVENTORY_READ_SCOPE,)),
         ("external-mcp-token", (INVENTORY_READ_SCOPE,)),
+        ("external-mcp-token", (INVENTORY_READ_SCOPE,)),
     ]
+    run(http.aclose())
+
+
+def test_tracking_not_found_strips_the_echoed_identifier_at_mcp_boundary() -> None:
+    response = {
+        "status": "not_found",
+        "tracking_number": "45821",
+        "dispatch_state": None,
+        "commercial_order_id": None,
+    }
+    app, _exchange, http = make_app(
+        lambda _request: httpx.Response(200, json=response)
+    )
+
+    tracking = authenticated_call(
+        app,
+        "get_authorized_tracking",
+        {"input": {"tracking_number": "45821"}},
+        scopes=(INVENTORY_READ_SCOPE,),
+    )
+
+    assert tracking == {
+        "status": "not_found",
+        "tracking_number": None,
+        "dispatch_state": None,
+        "commercial_order_id": None,
+    }
     run(http.aclose())
 
 
@@ -341,7 +392,14 @@ def test_inventory_adapter_rejects_mutation_before_network(method: str) -> None:
 
 @pytest.mark.parametrize(
     "path",
-    ["/auth/me", "/inventory/orders", "/inventory/products/0", "/inventory/products/-1"],
+    [
+        "/auth/me",
+        "/inventory/orders",
+        "/inventory/products/0",
+        "/inventory/products/-1",
+        "/inventory/tracking/../private",
+        "/inventory/tracking/45821?client_id=foreign",
+    ],
 )
 def test_inventory_adapter_rejects_arbitrary_get_before_network(path: str) -> None:
     network_calls = 0
@@ -452,6 +510,12 @@ def test_timeout_is_sanitized() -> None:
             (INVENTORY_READ_SCOPE,),
             {**PRODUCT_RESPONSE, "warehouse": "UNSUPPORTED_WAREHOUSE"},
         ),
+        (
+            "get_authorized_tracking",
+            {"input": {"tracking_number": "45821"}},
+            (INVENTORY_READ_SCOPE,),
+            {**TRACKING_RESPONSE, "client_id": "private-client"},
+        ),
     ],
 )
 def test_downstream_contract_drift_is_sanitized_as_unavailable(
@@ -495,16 +559,27 @@ def test_structured_log_and_correlation_header_exclude_tokens_payload_and_pii(
         scopes=(INCIDENTS_CREATE_SCOPE,),
     )
 
-    records = [record for record in caplog.records if record.message == "trackflow_mcp_tool"]
+    records = [
+        record
+        for record in caplog.records
+        if record.message.startswith("TrackFlow MCP tool event | ")
+    ]
     assert len(records) == 1
     record = records[0]
-    assert record.correlation_id == observed_correlation[0]
-    assert UUID(record.correlation_id).version == 4
+    assert UUID(observed_correlation[0]).version == 4
     assert record.tool == "create_incident"
     assert record.result == "success"
     assert record.downstream_status == 201
     assert isinstance(record.duration_ms, float)
+    event_payload = json.loads(record.message.split(" | ", 1)[1])
+    assert event_payload == {
+        "downstream_status": 201,
+        "duration_ms": record.duration_ms,
+        "result": "success",
+        "tool": "create_incident",
+    }
     serialized = caplog.text + repr(record.__dict__)
+    assert observed_correlation[0] not in serialized
     for secret in (
         "external-mcp-token",
         "downstream-trackflow-api-token",

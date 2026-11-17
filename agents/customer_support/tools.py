@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
+import re
+from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, SQLAlchemyError
@@ -17,6 +19,7 @@ from services.api.inventory_service import (
 )
 from services.incidents.service import IncidentNotFound, read_incident
 from services.rag.resilience import QueryDeadline
+from agents.customer_support.guardrail_contracts import DispatchState
 
 
 TOOL_STATEMENT_TIMEOUT_SECONDS = 5.0
@@ -62,6 +65,45 @@ class InventoryLookupResult:
     sku: str | None = None
     warehouse: str | None = None
     current_stock: int | None = None
+
+
+@dataclass(frozen=True)
+class TrackingLookupInput:
+    tracking_number: str
+
+    def __post_init__(self) -> None:
+        normalized = self.tracking_number.strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,127}", normalized):
+            raise ValueError("tracking_number must be a bounded identifier")
+        object.__setattr__(self, "tracking_number", normalized)
+
+
+@dataclass(frozen=True)
+class TrackingLookupResult:
+    status: ToolStatus
+    tracking_number: str | None = None
+    dispatch_state: DispatchState | None = None
+    commercial_order_id: UUID | None = None
+
+    def __post_init__(self) -> None:
+        if self.status is ToolStatus.ok:
+            if self.tracking_number is None:
+                raise ValueError("successful tracking lookup requires tracking_number")
+            TrackingLookupInput(self.tracking_number)
+            if self.dispatch_state is not DispatchState.recorded_dispatch:
+                raise ValueError("successful tracking lookup requires recorded_dispatch")
+            if self.commercial_order_id is None:
+                raise ValueError("successful tracking lookup requires commercial_order_id")
+            return
+        if any(
+            value is not None
+            for value in (
+                self.tracking_number,
+                self.dispatch_state,
+                self.commercial_order_id,
+            )
+        ):
+            raise ValueError("unsuccessful tracking lookup must not expose order data")
 
 
 def _is_statement_timeout(error: DBAPIError) -> bool:

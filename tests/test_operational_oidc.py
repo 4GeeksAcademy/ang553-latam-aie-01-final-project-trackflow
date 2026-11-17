@@ -136,6 +136,12 @@ def test_local_hs256_token_keeps_existing_decoder_and_user_mapping(
         ("PATCH", "/api/incidents/TRF-123456/status", "/api/incidents/{incident_id}/status", INCIDENTS_STATUS_SCOPE),
         ("GET", "/inventory/products", "/inventory/products", INVENTORY_READ_SCOPE),
         ("GET", "/inventory/products/17", "/inventory/products/{id}", INVENTORY_READ_SCOPE),
+        (
+            "GET",
+            "/inventory/tracking/45821",
+            "/inventory/tracking/{tracking_number}",
+            INVENTORY_READ_SCOPE,
+        ),
     ],
 )
 def test_external_token_accepts_only_approved_route_scope_pairs(

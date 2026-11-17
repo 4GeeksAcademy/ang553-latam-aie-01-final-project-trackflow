@@ -10,9 +10,9 @@ import pytest
 
 from agents.customer_support import CustomerSupportAgent
 from services.rag.clients import FourGeeksHTTPClient, _bounded_httpx_timeout
+from services.rag.chunking import load_knowledge_chunks
 from services.rag.config import RAGSettings, load_settings
 from services.rag.contracts import (
-    KnowledgeChunk,
     RAGConfigurationError,
     RAGProviderError,
 )
@@ -481,12 +481,11 @@ def test_langgraph_retry_stays_inside_retrieval_and_trace_is_content_free():
         sleep=clock.sleep,
         random_source=lambda: 0,
     )
-    chunk = KnowledgeChunk(
-        point_id="point-1",
-        source_document="sla-delivery",
-        section="high-demand-periods",
-        chunk_index=2,
-        text="Local deterministic context.",
+    chunk = next(
+        item
+        for item in load_knowledge_chunks()
+        if item.source_document == "sla-delivery"
+        and item.section == "high-demand-periods"
     )
 
     class Store:

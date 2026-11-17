@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from time import monotonic
@@ -13,7 +14,9 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from .auth import AuthRuntime, MCPIdentityError, MCPPermissionDenied, require_scopes
 from .contracts import (
+    AuthorizedTrackingProjection,
     CreateIncidentInput,
+    GetAuthorizedTrackingInput,
     GetIncidentInput,
     GetInventoryProductInput,
     IncidentProjection,
@@ -83,15 +86,16 @@ class ToolExecutor:
             downstream_status = exc.downstream_status
             raise ToolError(f"{exc.category}: {exc}") from None
         finally:
+            safe_event = {
+                "tool": tool,
+                "result": result_name,
+                "duration_ms": round((monotonic() - started) * 1000, 3),
+                "downstream_status": downstream_status,
+            }
             logger.info(
-                "trackflow_mcp_tool",
-                extra={
-                    "correlation_id": correlation_id,
-                    "tool": tool,
-                    "result": result_name,
-                    "duration_ms": round((monotonic() - started) * 1000, 3),
-                    "downstream_status": downstream_status,
-                },
+                "TrackFlow MCP tool event | %s",
+                json.dumps(safe_event, sort_keys=True, separators=(",", ":")),
+                extra=safe_event,
             )
 
 
@@ -169,3 +173,42 @@ def register_tools(mcp: FastMCP, executor: ToolExecutor) -> None:
                 input.product_id, token=token, correlation_id=correlation_id
             ),
         )
+
+    @mcp.tool(
+        name="get_authorized_tracking",
+        description=(
+            "Read one tenant-authorized recorded TrackFlow dispatch by tracking number. "
+            "This is not live carrier tracking."
+        ),
+    )
+    async def get_authorized_tracking(
+        input: GetAuthorizedTrackingInput,
+    ) -> AuthorizedTrackingProjection:
+        downstream = await executor.execute(
+            "get_authorized_tracking",
+            INVENTORY_READ_SCOPE,
+            lambda token, correlation_id: executor.inventory.get_authorized_tracking(
+                input.tracking_number,
+                token=token,
+                correlation_id=correlation_id,
+            ),
+        )
+        if isinstance(downstream, dict) and downstream.get("status") in {
+            "not_found",
+            "unavailable",
+        }:
+            allowed = {
+                "status",
+                "tracking_number",
+                "dispatch_state",
+                "commercial_order_id",
+            }
+            if (
+                not set(downstream).issubset(allowed)
+                or downstream.get("tracking_number") not in {None, input.tracking_number}
+                or downstream.get("dispatch_state") is not None
+                or downstream.get("commercial_order_id") is not None
+            ):
+                raise ValueError("invalid non-found tracking projection")
+            return AuthorizedTrackingProjection(status=downstream["status"])
+        return AuthorizedTrackingProjection.model_validate(downstream)

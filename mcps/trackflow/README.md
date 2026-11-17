@@ -45,18 +45,20 @@ The advertised and enforceable operation scopes are exactly
 | `update_incident_status` | `incidents:status` | `PATCH /api/incidents/{incident_id}/status` |
 | `list_inventory_products` | `inventory:read` | `GET /inventory/products` |
 | `get_inventory_product` | `inventory:read` | `GET /inventory/products/{product_id}` |
+| `get_authorized_tracking` | `inventory:read` | `GET /inventory/tracking/{tracking_number}` |
 
-The server exposes exactly five business tools:
+The server exposes exactly six business tools:
 
 - `create_incident`
 - `get_incident`
 - `update_incident_status`
 - `list_inventory_products`
 - `get_inventory_product`
+- `get_authorized_tracking`
 
 They call the existing TrackFlow HTTP API with an exchanged
 `aud=trackflow-api` bearer and propagate a UUIDv4 `X-Request-ID`. Incident and
-inventory responses are reduced to safe projections; inventory integration is
+inventory and authorized-tracking responses are reduced to safe projections; inventory integration is
 strictly GET-only. Set `TRACKFLOW_API_BASE_URL` and optionally
 `TRACKFLOW_MCP_DOWNSTREAM_TIMEOUT_SECONDS` alongside the OAuth variables.
 
@@ -100,7 +102,7 @@ The complete secret-free reproduction and cleanup procedure is in
 [`qa/README.md`](qa/README.md). The final fresh disposable gate passed
 **1 test in 13.90 s** (18.38 s command wall time): PRM, real Authorization Code
 + PKCE S256, dual-session isolation, Keycloak login/token exchange, API/MCP
-authorization, all five tools, LangGraph through `langchain-mcp-adapters`,
+authorization, the original five tools, LangGraph through `langchain-mcp-adapters`,
 tenant hiding and optimistic concurrency. An observed Keycloak 26 loopback
 Secure-cookie mismatch in Python's cookie jar and the adapter's list-shaped
 error `ToolMessage` were corrected fail-closed and covered by regression tests.
@@ -117,7 +119,8 @@ be active and have the local admin or manager role; external role and tenant
 claims are ignored.
 
 The endpoint and external support graph are async and use `graph.ainvoke`.
-Ticket and inventory nodes call `get_incident` and `get_inventory_product`
+Ticket, inventory, and recorded-dispatch nodes call `get_incident`,
+`get_inventory_product`, and `get_authorized_tracking`
 exclusively through `langchain-mcp-adapters==0.3.2`; there is no direct-service
 fallback. Clarification, RAG, shared deadlines, partial results, sanitized
 errors, traces and ephemeral checkpoints remain in the graph.

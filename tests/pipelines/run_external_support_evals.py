@@ -46,7 +46,13 @@ class StubRAG:
             raise RAGProviderError("synthetic provider failure", category="provider_error")
         return (
             RetrievalResult(
-                KnowledgeChunk("eval-point", "approved-policy", "returns", 0, "synthetic context"),
+                KnowledgeChunk(
+                    "eval-point",
+                    "returns-policy",
+                    "standard-return-process",
+                    0,
+                    "synthetic context",
+                ),
                 0.95,
             ),
         )
@@ -99,7 +105,7 @@ def _inventory(status: ToolStatus, *, stock: int = 4):
             product_id=17,
             name="Evaluation product",
             sku="EVAL-SKU",
-            warehouse="Evaluation warehouse",
+            warehouse="LA",
             current_stock=stock,
         )
 

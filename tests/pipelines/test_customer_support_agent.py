@@ -14,6 +14,7 @@ from services.rag.contracts import (
     RetrievalResult,
     SourceReference,
 )
+from services.rag.chunking import load_knowledge_chunks
 from services.rag.service import (
     INSUFFICIENT_CONTEXT_SENTINEL,
     INSUFFICIENT_INFORMATION_ANSWER,
@@ -256,7 +257,13 @@ class LocalStore:
 
 
 def equivalent_service(*, has_context: bool, generated: str) -> RAGService:
-    context = retrieved("sla-delivery", "high-demand-periods")
+    canonical = next(
+        chunk
+        for chunk in load_knowledge_chunks()
+        if chunk.source_document == "sla-delivery"
+        and chunk.section == "high-demand-periods"
+    )
+    context = RetrievalResult(canonical, score=0.9)
     results = (
         [(context.chunk.point_id, context.score, context.chunk.payload())]
         if has_context

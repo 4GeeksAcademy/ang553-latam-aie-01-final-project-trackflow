@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -70,6 +71,22 @@ class GetInventoryProductInput(BaseModel):
     product_id: int = Field(gt=0, strict=True)
 
 
+class GetAuthorizedTrackingInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tracking_number: str = Field(min_length=1, max_length=128)
+
+    @field_validator("tracking_number")
+    @classmethod
+    def normalize_tracking_number(cls, value: str) -> str:
+        normalized = value.strip()
+        if normalized.startswith("#"):
+            normalized = normalized[1:]
+        if not normalized or not normalized.replace("-", "").isalnum():
+            raise ValueError("tracking_number must be a bounded identifier")
+        return normalized
+
+
 class IncidentProjection(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -96,3 +113,32 @@ class InventoryProductProjection(BaseModel):
     category: Literal["fashion", "electronics", "cosmetics"]
     warehouse: Literal["LA", "ZGZ"]
     current_stock: int
+
+
+class AuthorizedTrackingProjection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["found", "not_found", "unavailable"]
+    tracking_number: str | None = Field(default=None, min_length=1, max_length=128)
+    dispatch_state: Literal["recorded_dispatch"] | None = None
+    commercial_order_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_projection(self) -> "AuthorizedTrackingProjection":
+        if self.status == "found":
+            if (
+                self.tracking_number is None
+                or self.dispatch_state != "recorded_dispatch"
+                or self.commercial_order_id is None
+            ):
+                raise ValueError("found tracking requires its safe dispatch projection")
+        elif any(
+            value is not None
+            for value in (
+                self.tracking_number,
+                self.dispatch_state,
+                self.commercial_order_id,
+            )
+        ):
+            raise ValueError("non-found tracking must not expose order data")
+        return self

@@ -266,3 +266,166 @@ path and confirming that it remains below the operating-system temp directory.
 Never use a broad recursive target, wildcard, repository path, or persistent
 TrackFlow data directory. Clear the secret-bearing shell environment or close
 that shell after cleanup.
+
+## SEC-114 local human acceptance
+
+`run_sec114.ps1` retains its existing automated behavior when `-Interactive`
+is omitted. Interactive mode reuses the same isolated Keycloak, PostgreSQL,
+API, MCP, synthetic seed, port checks, process ownership checks, and evidence
+directory without rerunning the tracking E2E.
+
+Run every command from the repository root in a trusted PowerShell session:
+
+```powershell
+$Sec114Evidence = Join-Path $env:TEMP "trackflow-sec114-acceptance-evidence"
+.\mcps\trackflow\qa\run_sec114.ps1 -EvidenceDirectory $Sec114Evidence -Interactive -InteractiveAction Validate
+.\mcps\trackflow\qa\run_sec114.ps1 -EvidenceDirectory $Sec114Evidence -Interactive -InteractiveAction Start
+```
+
+`Validate` does not create credentials, containers, processes, state, or
+evidence. It checks required local executables, installed Backoffice
+dependencies, the dedicated container names, and ports `28080`, `28082`,
+`28083`, `28084`, and `55441`. It also performs in-memory RNG and DPAPI
+self-tests compatible with Windows PowerShell 5.1; the probe is never printed
+or persisted. `Start` reports `SEC114_INTERACTIVE_READY` only
+after Keycloak, PostgreSQL, API, MCP, and the real Backoffice are ready. It then
+returns while those owned resources continue running.
+
+The fixed local URLs are:
+
+- Backoffice support: `http://127.0.0.1:28080/backoffice/support`
+- API documentation: `http://127.0.0.1:28083/docs`
+- Keycloak realm: `http://127.0.0.1:28082/realms/trackflow-sec114-interactive`
+- MCP: `http://127.0.0.1:28084/mcp`
+
+## Login without exposing credentials
+
+The disposable passwords are random. They are stored only as a DPAPI blob
+bound to the Windows user that started the session. The session manifest has
+URLs, PIDs, container IDs, and paths, but no passwords, tokens, or client
+secrets.
+
+First retrieve the local Backoffice credential:
+
+```powershell
+.\mcps\trackflow\qa\run_sec114.ps1 -EvidenceDirectory $Sec114Evidence -Interactive -InteractiveAction Credential -Credential Local
+```
+
+The command prints only `mcp-qa-user@example.invalid` and places its password
+in the clipboard. Paste it into `/login`. When the Support page redirects to
+Keycloak, retrieve the independent OIDC credential:
+
+```powershell
+.\mcps\trackflow\qa\run_sec114.ps1 -EvidenceDirectory $Sec114Evidence -Interactive -InteractiveAction Credential -Credential OidcTenantA
+```
+
+That command prints only `sec114-tenant-a` and replaces the clipboard with its
+password. Clear the clipboard immediately after pasting:
+
+```powershell
+Set-Clipboard -Value $null
+```
+
+Never redirect either credential command to a file or transcript. A second
+`Start` refuses to run while session state exists, so it cannot silently rotate
+credentials during acceptance.
+
+## Acceptance and sanitized evidence
+
+Use a separate conversation for each manual case when proposal state should
+not carry over. The five guardrail cases terminate before RAG, MCP tools, or
+memory evaluation. For an honest provider-independent operational case use:
+
+```text
+Check product 91001 stock.
+```
+
+The synthetic tenant-A product has computed stock `6`: the seed records seven
+inbound units and one tenant-A dispatch exit. This exercises the real
+Backoffice, OIDC, Support endpoint, MCP, API, and PostgreSQL without presenting
+a fabricated RAG response as provider output.
+
+Inspect current ownership/readiness and content-free guardrail counters with:
+
+```powershell
+.\mcps\trackflow\qa\run_sec114.ps1 -EvidenceDirectory $Sec114Evidence -Interactive -InteractiveAction Status
+```
+
+Record `sanitized_http_counts` before and after cases A-E. The `support_query`
+count must increase while `mcp_transport_post` remains unchanged. Case F is
+expected to increase `mcp_transport_post`; several protocol POSTs may implement
+one business invocation, so this value must never be reported as a tool count.
+`mcp_business_tool_counts` contains only future typed, content-free tool events.
+`mcp_legacy_unclassified_tool_events` preserves the count of older events whose
+tool identity cannot be recovered honestly. `mcp_post` remains as a compatible
+alias for `mcp_transport_post`. Missing logs yield zero/empty counts and never
+invent activity. Guardrail and typed MCP events absent from an older running
+process cannot be reconstructed retroactively.
+
+The completed visual acceptance reported A-E as `5/5 PASS` and F as a
+functional PASS. Product `91001` correctly returned `6` units (seven synthetic
+inbound units minus one authorized dispatch). That run proved the functional
+Backoffice/OIDC/Support/MCP/API/PostgreSQL path, but it predates the corrected
+INFO emitters and typed counter aggregation. It must not be reported as runtime
+proof of the new observability.
+
+For a newly started process, `guardrail_counts` keys have the closed form
+`guard_id|failure_category|action|reason_code`. The accepted failure categories
+are `structural`, `content`, and `security`. Missing logs return `{}`; malformed
+dimensions fail the deterministic self-test instead of inventing activity.
+Neither guardrail logs nor MCP business events include prompts, responses,
+credentials, tokens, client identifiers, personal identifiers, or correlation
+IDs.
+
+The deterministic counter self-test is safe while an older interactive session
+is active because it uses a unique temporary fixture directory and starts no
+service:
+
+```powershell
+.mcps\trackflow\qa\run_sec114.ps1 `
+  -EvidenceDirectory (Join-Path $env:TEMP "trackflow-sec114-observability-selftest") `
+  -ObservabilitySelfTest
+```
+
+It must print `SEC114_OBSERVABILITY_SELF_TEST_PASS`. This proves parsing and
+counting only; runtime acceptance still requires a subsequently started
+SEC-114 session.
+
+Save only cropped screenshots of the Backoffice response and the browser
+Network entry for `POST /support/query`. Exclude request headers, tokens,
+cookies, passwords, client secrets, and unrelated payloads. The expected
+guardrail response has no memory proposal, and the MCP log must show no tool
+request for the five blocked/redirected cases. Do not export a HAR.
+
+## Exclusive shutdown
+
+After the student explicitly authorizes shutdown, run:
+
+```powershell
+.\mcps\trackflow\qa\run_sec114.ps1 -EvidenceDirectory $Sec114Evidence -Interactive -InteractiveAction Stop
+```
+
+`Stop` first writes a sanitized readiness/counter summary and SHA-256 hashes
+for every file in the evidence directory. It then verifies PIDs, command-line
+markers, container names, and exact container IDs before stopping only the
+SEC-114 Backoffice, MCP, API, Keycloak, and PostgreSQL resources. Finally it
+removes the temporary DPAPI credential blob and session logs. It never performs
+global Docker cleanup and does not target MEM-092 ports or containers.
+
+If `Stop` is interrupted after exporting evidence or after terminating only
+some host processes, run the exact same command again. Recovery verifies an
+existing summary against its hash manifest and never overwrites either file.
+An absent recorded descendant is accepted only as an already-completed step;
+a reused PID, changed creation time, unexpected command marker, alien listener,
+reused container name, or mismatched container ID remains fatal. Both exact
+container names and immutable IDs are validated before any remaining resource
+is stopped. A call made after a fully completed shutdown reports
+`SEC114_INTERACTIVE_ALREADY_STOPPED` only when the manifest/state directory,
+all reserved listeners, and both reserved container names are absent.
+
+Process ownership follows the listener's parent chain to the exact launcher PID
+stored in the session manifest. It also validates loopback binding, launcher
+and service markers, session/creation time, parent links, and creation order.
+Next.js, Uvicorn, and `uv` child processes are therefore accepted only when
+they descend from that recorded launcher. Shutdown validates every service and
+container before stopping descendant processes from leaves to root.
