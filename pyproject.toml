@@ -29,13 +29,15 @@ dependencies = [
     "langgraph>=1.0.0,<2.0.0",
     "mcp>=1.28,<2",
     "langchain-mcp-adapters==0.3.2",
+    "markitdown[pdf]>=0.1.9",
+    "py-readability-metrics>=1.4.5",
 ]
 
 [project.scripts]
 seed = "services.api.seed:main"
 
 [tool.setuptools.packages.find]
-include = ["agents*", "services.api*", "services.telemetry*", "services.job_runner*", "services.task_queue*", "services.rag*", "pipelines*"]
+include = ["agents*", "services.api*", "services.telemetry*", "services.job_runner*", "services.task_queue*", "services.rag*", "services.rfp_intake*", "pipelines*", "data.pipelines.rfp_intake*"]
 namespaces = true
 
 [dependency-groups]

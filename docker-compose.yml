@@ -74,6 +74,7 @@ services:
       - RAG_EMBEDDING_CACHE_CAPACITY=${RAG_EMBEDDING_CACHE_CAPACITY:-256}
       - RAG_EMBEDDING_CACHE_TTL_SECONDS=${RAG_EMBEDDING_CACHE_TTL_SECONDS:-600}
       - RAG_MIN_SCORE=${RAG_MIN_SCORE:-0.57}
+      - RFP_ARTIFACT_ROOT=/app/data/raw/rfp_intake
     networks:
       - trackflow-dev
     volumes:
@@ -81,6 +82,7 @@ services:
       - ./services:/app/services
       - ./scripts:/app/scripts
       - ./docs/company-knowledge-base:/app/docs/company-knowledge-base:ro
+      - rfp-raw:/app/data/raw/rfp_intake
 
   # ── Scheduler (DEV-53 nightly telemetry export) ───────────────────────────
   scheduler:
@@ -156,11 +158,20 @@ services:
       - TRACKFLOW_TASK_HEARTBEAT_SECONDS=${TRACKFLOW_TASK_HEARTBEAT_SECONDS:-}
       - TRACKFLOW_TASK_RETRY_MAX_BACKOFF_SECONDS=${TRACKFLOW_TASK_RETRY_MAX_BACKOFF_SECONDS:-}
       - TRACKFLOW_WORKER_SHUTDOWN_GRACE_SECONDS=${TRACKFLOW_WORKER_SHUTDOWN_GRACE_SECONDS:-}
+      - RFP_ARTIFACT_ROOT=/app/data/raw/rfp_intake
+      - RFP_LEASE_SECONDS=600
+      - RFP_HEARTBEAT_SECONDS=60
+      - RFP_MAX_ATTEMPTS=3
+      - FOUR_GEEKS_BASE_URL=${FOUR_GEEKS_BASE_URL:-https://llm.4geeks.ai/v1}
+      - FOUR_GEEKS_API_KEY=${FOUR_GEEKS_API_KEY:-}
+      - QDRANT_URL=http://qdrant:6333
     depends_on:
       redis:
         condition: service_healthy
     networks:
       - trackflow-dev
+    volumes:
+      - rfp-raw:/app/data/raw/rfp_intake
     healthcheck:
       test:
         - CMD-SHELL
@@ -192,6 +203,29 @@ services:
       - TRACKFLOW_RELAY_LEASE_SECONDS=${TRACKFLOW_RELAY_LEASE_SECONDS:-}
       - TRACKFLOW_RELAY_MAX_BACKOFF_SECONDS=${TRACKFLOW_RELAY_MAX_BACKOFF_SECONDS:-}
       - TRACKFLOW_RELAY_MAX_PUBLISH_ATTEMPTS=${TRACKFLOW_RELAY_MAX_PUBLISH_ATTEMPTS:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - trackflow-dev
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  rfp-task-relay:
+    profiles:
+      - async-tasks
+    build:
+      context: .
+      dockerfile: services/task_queue/Dockerfile
+    command:
+      - python
+      - -m
+      - services.rfp_intake.relay
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - RFP_RELAY_POLL_SECONDS=${RFP_RELAY_POLL_SECONDS:-1}
     depends_on:
       redis:
         condition: service_healthy
@@ -267,3 +301,4 @@ volumes:
   telemetry-raw:
   celery-redis-data:
   qdrant-data:
+  rfp-raw:

@@ -1683,3 +1683,85 @@ revisión y autorización arquitectónica.
   puertos quedaron libres y la evidencia externa verificó sus hashes SHA-256.
 - El prompt SEC-114 no fue revalidado contra FourGeeks real. La credencial y el
   gate live posteriores pertenecen a MEM-092 y no acreditan este hito.
+
+## Hito 9 / Parte 1 — Gate 3 técnico — 2026-11-17
+
+- Se implementó la recepción RFP admin-only en el FastAPI y Backoffice
+  existentes: upload durable, ticket consultable, polling y separación entre
+  estado empresarial y estado técnico del job.
+- El grafo canónico vive únicamente en `data/pipelines/rfp_intake/`: clasifica
+  Markdown, extrae metadata, despacha workers concurrentes por `Send`, valida
+  el fan-in, sintetiza y produce el handoff `rfp-intake-v1`. Los responsables
+  permanecen cerrados a Ana Whitfield, Carlos Vega y Sofía Ramos.
+- PostgreSQL usa DDL explícito y metadata aislada. Ticket/job/outbox, fencing,
+  lease/heartbeat, tres intentos, backoff 30/120 y relay RFP son independientes
+  de reporting. El PDF y Markdown comparten un volumen entre API/worker bajo
+  UID 10002, sin permisos 0777 ni borrado automático.
+- PDF→Markdown ocurre antes de cualquier LLM en un subprocess terminable, con
+  límite de páginas, timeout, hash y métricas de páginas/texto/legibilidad. Los
+  tres fixtures con hashes aprobados convierten localmente; no se alteraron.
+- QA focal Python: **79 PASS**. TypeScript y ESLint focales: **PASS**. Lock,
+  compileall, `docker compose config --no-env-resolution`, builds API/worker,
+  imports en contenedor, conversión en worker y volumen compartido: **PASS**.
+  PostgreSQL 16 real en loopback/`tmpfs`: DDL, descarte transaccional, complete
+  transaccional con handoff y outbox/retry: **PASS**. Todos los recursos Docker
+  exclusivos de QA fueron retirados.
+- Pendientes honestos: envío de los tres PDFs al proveedor FourGeeks quedó
+  **BLOCKED** por requerir autorización explícita del payload externo; por ello
+  ModaViva/Luna/RapidShip no tienen aceptación viva. Redis/Celery E2E y la
+  aceptación manual posterior desde Backoffice también siguen pendientes. La
+  política productiva de acceso de Ventas no se amplió más allá de admin QA.
+
+## Hito 9 / Parte 1 — cierre E2E aislado — 2026-11-17
+
+- Un E2E opt-in ejecutó API HTTP, PostgreSQL 16 `tmpfs`, Redis, relay, Celery,
+  conversión PDF, grafo LangGraph y persistencia reales sobre una red Docker
+  interna. Solo la generación estructurada fue sustituida por un stub HTTP
+  local determinista; no se leyeron credenciales ni se llamó a FourGeeks.
+- Resultado reproducido independientemente: **1 PASS en 113.73 s**. ModaViva
+  terminó ES/EUR con `warehouse + reverse` y `lastmile=false` después de un
+  fallo estructurado recuperable (`attempt_count=2`); Luna terminó US/USD con
+  `warehouse + lastmile`, 5.000 pedidos/mes y onboarding separado de deadline;
+  RapidShip quedó `descartado/vendor_pitch`, sin workers, secciones ni handoff.
+- PostgreSQL confirmó 3 tickets/jobs succeeded, 2 análisis completos, 1
+  descarte, 3 metadata, 2 handoffs, 4 secciones, 4 intentos y 4 outboxes
+  publicados. Reentregar un `job_id` terminal dejó el snapshot sin cambios.
+  Cada directorio conservó `source.pdf` y `source.md` con UID:GID 10002:10002.
+- El E2E descubrió y corrigió dos bloqueos reales: la API normaliza ahora
+  `postgresql://` al driver `psycopg2` ya instalado, y Next.js proxyfica
+  `/rfps/:path*` hacia el backend. Regresión focal final: **81 PASS, 1 SKIP**;
+  build Backoffice, TypeScript y ESLint PASS.
+- Todos los contenedores, redes y volúmenes `trackflow-rfp-e2e-*` quedaron
+  eliminados. Las imágenes locales de QA no se publicaron. Playwright se omitió
+  porque no está instalado y añadirlo exigiría cambios de dependencias sin
+  cobertura proporcional; la aceptación manual Backoffice sigue reservada a
+  Usuario + ChatGPT. La prueba no certifica el proveedor LLM externo.
+
+## Hito 9 / Parte 1 — aceptación manual y cierre pre-commit — 2026-11-17
+
+- El Gate 3 E2E aislado quedó aprobado con PostgreSQL, Redis, Celery, relay,
+  FastAPI y LangGraph reales; únicamente la generación LLM utilizó un stub HTTP
+  local determinista.
+- En Gate 4, Usuario + ChatGPT validaron desde el Backoffice auténtico:
+  ModaViva `PASS` (`warehouse + reverse`, ES/EUR), Luna Cosmetics `PASS`
+  (`warehouse + lastmile`, US/USD, 5.000 pedidos/mes) y RapidShip `PASS`
+  (`descartado/vendor_pitch`). Un documento educativo de verbos también quedó
+  `PASS` como `descartado/not_a_request` después de ampliar exclusivamente el
+  stub para documentos ajenos a RFPs.
+- El listado RFP normaliza ahora `RFPSummary.departments_needed` de `NULL` a
+  `[]`; la regresión cubre tickets aceptados aún sin metadata y descartados.
+- Gate 5B retiró el Markdown completo de los payloads `Send`: cada worker recibe
+  solo `department_id`, metadata validada, el extracto pertinente y el conteo
+  de líneas necesario para validar citas. El fan-out concurrente, fan-in,
+  synthesizer y handoff permanecen cubiertos por pruebas focales.
+- Un smoke Linux/Docker aislado ejecutado como UID:GID `10002:10002` sobre el
+  montaje de desarrollo comprobó inicialización, escritura y lectura TinyDB,
+  login sintético y `/auth/me` con HTTP 200. No fue necesario modificar
+  Compose; los recursos efímeros exclusivos del smoke se retiraron.
+- FourGeeks real no fue utilizado ni certificado. La aceptación manual acredita
+  el flujo integrado con stub local, y el RBAC RFP permanece limitado a
+  `admin` durante QA; la política productiva para Ventas sigue pendiente.
+- Los hallazgos materiales de Gate 5 sobre aislamiento de workers y continuidad
+  de Memory Bank quedaron corregidos. La portabilidad de permisos de bind mounts
+  fuera del entorno Docker validado continúa dependiendo de ownership/ACL del
+  host y debe verificarse en cada destino Linux.

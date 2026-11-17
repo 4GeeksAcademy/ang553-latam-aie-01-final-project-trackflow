@@ -17,6 +17,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.12.5 /uv /uvx /usr/local/bin/
 
 COPY pyproject.toml uv.lock /app/
 COPY pipelines/ /app/pipelines/
+COPY data/pipelines/rfp_intake/ /app/data/pipelines/rfp_intake/
 COPY services/ /app/services/
 COPY scripts/ /app/scripts/
 
@@ -24,8 +25,8 @@ RUN rm -rf /app/services/api/data \
     && uv sync --frozen --no-dev \
     && groupadd --gid 10002 trackflow-tasks \
     && useradd --uid 10002 --gid trackflow-tasks --create-home --shell /usr/sbin/nologin trackflow-tasks \
-    && mkdir -p /app/services/api/data \
-    && chown -R trackflow-tasks:trackflow-tasks /app/services/api/data
+    && mkdir -p /app/services/api/data /app/data/raw/rfp_intake \
+    && chown -R 10002:10002 /app/services/api/data /app/data/raw/rfp_intake
 
 USER 10002:10002
 

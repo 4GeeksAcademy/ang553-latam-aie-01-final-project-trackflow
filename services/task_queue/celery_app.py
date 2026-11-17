@@ -49,7 +49,7 @@ def create_celery_app(redis_url: str | None = None) -> Celery:
         "trackflow",
         broker=resolved_url,
         backend=resolved_url,
-        include=["services.task_queue.tasks"],
+        include=["services.task_queue.tasks", "services.rfp_intake.tasks"],
     )
     app.conf.update(
         accept_content=["json"],

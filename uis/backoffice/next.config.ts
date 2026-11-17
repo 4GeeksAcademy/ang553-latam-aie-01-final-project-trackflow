@@ -58,6 +58,10 @@ const nextConfig: NextConfig = {
         source: "/support/:path*",
         destination: `${backendUrl}/support/:path*`,
       },
+      {
+        source: "/rfps/:path*",
+        destination: `${backendUrl}/rfps/:path*`,
+      },
     ];
   },
 };

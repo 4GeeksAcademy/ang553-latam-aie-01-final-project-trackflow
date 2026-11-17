@@ -63,6 +63,14 @@ export function BackofficeHeader() {
           >
             Reporting
           </Link>
+          {user?.role === "admin" && (
+            <Link
+              href="/backoffice/rfps"
+              className="text-sm font-medium text-slate-100 transition-colors hover:text-white"
+            >
+              RFPs
+            </Link>
+          )}
           {user && (user.role === "admin" || user.role === "manager") && (
             <Link
               href="/backoffice/support"
