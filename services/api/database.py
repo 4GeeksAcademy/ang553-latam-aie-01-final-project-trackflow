@@ -20,6 +20,8 @@ from typing import Generator
 from sqlmodel import SQLModel, Session, create_engine
 from tinydb import TinyDB
 
+from pipelines.database_identity import sqlalchemy_postgresql_url
+
 # ── TinyDB path ──────────────────────────────────────────────────────────────
 # Resolved relative to this file so it works regardless of the working directory.
 
@@ -60,7 +62,7 @@ def _get_engine():
                 "DATABASE_URL environment variable is required for "
                 "PostgreSQL/SQLModel operations but was not set."
             )
-        _engine = create_engine(database_url)
+        _engine = create_engine(sqlalchemy_postgresql_url(database_url))
 
     return _engine
 

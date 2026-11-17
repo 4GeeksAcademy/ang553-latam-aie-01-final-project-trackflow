@@ -41,7 +41,18 @@ RUN uv pip install --system --no-cache -r /app/services/api/requirements.txt
 COPY services/ /app/services/
 COPY scripts/ /app/scripts/
 COPY pipelines/ /app/pipelines/
+COPY data/pipelines/rfp_intake/ /app/data/pipelines/rfp_intake/
 COPY agents/ /app/agents/
+
+# API and worker share the named RFP volume under the same numeric identity.
+# Docker copies this ownership into a newly-created empty named volume.
+RUN rm -rf /app/services/api/data \
+    && groupadd --gid 10002 trackflow-api \
+    && useradd --uid 10002 --gid trackflow-api --create-home --shell /usr/sbin/nologin trackflow-api \
+    && mkdir -p /app/services/api/data /app/data/raw/rfp_intake \
+    && chown -R 10002:10002 /app/services/api/data /app/data/raw/rfp_intake
+
+USER 10002:10002
 
 # ── Runtime configuration ───────────────────────────────────────────────────
 EXPOSE 8000
