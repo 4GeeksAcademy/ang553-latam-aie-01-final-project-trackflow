@@ -143,7 +143,10 @@ def claim_outbox(session: Session, *, lease_seconds: int) -> dict[str, Any] | No
         lease_until=clock_timestamp()+(:lease*interval '1 second'),publish_attempts=publish_attempts+1,
         updated_at=clock_timestamp() WHERE outbox_id=:outbox_id RETURNING *
     """), {"token": token, "lease": lease_seconds, "outbox_id": row[0]}).mappings().one()
-    return dict(claimed)
+    result = dict(claimed)
+    result["job_kind"] = session.execute(select(rfp_jobs.c.job_kind).where(
+        rfp_jobs.c.job_id == result["job_id"])).scalar_one()
+    return result
 
 
 def finish_outbox(session: Session, *, claimed: dict[str, Any], published: bool, error_code: str | None = None) -> None:

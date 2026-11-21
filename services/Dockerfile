@@ -42,6 +42,7 @@ COPY services/ /app/services/
 COPY scripts/ /app/scripts/
 COPY pipelines/ /app/pipelines/
 COPY data/pipelines/rfp_intake/ /app/data/pipelines/rfp_intake/
+COPY data/pipelines/rfp_response/ /app/data/pipelines/rfp_response/
 COPY agents/ /app/agents/
 
 # API and worker share the named RFP volume under the same numeric identity.

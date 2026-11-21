@@ -1,11 +1,13 @@
 import { authFetch } from "@/lib/authFetch";
 import type {
   RfpDepartmentId,
+  RfpCarrierModel,
   RfpDepartmentSection,
   RfpDetectedConflict,
   RfpHandoff,
   RfpJobStatus,
   RfpJobSummary,
+  RfpGlobalComplianceStatus,
   RfpKeyAspect,
   RfpMetadata,
   RfpOpenQuestion,
@@ -16,6 +18,16 @@ import type {
   RfpTicketListItem,
   RfpTicketListResponse,
   RfpTicketStatus,
+  RfpOperationalFailure,
+  RfpPendingCommercialItem,
+  RfpPreviewStatus,
+  RfpResponseAccepted,
+  RfpResponseDepartment,
+  RfpResponseEvaluation,
+  RfpResponseGlobalTerms,
+  RfpResponsePreview,
+  RfpResponseRun,
+  RfpResponseRunStatus,
 } from "@/types/rfp";
 
 const BASE_URL: string = process.env.NEXT_PUBLIC_API_URL ?? "";
@@ -24,6 +36,9 @@ const TICKET_STATUSES = new Set<RfpTicketStatus>([
   "analizando",
   "descartado",
   "analisis_completo",
+  "generando_borrador",
+  "en_evaluación",
+  "needs_human_review",
 ]);
 const JOB_STATUSES = new Set<RfpJobStatus>([
   "queued",
@@ -37,6 +52,19 @@ const DEPARTMENTS = new Set<RfpDepartmentId>([
   "warehouse",
   "lastmile",
   "reverse",
+]);
+const RESPONSE_STATUSES = new Set<RfpResponseRunStatus>([
+  "pending", "generando_borrador", "en_evaluación", "ready_for_part3",
+  "needs_human_review", "technical_failure",
+]);
+const PREVIEW_STATUSES = new Set<RfpPreviewStatus>([
+  "passed", "blocked", "indeterminate", "technical_error",
+]);
+const CARRIER_MODELS = new Set<RfpCarrierModel>([
+  "unknown", "trackflow_managed", "customer_managed",
+]);
+const GLOBAL_COMPLIANCE_STATUSES = new Set<RfpGlobalComplianceStatus>([
+  "not_started", "en_evaluación", "passed", "failed", "technical_failure",
 ]);
 
 export class RfpApiError extends Error {
@@ -297,12 +325,152 @@ function parseJob(value: unknown): RfpJobSummary | null {
   };
 }
 
+function parseStrings(value: unknown): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    throw new Error("invalid string list");
+  }
+  return value as string[];
+}
+
+function parsePending(value: unknown): RfpPendingCommercialItem[] {
+  if (!Array.isArray(value)) throw new Error("invalid pending items");
+  return value.map((item) => {
+    if (!isRecord(item) || typeof item.code !== "string" ||
+        typeof item.description !== "string" || typeof item.owner !== "string") {
+      throw new Error("invalid pending item");
+    }
+    return { code: item.code, description: item.description, owner: item.owner };
+  });
+}
+
+function parsePreview(value: unknown): RfpResponsePreview | null {
+  if (value == null) return null;
+  if (!isRecord(value) || typeof value.gate_status !== "string" ||
+      !PREVIEW_STATUSES.has(value.gate_status as RfpPreviewStatus)) {
+    throw new Error("invalid preview");
+  }
+  const gateStatus = value.gate_status as RfpPreviewStatus;
+  const content = stringOrNull(value.content);
+  const reasonCodes = parseStrings(value.reason_codes);
+  if ((gateStatus === "passed" && (!content || reasonCodes.length > 0)) ||
+      (gateStatus !== "passed" && (content !== null || reasonCodes.length === 0))) {
+    throw new Error("unsafe preview projection");
+  }
+  return { gate_status: gateStatus, content, reason_codes: reasonCodes };
+}
+
+function parseEvaluation(value: unknown): RfpResponseEvaluation | null {
+  if (value == null) return null;
+  if (!isRecord(value) || typeof value.evaluation_id !== "string" ||
+      typeof value.overall_pass !== "boolean" ||
+      typeof value.blocks_commercial_completeness !== "boolean" ||
+      typeof value.requires_human_input !== "boolean") {
+    throw new Error("invalid evaluation");
+  }
+  return {
+    evaluation_id: value.evaluation_id,
+    overall_pass: value.overall_pass,
+    terminal_status: stringOrNull(value.terminal_status),
+    actionable_feedback: parseStrings(value.actionable_feedback),
+    missing_aspect_ids: parseStrings(value.missing_aspect_ids),
+    contradicted_aspect_ids: parseStrings(value.contradicted_aspect_ids),
+    blocks_commercial_completeness: value.blocks_commercial_completeness,
+    requires_human_input: value.requires_human_input,
+    blocking_rule_ids: parseStrings(value.blocking_rule_ids),
+  };
+}
+
+function parseDepartmentResponse(value: unknown): RfpResponseDepartment {
+  if (!isRecord(value) || typeof value.responsible !== "string" ||
+      typeof value.status !== "string" || !Number.isInteger(value.iteration_count)) {
+    throw new Error("invalid response department");
+  }
+  return {
+    department: parseDepartment(value.department), responsible: value.responsible,
+    status: value.status, iteration_count: value.iteration_count as number,
+    preview: parsePreview(value.preview), evaluation: parseEvaluation(value.evaluation),
+    pending_commercial_items: parsePending(value.pending_commercial_items),
+  };
+}
+
+function parseGlobalResponse(value: unknown): RfpResponseGlobalTerms {
+  if (!isRecord(value) || typeof value.status !== "string" ||
+      !Number.isInteger(value.iteration_count)) throw new Error("invalid global terms");
+  const complianceStatus = typeof value.compliance_status === "string"
+    ? value.compliance_status : value.status;
+  const compliancePass = value.compliance_pass == null
+    ? null : typeof value.compliance_pass === "boolean" ? value.compliance_pass : undefined;
+  if (!GLOBAL_COMPLIANCE_STATUSES.has(value.status as RfpGlobalComplianceStatus) ||
+      !GLOBAL_COMPLIANCE_STATUSES.has(complianceStatus as RfpGlobalComplianceStatus) ||
+      value.status !== complianceStatus || compliancePass === undefined ||
+      (value.evaluation_executed != null && typeof value.evaluation_executed !== "boolean")) {
+    throw new Error("invalid global compliance projection");
+  }
+  const evaluationExecuted = typeof value.evaluation_executed === "boolean"
+    ? value.evaluation_executed : value.evaluation != null;
+  if (evaluationExecuted !== (value.evaluation != null) ||
+      (compliancePass === null && (evaluationExecuted || ["passed", "failed"].includes(complianceStatus))) ||
+      (compliancePass !== null && (!evaluationExecuted || complianceStatus !== (compliancePass ? "passed" : "failed")))) {
+    throw new Error("incoherent global compliance projection");
+  }
+  return {
+    status: value.status as RfpGlobalComplianceStatus,
+    compliance_status: complianceStatus as RfpGlobalComplianceStatus,
+    compliance_pass: compliancePass,
+    evaluation_executed: evaluationExecuted,
+    iteration_count: value.iteration_count as number,
+    preview: parsePreview(value.preview), evaluation: parseEvaluation(value.evaluation),
+    pending_commercial_items: parsePending(value.pending_commercial_items),
+  };
+}
+
+function parseOperationalFailure(value: unknown): RfpOperationalFailure {
+  if (!isRecord(value) || typeof value.evaluator !== "string" ||
+      !Number.isInteger(value.infrastructure_attempts) || typeof value.error_code !== "string" ||
+      typeof value.terminal !== "boolean" || typeof value.occurred_at !== "string") {
+    throw new Error("invalid operational failure");
+  }
+  return { evaluator: value.evaluator, infrastructure_attempts: value.infrastructure_attempts as number,
+    error_code: value.error_code, terminal: value.terminal, occurred_at: value.occurred_at };
+}
+
+function parseResponseRun(value: unknown): RfpResponseRun {
+  if (!isRecord(value) || typeof value.ticket_id !== "string" || typeof value.run_id !== "string" ||
+      typeof value.status !== "string" || !RESPONSE_STATUSES.has(value.status as RfpResponseRunStatus) ||
+      typeof value.carrier_model !== "string" ||
+      !CARRIER_MODELS.has(value.carrier_model as RfpCarrierModel) ||
+      typeof value.technical_failure !== "boolean" || !Array.isArray(value.departments) ||
+      !Array.isArray(value.operational_failures) || typeof value.updated_at !== "string") {
+    throw new Error("invalid response run");
+  }
+  const outcome = stringOrNull(value.outcome);
+  if (outcome !== null && outcome !== "ready_for_part3" && outcome !== "needs_human_review") {
+    throw new Error("invalid response outcome");
+  }
+  const job = parseJob(value.job);
+  if (value.job != null && (!isRecord(value.job) || typeof value.job.job_id !== "string")) {
+    throw new Error("invalid response job");
+  }
+  return {
+    ticket_id: value.ticket_id, run_id: value.run_id,
+    carrier_model: value.carrier_model as RfpCarrierModel,
+    status: value.status as RfpResponseRunStatus, outcome,
+    technical_failure: value.technical_failure,
+    job: job && isRecord(value.job) ? { ...job, job_id: value.job.job_id as string } : null,
+    departments: value.departments.map(parseDepartmentResponse),
+    global_terms: parseGlobalResponse(value.global_terms),
+    operational_failures: value.operational_failures.map(parseOperationalFailure),
+    updated_at: value.updated_at,
+  };
+}
+
 function publicErrorMessage(status: number): string {
   if (status === 400 || status === 415 || status === 422) {
     return "El archivo no es un PDF válido para recepción.";
   }
   if (status === 403) return "Tu rol no tiene acceso a la recepción de RFPs.";
   if (status === 404) return "No se encontró el ticket solicitado.";
+  if (status === 409) return "El ticket todavía no es elegible para generar una respuesta.";
   if (status === 413) return "El PDF supera el tamaño permitido.";
   if (status >= 500) return "El servicio de RFPs no está disponible temporalmente.";
   return "No se pudo completar la operación de RFPs.";
@@ -372,4 +540,30 @@ export async function getRfpTicket(ticketId: string): Promise<RfpTicketDetail> {
   } catch {
     throw new RfpApiError("El servicio de RFPs devolvió un detalle inválido.");
   }
+}
+
+export async function startRfpResponse(
+  ticketId: string,
+  carrierModel: RfpCarrierModel,
+): Promise<RfpResponseAccepted> {
+  const value = await request(`/rfps/${encodeURIComponent(ticketId)}/response`,
+    "/rfps/{ticket_id}/response", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ carrier_model: carrierModel }),
+    });
+  if (!isRecord(value) || typeof value.ticket_id !== "string" ||
+      typeof value.run_id !== "string" || typeof value.job_id !== "string" ||
+      value.status !== "queued") {
+    throw new RfpApiError("El servicio devolvió una aceptación de respuesta inválida.");
+  }
+  return { ticket_id: value.ticket_id, run_id: value.run_id, job_id: value.job_id, status: "queued" };
+}
+
+export async function getRfpResponse(ticketId: string, runId?: string): Promise<RfpResponseRun> {
+  const suffix = runId ? `/response/${encodeURIComponent(runId)}` : "/response";
+  const template = runId ? "/rfps/{ticket_id}/response/{run_id}" : "/rfps/{ticket_id}/response";
+  const value = await request(`/rfps/${encodeURIComponent(ticketId)}${suffix}`, template);
+  try { return parseResponseRun(value); }
+  catch { throw new RfpApiError("El servicio devolvió un estado de respuesta inválido."); }
 }

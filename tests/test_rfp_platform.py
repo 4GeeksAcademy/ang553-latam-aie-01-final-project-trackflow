@@ -62,6 +62,9 @@ def test_http_contract_hides_artifact_paths_and_exposes_attempt_limit() -> None:
     assert ("/rfps", ("POST",)) in paths
     assert ("/rfps", ("GET",)) in paths
     assert ("/rfps/{ticket_id}", ("GET",)) in paths
+    assert ("/rfps/{ticket_id}/response", ("POST",)) in paths
+    assert ("/rfps/{ticket_id}/response", ("GET",)) in paths
+    assert ("/rfps/{ticket_id}/response/{run_id}", ("GET",)) in paths
 
 
 def test_list_rfps_serializes_accepted_and_discarded_tickets(monkeypatch) -> None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile, status
 from sqlmodel import Session
 
 from data.pipelines.rfp_intake.contracts import DepartmentId, RESPONSIBLE_BY_DEPARTMENT
@@ -19,6 +19,13 @@ from services.rfp_intake.contracts import (
     RFPListResponse, RFPMetadataPublic, RFPSummary, RFPTicketAccepted,
 )
 from services.rfp_intake.store import accept_rfp, get_rfp, list_rfps, ticket_exists
+from services.rfp_response.http_contracts import (
+    ResponseGenerationAccepted, ResponseGenerationStart, ResponseRunPublic,
+)
+from services.rfp_response.store import (
+    ResponsePersistenceConflict, accept_response_generation,
+    get_response_generation,
+)
 
 router = APIRouter(prefix="/rfps", tags=["RFP intake"])
 
@@ -72,6 +79,69 @@ def list_rfp_tickets(
         RFPSummary(**{**row, "departments_needed": row.get("departments_needed") or []})
         for row in rows
     ], total=total)
+
+
+@router.post("/{ticket_id}/response", status_code=status.HTTP_202_ACCEPTED,
+             response_model=ResponseGenerationAccepted)
+def start_rfp_response(
+    ticket_id: UUID,
+    user: Annotated[UserInDB, Depends(require_rfp_admin)],
+    session: Annotated[Session, Depends(get_db)],
+    payload: ResponseGenerationStart = Body(default=ResponseGenerationStart()),
+) -> ResponseGenerationAccepted:
+    """Enqueue one durable response run; no generation executes in HTTP."""
+    if not ticket_exists(session, ticket_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="RFP ticket not found")
+    try:
+        accepted = accept_response_generation(
+            session, ticket_id=ticket_id,
+            carrier_model=payload.carrier_model,
+            confirmation_actor=user.id,
+            confirmation_source="admin_response_start",
+        )
+        session.commit()
+    except ResponsePersistenceConflict as exc:
+        session.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=str(exc)) from None
+    except Exception:
+        session.rollback()
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="RFP response generation unavailable") from None
+    return ResponseGenerationAccepted(ticket_id=ticket_id, **accepted)
+
+
+def _response_run_or_error(session: Session, *, ticket_id: UUID,
+                           run_id: UUID | None = None) -> ResponseRunPublic:
+    try:
+        result = get_response_generation(session, ticket_id=ticket_id, run_id=run_id)
+    except ResponsePersistenceConflict:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="RFP response state is unavailable") from None
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="RFP response run not found")
+    return ResponseRunPublic(**result)
+
+
+@router.get("/{ticket_id}/response", response_model=ResponseRunPublic)
+def get_current_rfp_response(
+    ticket_id: UUID,
+    _user: Annotated[UserInDB, Depends(require_rfp_admin)],
+    session: Annotated[Session, Depends(get_db)],
+) -> ResponseRunPublic:
+    return _response_run_or_error(session, ticket_id=ticket_id)
+
+
+@router.get("/{ticket_id}/response/{run_id}", response_model=ResponseRunPublic)
+def get_rfp_response_run(
+    ticket_id: UUID,
+    run_id: UUID,
+    _user: Annotated[UserInDB, Depends(require_rfp_admin)],
+    session: Annotated[Session, Depends(get_db)],
+) -> ResponseRunPublic:
+    return _response_run_or_error(session, ticket_id=ticket_id, run_id=run_id)
 
 
 @router.get("/{ticket_id}", response_model=RFPDetailResponse)

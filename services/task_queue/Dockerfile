@@ -18,6 +18,8 @@ COPY --from=ghcr.io/astral-sh/uv:0.12.5 /uv /uvx /usr/local/bin/
 COPY pyproject.toml uv.lock /app/
 COPY pipelines/ /app/pipelines/
 COPY data/pipelines/rfp_intake/ /app/data/pipelines/rfp_intake/
+COPY data/pipelines/rfp_response/ /app/data/pipelines/rfp_response/
+COPY docs/company-knowledge-base/ /app/docs/company-knowledge-base/
 COPY services/ /app/services/
 COPY scripts/ /app/scripts/
 
