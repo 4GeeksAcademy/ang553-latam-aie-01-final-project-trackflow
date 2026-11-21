@@ -45,6 +45,33 @@ The API receives the same internal `REDIS_URL` for configuration coherence,
 but request acceptance is a PostgreSQL transaction and does not contact Redis.
 The independent relay is the only HTTP-to-broker delivery path.
 
+RFP intake and response generation share the existing operational outbox,
+relay, Redis broker and Celery app. Routing is closed by the persisted
+`rfp_jobs.job_kind`: `intake` publishes `trackflow.process_rfp`, while
+`response_generation` publishes `trackflow.process_rfp_response`. The response
+task loads only the persisted `rfp-intake-v1` handoff; it never reparses the PDF.
+Its PostgreSQL response-run lease is separate from Celery delivery attempts, so
+infrastructure retries do not increment the three business-generation counters.
+The response graph persists each draft before evaluation, resumes an
+unevaluated draft after interruption, and never emits `rfp-response-v1` after a
+terminal technical failure.
+
+RFP response content has two explicit provider modes. The default
+`RFP_RESPONSE_LLM_MODE=deterministic` is offline QA. Setting it to `fourgeeks`
+reuses the existing FourGeeks HTTP generation client with `FOUR_GEEKS_BASE_URL`,
+`FOUR_GEEKS_API_KEY`, and `RAG_GENERATION_MODEL`; it does not require Qdrant or
+an embedding model. `RFP_RESPONSE_LLM_MAX_CALLS`,
+`RFP_RESPONSE_LLM_MAX_INPUT_TOKENS`, `RFP_RESPONSE_LLM_MAX_OUTPUT_TOKENS`,
+`RFP_RESPONSE_LLM_MAX_CONCURRENCY`, `RFP_RESPONSE_LLM_TIMEOUT_SECONDS`, and
+`RFP_RESPONSE_LLM_REQUEST_INTERVAL_SECONDS` bound a run across parallel graph
+branches. Missing configuration, invalid structured output, exhaustion, or an
+upstream failure is technical and never switches to the deterministic provider.
+The validated output ceiling for the selected model is
+`RFP_RESPONSE_LLM_MAX_OUTPUT_TOKENS=3000`; it is a maximum per request, not a
+required token consumption. See the versioned
+[RFP response generation runbook](../../docs/operations/rfp-response-generation.md)
+for migration order, isolation checks, test commands and recovery procedures.
+
 ## PostgreSQL prerequisite
 
 Review and explicitly apply `infra/sql/reporting_async_tasks.sql` to an

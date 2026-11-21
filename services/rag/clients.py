@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import math
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -21,6 +22,122 @@ from services.rag.contracts import (
     RAGProviderError,
     VectorPoint,
 )
+
+
+JSONType = Literal["object", "array", "string", "number", "boolean", "null", "invalid"]
+FinishReason = Literal[
+    "stop", "length", "tool_calls", "content_filter", "function_call",
+    "missing", "invalid_type", "other",
+]
+
+
+@dataclass(frozen=True)
+class StructuredGenerationObservation:
+    """Content-free structural metadata for one HTTP generation response."""
+
+    http_status: int
+    content_type: str
+    json_valid: bool
+    top_level_type: JSONType
+    has_id: bool
+    has_object: bool
+    has_created: bool
+    has_model: bool
+    has_choices: bool
+    has_usage: bool
+    choices_type: JSONType
+    choices_count: int | None
+    message_type: JSONType
+    content_value_type: JSONType
+    content_length: int | None
+    finish_reason: FinishReason
+    refusal_present: bool
+    tool_calls_present: bool
+    reasoning_present: bool
+    usage_type: JSONType
+    prompt_tokens_type: JSONType
+    completion_tokens_type: JSONType
+    total_tokens_type: JSONType
+    latency_ms: float
+    configured_model: str
+
+
+def _json_type(value: object, *, valid: bool = True) -> JSONType:
+    if not valid:
+        return "invalid"
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, Mapping):
+        return "object"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, (int, float)):
+        return "number"
+    return "invalid"
+
+
+def _finish_reason(value: object, *, present: bool) -> FinishReason:
+    if not present:
+        return "missing"
+    if not isinstance(value, str):
+        return "invalid_type"
+    if value in {"stop", "length", "tool_calls", "content_filter", "function_call"}:
+        return value  # type: ignore[return-value]
+    return "other"
+
+
+def _observe_structured_response(
+    response: httpx.Response, *, configured_model: str, latency_ms: float,
+) -> StructuredGenerationObservation:
+    media_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    try:
+        body: object = response.json()
+        json_valid = True
+    except (ValueError, TypeError):
+        body = None
+        json_valid = False
+    top = body if isinstance(body, Mapping) else {}
+    choices = top.get("choices")
+    first = choices[0] if isinstance(choices, list) and choices else None
+    choice = first if isinstance(first, Mapping) else {}
+    message_value = choice.get("message")
+    message = message_value if isinstance(message_value, Mapping) else {}
+    content = message.get("content")
+    usage_value = top.get("usage")
+    usage = usage_value if isinstance(usage_value, Mapping) else {}
+    return StructuredGenerationObservation(
+        http_status=response.status_code,
+        content_type=media_type,
+        json_valid=json_valid,
+        top_level_type=_json_type(body, valid=json_valid),
+        has_id="id" in top,
+        has_object="object" in top,
+        has_created="created" in top,
+        has_model="model" in top,
+        has_choices="choices" in top,
+        has_usage="usage" in top,
+        choices_type=_json_type(choices),
+        choices_count=len(choices) if isinstance(choices, list) else None,
+        message_type=_json_type(message_value),
+        content_value_type=_json_type(content),
+        content_length=len(content) if isinstance(content, str) else None,
+        finish_reason=_finish_reason(
+            choice.get("finish_reason"), present="finish_reason" in choice),
+        refusal_present="refusal" in message,
+        tool_calls_present="tool_calls" in message,
+        reasoning_present=any(
+            field in message for field in ("reasoning", "reasoning_content", "analysis")),
+        usage_type=_json_type(usage_value),
+        prompt_tokens_type=_json_type(usage.get("prompt_tokens")),
+        completion_tokens_type=_json_type(usage.get("completion_tokens")),
+        total_tokens_type=_json_type(usage.get("total_tokens")),
+        latency_ms=max(0.0, latency_ms),
+        configured_model=configured_model,
+    )
 
 
 def _bounded_httpx_timeout(total_seconds: float) -> httpx.Timeout:
@@ -90,7 +207,10 @@ class FourGeeksHTTPClient:
         self.last_embedding_status_code: int | None = None
         self.generation_request_count = 0
         self.generation_usage: dict[str, int | float] = {}
+        self.last_generation_usage: dict[str, int | float] = {}
         self.last_generation_status_code: int | None = None
+        self.last_generation_request_id: str | None = None
+        self.last_generation_response_observation: StructuredGenerationObservation | None = None
         self._last_request_finished: float | None = None
 
     def _post(
@@ -129,10 +249,11 @@ class FourGeeksHTTPClient:
     @staticmethod
     def _record_usage(
         target: dict[str, int | float], body: Mapping[str, Any]
-    ) -> None:
+    ) -> dict[str, int | float]:
+        recorded: dict[str, int | float] = {}
         usage = body.get("usage")
         if not isinstance(usage, Mapping):
-            return
+            return recorded
         for name, value in usage.items():
             if (
                 isinstance(name, str)
@@ -141,6 +262,17 @@ class FourGeeksHTTPClient:
                 and math.isfinite(float(value))
             ):
                 target[name] = target.get(name, 0) + value
+                recorded[name] = value
+        return recorded
+
+    @staticmethod
+    def _safe_request_id(response: httpx.Response) -> str | None:
+        for name in ("x-request-id", "x-correlation-id", "request-id"):
+            value = response.headers.get(name, "").strip()
+            if (value and len(value) <= 200
+                    and all(character.isalnum() or character in "-_.:" for character in value)):
+                return value
+        return None
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -246,38 +378,54 @@ class FourGeeksHTTPClient:
         schema: Mapping[str, Any],
         schema_name: str,
         timeout_seconds: float | None = None,
+        max_output_tokens: int | None = None,
     ) -> str:
         """Return strict JSON using the already configured generation model."""
         self.last_generation_status_code = None
+        self.last_generation_request_id = None
+        self.last_generation_usage = {}
+        self.last_generation_response_observation = None
         try:
+            body: dict[str, Any] = {
+                "model": self.settings.generation_model,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                "temperature": 0,
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": schema_name,
+                        "strict": True,
+                        "schema": dict(schema),
+                    },
+                },
+            }
+            if max_output_tokens is not None:
+                if max_output_tokens < 1:
+                    raise ValueError("max_output_tokens must be positive")
+                body["max_tokens"] = max_output_tokens
+            started_clock = time.monotonic()
             response = self._post(
                 f"{self.settings.base_url}/chat/completions",
                 request_kind="generation",
                 timeout_seconds=timeout_seconds,
                 headers=self._headers(),
-                json={
-                    "model": self.settings.generation_model,
-                    "messages": [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                    "temperature": 0,
-                    "response_format": {
-                        "type": "json_schema",
-                        "json_schema": {
-                            "name": schema_name,
-                            "strict": True,
-                            "schema": dict(schema),
-                        },
-                    },
-                },
+                json=body,
+            )
+            self.last_generation_response_observation = _observe_structured_response(
+                response, configured_model=self.settings.generation_model,
+                latency_ms=(time.monotonic() - started_clock) * 1000,
             )
             self.last_generation_status_code = response.status_code
+            self.last_generation_request_id = self._safe_request_id(response)
             response.raise_for_status()
             body = response.json()
             if not isinstance(body, Mapping):
                 raise TypeError("structured generation response is not an object")
-            self._record_usage(self.generation_usage, body)
+            self.last_generation_usage = self._record_usage(
+                self.generation_usage, body)
             content = body["choices"][0]["message"]["content"]
             if not isinstance(content, str):
                 raise TypeError("structured generation content is not text")

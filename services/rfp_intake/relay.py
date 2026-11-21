@@ -20,7 +20,14 @@ logger = logging.getLogger(__name__)
 
 
 def _publish(claimed: dict[str, Any]) -> None:
-    celery_app.send_task("trackflow.process_rfp", task_id=str(claimed["outbox_id"]),
+    routes = {
+        "intake": "trackflow.process_rfp",
+        "response_generation": "trackflow.process_rfp_response",
+    }
+    task_name = routes.get(claimed.get("job_kind"))
+    if task_name is None:
+        raise ValueError("unsupported RFP job kind")
+    celery_app.send_task(task_name, task_id=str(claimed["outbox_id"]),
                          kwargs={"job_id": str(claimed["job_id"])})
 
 

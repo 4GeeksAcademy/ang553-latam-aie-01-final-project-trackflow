@@ -1765,3 +1765,456 @@ revisión y autorización arquitectónica.
   de Memory Bank quedaron corregidos. La portabilidad de permisos de bind mounts
   fuera del entorno Docker validado continúa dependiendo de ownership/ACL del
   host y debe verificarse en cada destino Linux.
+
+## Hito 9 / Parte 2 — Gate 3, Fases 1 y 2 — 2026-11-18
+
+- Se implementaron contratos cerrados para borradores departamentales y globales,
+  evaluaciones de legibilidad/relevancia/compliance, previews fail-closed y el
+  handoff `rfp-response-v1`. Un fallo técnico conserva diagnóstico operacional,
+  pero no fabrica `EvaluationResult` ni handoff consumible por Parte 3.
+- El compliance departamental y global permanece separado. SLA, moneda y tabla
+  de descuentos global usan únicamente evidencia documentada o pendientes
+  explícitos; los valores comerciales desconocidos bloquean aprobación sin ser
+  inventados. Las iteraciones departamentales y globales cuentan generaciones
+  reales y tienen límite contractual de tres.
+- La persistencia usa una migración forward explícita, metadata RFP aislada,
+  hashes canónicos, transacciones caller-owned, CAS, leases, fencing e
+  idempotencia por identidad+contenido para reconciliar COMMIT incierto. Los
+  fallos técnicos se almacenan fuera de evaluaciones y no pueden producir un
+  `rfp-response-v1` incompleto.
+- QA focal y regresión de Parte 1: **51 PASS**. PostgreSQL 16 real, efímero,
+  loopback y `tmpfs`: **2 PASS**, incluida migración repetible, ruta positiva,
+  fencing obsoleto, reconciliación idempotente y fallo técnico sin handoff. Los
+  contenedores exclusivos de QA fueron eliminados.
+- La wheel construida offline contiene `data.pipelines.rfp_response` y
+  `services.rfp_response`, y conserva los paquetes verificados de Parte 1, API,
+  RAG y pipeline. Fase 3, API, relay, Celery, grafo integrado, Backoffice y toda
+  aprobación humana continúan pendientes de autorización y revisión posterior.
+
+## Hito 9 / Parte 2 — Gate 3, Fase 3 — 2026-11-18
+
+- Se implementaron generadores departamentales para `warehouse`, `lastmile` y
+  `reverse`, además del bloque global de moneda, SLA y descuentos. Los precios
+  no documentados permanecen pendientes: no se reutilizan tarifas demo ni se
+  inventan precios de última milla, devoluciones o porcentajes de descuento.
+- Los cuatro documentos canónicos se consumen mediante fragmentos semánticos
+  mínimos con hash SHA-256. El proveedor determinista de QA recibe únicamente
+  claims aprobados y códigos pendientes; no acredita al proveedor FourGeeks.
+- La evaluación integra legibilidad bilingüe, pertinencia, compliance por
+  sección y global, feedback accionable y reducción determinista. El preview
+  falla cerrado si el contenido no puede vincularse al conjunto de claims
+  permitido. Un transportista propio no recibe tarifa ni compromiso TrackFlow.
+- QA focal más regresión de Parte 1/Fases 1–2: **69 PASS, 1 SKIP**. PostgreSQL
+  16 real, efímero, exclusivo
+  de loopback y `tmpfs`: **3 PASS**, incluida una carrera concurrente que
+  confirma un solo run idempotente y un único claim. El contenedor de QA fue
+  eliminado al terminar.
+- Siguen fuera de alcance y pendientes de autorización: grafo LangGraph
+  integrado, Celery/relay, endpoints FastAPI, Backoffice, FourGeeks real y las
+  funciones de aprobación humana de Parte 3.
+
+## Hito 9 / Parte 2 — correctivo de auditoría Gate 3 — 2026-11-18
+
+- Evaluación y persistencia comparten una única serialización y función de hash
+  canónicas. La prueba PostgreSQL genera, evalúa y persiste el mismo borrador y
+  rechaza cualquier divergencia del hash durable.
+- `rfp-response-start-v1` incorpora el resumen comercial y todos los aspectos
+  documentados de las secciones de intake. La pertinencia conserva por aspecto
+  `addressed`, `missing` o `contradicted`, y el resultado persistido incluye
+  feedback accionable e identificadores de aspectos pendientes.
+- Compliance y preview cubren promesas de devolución inferiores a 48 horas,
+  SLA de última milla gestionada, moneda por país, presencia de tabla de
+  descuentos, valores confidenciales y evidencia no correspondiente. Los
+  términos materiales se comparan contra una generación determinista autorizada
+  y el preview falla cerrado antes de exponer contenido.
+- `start_response_run` valida el handoff completo, metadata, servicios,
+  secciones, responsables y referencias antes de crear el run. El handoff final
+  reconcilia cada sección con borrador, preview y evaluación persistidos.
+- La integración PostgreSQL parte de un fixture congelado del DDL original de
+  Parte 1, conserva ticket/job/outbox históricos y aplica dos veces la migración
+  forward. Resultado observado: **5 PASS** en PostgreSQL 16 aislado. QA focal:
+  **52 PASS**. Regresión Parte 1 y Fases 1–3: **81 PASS, 6 SKIP**; los skips son
+  los E2E/PostgreSQL opt-in, cubiertos por las ejecuciones aisladas pertinentes.
+- Fase 4 continúa sin iniciarse: no se añadieron grafo integrado, Celery/relay,
+  FastAPI, Backoffice, FourGeeks real ni aprobación humana de Parte 3.
+
+## Hito 9 / Parte 2 — cierre focal previo a Fase 4 — 2026-11-18
+
+- Los requisitos del cliente y las respuestas de TrackFlow quedan separados en
+  el contrato departamental. La pertinencia exige una respuesta distinta,
+  presente y respaldada por evidencia oficial para cada aspecto; copiar una
+  solicitud o usar solo el nombre del departamento no acredita cobertura.
+- La regla de devoluciones inferiores a 48 horas reconoce horas y días en
+  inglés y español dentro de cualquier sección, pero únicamente cuando la
+  duración aparece en contexto de devolución, reembolso o logística inversa.
+- Los aspectos del intake con tarifas negociadas o confidenciales se retiran
+  del contexto mostrable al proveedor y no autorizan claims. La inspección de
+  preview bloquea una tarifa negociada de un transportista aunque exista una
+  referencia válida al handoff.
+- Una moneda deja de aprobarse automáticamente cuando el país del cliente y el
+  ámbito operativo no determinan una única regla oficial. El caso ES / US / USD
+  produce un bloqueo de completitud y revisión humana, no una corrección
+  inventada ni una aprobación silenciosa.
+- QA sobre el estado final: **63 PASS** focales; regresión de Parte 1 y Fases
+  1–3: **92 PASS, 6 SKIP** opt-in; PostgreSQL 16 aislado, loopback y `tmpfs`:
+  **5 PASS**. El contenedor efímero fue eliminado. Fase 4 permanece sin iniciar.
+
+## Hito 9 / Parte 2 — Gate 3, Fase 4 — 2026-11-18
+
+- `RFPResponseGraph` integra el handoff `rfp-intake-v1` persistido mediante un
+  fan-out LangGraph por departamento y fan-in determinista. Cada rama conserva
+  su progreso; tres evaluadores se ejecutan en paralelo y sus resultados se
+  reducen sin compartir sesiones PostgreSQL.
+- Borradores, previews, evaluaciones y fallos se persisten bajo el claim y fence
+  del response run. Una recuperación reutiliza el último borrador sin evaluar y
+  una evaluación global terminal sin handoff; solo una generación real aumenta
+  el contador empresarial, con límite exacto de tres.
+- Los fallos técnicos de evaluador reintentan el mismo borrador y conservan
+  diagnóstico. El cierre técnico del run ocurre después del fan-in, permitiendo
+  que otras ramas guarden resultados válidos; nunca se fabrica evaluación ni
+  `rfp-response-v1` en esa ruta.
+- El relay RFP existente usa routing cerrado por `job_kind`: `intake` mantiene
+  `trackflow.process_rfp` y `response_generation` usa
+  `trackflow.process_rfp_response`. Ambos comparten outbox, relay, broker y
+  backend. La aceptación concurrente produce un único response run, job y
+  outbox; redelivery reconcilia el handoff sin duplicar artefactos.
+- La legibilidad inglesa de respuesta usa fórmulas deterministas locales y no
+  depende del recurso NLTK `punkt_tab`. El feedback regenerable se conserva en
+  el contrato de cada borrador y se entrega al generador correspondiente.
+- QA final observado: regresión pertinente **134 PASS, 9 SKIP** opt-in; las
+  ocho pruebas PostgreSQL omitidas pasaron después en PostgreSQL 16 nuevo,
+  `healthy`, loopback y `tmpfs`: **8 PASS**. Los contenedores efímeros fueron
+  eliminados. Un smoke vivo adicional con Redis 7.4.1, worker Celery `solo`,
+  relay compartido, PostgreSQL y LangGraph reales terminó `succeeded` /
+  `ready_for_part3` con 2 borradores, 2 evaluaciones y 1 handoff. La redelivery
+  del mismo task id mantuvo exactamente 2/2/1 artefactos y `attempt_count=1`.
+  Worker y contenedores se retiraron. FastAPI, Backoffice, aprobación humana,
+  documento final y FourGeeks real permanecen fuera de alcance y sin iniciar.
+
+## Hito 9 / Parte 2 — Gate 3, Fase 5 — 2026-11-18
+
+- FastAPI amplía las rutas administrativas RFP existentes para aceptar de forma
+  idempotente un response run persistente y consultar el run actual o uno
+  concreto. La solicitud HTTP solo crea run/job/outbox; la generación continúa
+  exclusivamente mediante el relay y Celery compartidos.
+- La proyección HTTP valida contratos e integridad hash antes de responder. No
+  expone payloads de borrador ni referencias diagnósticas, y elimina contenido
+  de previews `blocked`, `indeterminate` o `technical_error` aunque una fila
+  inconsistente contuviera texto.
+- El Backoffice RFP existente permite iniciar la generación en tickets
+  `analisis_completo`, consulta progreso e iteraciones por departamento, muestra
+  feedback y pendientes con responsable, y renderiza solamente previews
+  `passed`. Distingue aprobación automática, revisión humana y fallo operativo;
+  no incorpora acciones de aprobación ni documento final de Parte 3.
+- QA focal de API, seguridad, OpenAPI y regresión RFP: **111 PASS**. PostgreSQL 16
+  efímero verificado como `healthy`, loopback y `tmpfs`: **8 PASS**, incluida
+  proyección recuperable del handoff y concurrencia/idempotencia. ESLint de los
+  tres archivos Backoffice afectados y `tsc --noEmit`: PASS.
+- El build Next compiló el código en el primer intento, pero la validación
+  completa no pudo cerrarse porque el entorno de dependencias existente carece
+  de `@vercel/turbopack/postcss`. El lint completo conserva tres errores y un
+  warning preexistentes fuera de RFP. La regresión global final ejecutó
+  **1415 PASS, 50 SKIP, 1 DESELECTED**; el único test excluido fue el fallo
+  preexistente y reproducible en
+  `test_invalidate_products_preserves_orders` ajeno a RFP. No se modificaron
+  dependencias ni cache de inventario para ocultarlos; los artefactos temporales
+  y el contenedor de QA fueron retirados.
+
+## Hito 9 / Parte 2 — Gate 3, Fase 6 — 2026-11-18
+
+- El E2E aislado ejecutó FastAPI, outbox/relay, Redis, Celery, LangGraph y
+  PostgreSQL 16 reales con proveedores deterministas. Cuatro solicitudes HTTP
+  fueron consumidas concurrentemente por cuatro hilos Celery y terminaron en
+  menos de un segundo por task; persistieron 4 runs, 4 jobs/outbox publicados,
+  11 borradores, 11 evaluaciones y 4 handoffs.
+  La redelivery de un job terminal mantuvo 2 borradores, 2 evaluaciones,
+  `attempt_count=1` y un único handoff.
+- Los Dockerfiles de API y worker ahora empaquetan el pipeline
+  `data/pipelines/rfp_response`; el worker incluye además los cuatro documentos
+  oficiales requeridos por los generadores. Las imágenes QA se construyeron y
+  ejecutaron correctamente sin publicar artefactos ni usar FourGeeks real.
+- Una instalación limpia con `npm ci` resolvió la ausencia de
+  `@vercel/turbopack/postcss`: era un `node_modules` local incompleto, no un
+  defecto de manifiesto. `next build`, ESLint focal y `tsc --noEmit` pasaron. El
+  Backoffice real permitió login administrativo, inicio asíncrono, progreso,
+  iteraciones y previews seguros, sin controles de aprobación humana.
+- QA final: E2E vivo **2 PASS**; PostgreSQL aislado **8 PASS**; regresión RFP
+  focal **87 PASS**; suite completa **1416 PASS, 52 SKIP, 1 DESELECTED**. El test
+  excluido `test_invalidate_products_preserves_orders` falla de forma
+  reproducible y sus dos archivos son idénticos al baseline `2f3076e`.
+- El escenario de transportista propio está cubierto de forma determinista en
+  el grafo, pero no pudo atravesar HTTP porque `rfp-intake-v1` no transporta ese
+  dato; no se amplió el contrato durante Fase 6. La aceptación E2E integral
+  permanece pendiente de decisión sobre esa limitación y de la revisión humana
+  de estos resultados.
+
+## Hito 9 / Parte 2 — Gate 3, Fase 6.1 — 2026-11-19
+
+- El POST administrativo de response generation acepta el modelo triestado
+  `unknown`, `trackflow_managed` o `customer_managed`; omitir el cuerpo conserva
+  `unknown` por compatibilidad. El Backoffice exige una selección explícita y
+  no presenta la confirmación como extracción de `rfp-intake-v1`.
+- Cada run conserva un snapshot inmutable del modelo, actor, procedencia y fecha.
+  La migración PostgreSQL es forward y repetible: los runs previos reciben
+  `unknown` / `legacy_migration` sin perder artefactos. Repetir el mismo contexto
+  devuelve el run existente y un modelo incompatible produce conflicto 409.
+- La decisión se transforma al campo triestado existente
+  `customer_managed_carrier`. Su evidencia usa el dominio separado
+  `admin-confirmation` y un hash del snapshot; los campos internos de auditoría
+  no se exponen en la proyección HTTP.
+- El E2E real aislado Backoffice/API/relay/Celery/LangGraph/PostgreSQL confirmó:
+  `customer_managed` sin precio ni SLA atribuible a TrackFlow, `unknown` con
+  `CARRIER_MODEL_REQUIRED`, y `trackflow_managed` con SLA aplicable y
+  `LAST_MILE_RATE_REQUIRED`. Una redelivery no duplicó artefactos.
+- QA final: E2E Fase 6.1 **1 PASS**; regresión focal **71 PASS**; PostgreSQL 16
+  aislado **12 PASS**; suite completa **1418 PASS, 57 SKIP, 1 DESELECTED**.
+  El escenario técnico terminal controlado conservó diagnóstico y produjo cero
+  handoffs/evaluaciones; fue una inyección en el límite del store, no una caída
+  natural del evaluador HTTP. Durante polling concurrente se observó un 503
+  fail-closed transitorio y la lectura posterior fue consistente.
+- Riesgo pendiente: el proveedor determinista genera una frase que no satisface
+  legibilidad; `customer_managed` termina tras tres borradores en
+  `needs_human_review` aunque no tenga bloqueo comercial. No se debilitó esa
+  evaluación ni se declaró aprobación automática.
+
+## Hito 9 / Parte 2 — Gate de aceptación manual, correctivo final — 2026-11-19
+
+- El preview global usa una allowlist construida en backend: moneda, SLA,
+  exclusiones, descuentos y pendientes. La proyección HTTP reconstruye esa
+  vista incluso para previews antiguos, mientras UUID, hashes, evidencia y
+  payload completo permanecen únicamente en PostgreSQL.
+- `customer_managed_carrier=None` ya no activa el requisito de tarifa. Unknown
+  conserva `CARRIER_MODEL_REQUIRED` con Carlos Vega; TrackFlow-managed requiere
+  `LAST_MILE_RATE_REQUIRED`; customer-managed mantiene tarifa y SLA no
+  aplicables.
+- Backoffice traduce estados de job, generación, evaluación departamental y
+  global; separa obligaciones comerciales de recomendaciones de calidad y
+  legibilidad, renderiza términos globales en campos y tabla, y contiene el
+  ancho en layouts estrechos.
+- El proveedor determinista consume el feedback de legibilidad: simplifica
+  afirmaciones sustentadas sin cambiar umbrales. El E2E correctivo
+  customer-managed pasó en la segunda generación; unknown terminó en revisión
+  humana con un único pendiente de modelo.
+- QA: **57 PASS** focales iniciales, **91 PASS** de regresión RFP, **12 PASS**
+  PostgreSQL aislado, ESLint/TypeScript/build Next PASS, y suite completa
+  **1420 PASS, 57 SKIP, 1 DESELECTED**. La comprobación visual confirmó preview
+  legible, estados españoles, separación de feedback y ausencia de overflow.
+
+## Hito 9 / Parte 2 — Gate LLM, Etapa A — 2026-11-20
+
+- El runtime de response generation admite modos explícitos `deterministic` y
+  `fourgeeks`. El segundo reutiliza `FourGeeksHTTPClient` solo para generación
+  estructurada, sin Qdrant ni embeddings, y falla técnicamente ante
+  configuración ausente, error upstream, presupuesto agotado o salida inválida;
+  no existe fallback silencioso.
+- El adaptador FourGeeks genera segmentos departamentales para Warehouse, Last
+  Mile y Reverse con JSON Schema cerrado. Cada segmento cita claims autorizados
+  y una barrera determinista valida cobertura léxica, cifras, unidades y
+  polaridad antes de convertir la redacción en un claim trazable. Precios,
+  términos globales, compliance, legibilidad y safety gate siguen en backend.
+- La pertinencia LLM produce `addressed`, `missing` o `contradicted` por
+  `aspect_id`, con claim IDs verificables y feedback accionable. El grafo pasa
+  ese feedback a la siguiente generación y conserva el máximo de tres
+  borradores reales; reintentos técnicos no incrementan ese contador.
+- Presupuesto, concurrencia, pacing, timeout y tokens de entrada/salida son
+  configurables y compartidos thread-safe por run. PostgreSQL persiste solo
+  metadatos seguros de invocación bajo fencing, sin prompts ni respuestas.
+- QA sin llamadas externas: regresión focal de response **84 PASS**; API/E2E
+  **9 PASS, 2 SKIP**; PostgreSQL 16 exclusivo, loopback y `tmpfs` **13 PASS**.
+  El suite principal terminó **1444 PASS, 58 SKIP, 1 FAIL**; el único fallo es
+  `test_invalidate_products_preserves_orders`, ya reproducido en el baseline.
+  La recolección del suite raíz adicional permanece bloqueada por dependencias
+  opcionales MCP ausentes (`trackflow_mcp`, `mcpauth`). No se llamó al gateway
+  real ni se consumió API; el contenedor QA fue eliminado al finalizar.
+
+## Hito 9 / Parte 2 — Gate LLM, B0/B0.1 — 2026-11-20
+
+- B0 realizó una solicitud real de generación al Gateway FourGeeks y se detuvo
+  ante `validation_error` HTTP 200, sin ejecutar pertinencia. B0.1 añadió una
+  observación process-local que conserva solo estructura y tipos de la
+  respuesta, nunca prompts, contenido, claves o cabeceras.
+- La única llamada diagnóstica adicional confirmó JSON OpenAI-compatible:
+  `choices` contenía un elemento con `message` objeto, pero `content` era null,
+  `finish_reason=length` y había campo de razonamiento. El proveedor reportó
+  1050 tokens de prompt, 600 de completion y 1650 totales; el límite completo
+  de salida se consumió antes de producir contenido final.
+- Acumulado B0: exactamente **2 solicitudes reales**, sin reintentos,
+  embeddings, fallback ni evaluación semántica. JSON Schema no queda validado
+  end-to-end porque no existió contenido estructurado. La corrección mínima
+  propuesta es autorizar un límite de completion mayor manteniendo modelo y
+  schema, o confirmar documentalmente un parámetro soportado para desactivar
+  razonamiento; ninguna variante fue ejecutada. Regresión offline del cliente y
+  adaptador: **91 PASS**.
+
+## Hito 9 / Parte 2 — Gate LLM, B0.2 — 2026-11-20
+
+- Una verificación offline confirmó que el cliente transmite exactamente
+  `max_tokens=3000` manteniendo JSON Schema estricto. La única generación real
+  Warehouse autorizada terminó HTTP 200 con `finish_reason=stop` y contenido
+  textual no vacío.
+- El proveedor reportó 560 tokens de prompt, 1413 de completion y 1973 totales.
+  La respuesta validó JSON Schema y Pydantic; produjo tres claims sustentados,
+  tres términos comerciales, cero pendientes y superó grounding y safe preview
+  como `verified_safe`, sin reason codes.
+- Se usó el modelo aprobado `online/openrouter/deepseek/deepseek-v4-flash`, una
+  sola solicitud, concurrencia 1, cero reintentos, embeddings, fallback o
+  evaluación semántica. B0.2 se detuvo tras la generación conforme al gate.
+
+## Hito 9 / Parte 2 — Gate LLM, B0.3 — 2026-11-20
+
+- El borrador efímero de B0.2 no estaba persistido, por lo que se reconstruyó
+  explícitamente un fixture Warehouse sintético equivalente mediante claims y
+  evidencias oficiales; su preview previo fue `verified_safe`. No se efectuó
+  otra generación.
+- La única evaluación semántica real autorizada terminó HTTP 200 con
+  `finish_reason=stop`, JSON Schema y Pydantic válidos. El aspecto
+  `warehouse:smoke:1-2` fue clasificado `addressed`, score 100, con tres
+  referencias a claims realmente visibles y explicación presente.
+- La validación determinista confirmó que todas las referencias pertenecían al
+  borrador autorizado. No hubo feedback porque no existieron aspectos missing
+  o contradicted. El proveedor reportó 809 tokens de prompt, 557 de completion
+  y 1366 totales; se usó una llamada, concurrencia 1, sin reintentos,
+  embeddings, fallback, infraestructura compartida ni E2E B1.
+
+## Hito 9 / Parte 2 — Gate LLM, B1A — 2026-11-20
+
+- Se ejecutó un único E2E real Warehouse en infraestructura Docker exclusiva:
+  FastAPI, PostgreSQL/outbox, relay, Redis, Celery, LangGraph, Gateway FourGeeks,
+  persistencia y lectura API. PostgreSQL y Redis no publicaron puertos y usaron
+  almacenamiento `tmpfs` dentro de la red aislada `trackflow-rfp-b1a-net`.
+- El run `3e950458-ffff-4f60-98ae-20be73f09605` consumió exactamente dos
+  llamadas reales compartiendo un presupuesto global de seis: generación
+  departamental y pertinencia. Ambas terminaron `succeeded` con el modelo
+  `online/openrouter/deepseek/deepseek-v4-flash`; se reportaron 2829 tokens en
+  total (1395 prompt y 1434 completion) y cero fallos técnicos.
+- Warehouse terminó en una generación: legibilidad aprobada (51.4978),
+  pertinencia 100 con el aspecto atendido y compliance departamental aprobado.
+  El hash evaluado coincide con el hash canónico del borrador. Compliance global,
+  grounding y ambos safety gates aprobaron; se persistieron dos borradores, dos
+  evaluaciones, cuatro resultados de evaluador, dos previews y un handoff
+  `rfp-response-v1` con outcome `ready_for_part3`.
+- La lectura autenticada de API devolvió HTTP 200 y únicamente previews con gate
+  `passed`; el job Celery/outbox se publicó una vez y terminó `succeeded` en un
+  intento. Regresiones offline: **35 PASS** (LLM + Fase 4) y **9 PASS** (API).
+- Limitación: el status HTTP exacto del Gateway no queda persistido en la
+  telemetría del run; `outcome=succeeded` y los tokens prueban respuesta válida,
+  pero no permiten informar el código histórico sin inferencia. La comprobación
+  visual del Backoffice quedó bloqueada por el entorno de automatización: el
+  navegador integrado no hidrató la app y el control de Edge se detuvo al no
+  poder verificar con seguridad la URL activa. No se ejecutó un segundo
+  escenario ni se consumieron llamadas LLM adicionales.
+
+## Hito 9 / Parte 2 — Gate LLM, B1B — 2026-11-20
+
+- Se ejecutó un único escenario real Warehouse + Last Mile en infraestructura
+  B1B exclusiva, con operación US, USD, volumen mensual de 20 m³ y modelo de
+  transportista `trackflow_managed`. El presupuesto global fue 12 llamadas,
+  2.500 tokens de entrada, 3.000 de salida y concurrencia máxima 2.
+- El grafo realizó cinco llamadas FourGeeks: generación Warehouse exitosa,
+  tres intentos técnicos de generación Last Mile rechazados por
+  `contract_validation`, y pertinencia Warehouse exitosa. Las dos primeras
+  generaciones se solaparon temporalmente, acreditando concurrencia real sin
+  sobrescritura. Se consumieron 2.634 tokens de prompt y 2.118 de completion.
+- Warehouse terminó `passed` en una generación, con legibilidad 54,8092,
+  pertinencia 100, compliance aprobado, hash coincidente y preview seguro con
+  las tarifas y condiciones documentadas de Los Ángeles. Last Mile quedó en
+  `technical_failure` con cero generaciones empresariales: no se persistió ni
+  expuso una salida inválida, y los tres intentos técnicos no incrementaron su
+  contador empresarial.
+- El run terminó `technical_failure`, el job `failed` con
+  `response_technical_failure`, global no se inició y se generaron cero
+  handoffs. La rama Warehouse se conservó con su borrador, evaluación y preview.
+  La API devolvió HTTP 200, omitió payloads, contenido interno y referencias de
+  diagnóstico, y no expuso preview Last Mile.
+- El entorno B1B permanece encendido para aceptación manual en loopback; no se
+  ejecutó otro escenario ni se modificó Parte 3, Git o infraestructura
+  compartida. La contraseña administrativa aleatoria se conserva solo como hash
+  en el volumen aislado y se copió al portapapeles local de Windows.
+
+## Hito 9 / Parte 2 — B1B diagnóstico Last Mile — 2026-11-20
+
+- La respuesta FourGeeks original no se persistió, por diseño, y la telemetría
+  histórica agrupó Pydantic, referencias, grounding y pendientes bajo
+  `contract_validation`; por ello no es posible atribuir honestamente el fallo
+  B1B a una ruta concreta retrospectiva. Sí se demostró una brecha contractual:
+  Last Mile exigía `LAST_MILE_RATE_REQUIRED` en un validador posterior, mientras
+  el JSON Schema enviado solo declaraba un array arbitrario de strings.
+- La generación ahora incluye `required_pending_codes` como dato explícito y
+  especializa el schema por ejecución con cardinalidad exacta y enum permitido.
+  El validador determinista posterior permanece intacto. La tarifa sigue
+  pendiente, sin valor ni moneda, y el backend —no el LLM— renderiza el pendiente.
+- Las invocaciones inválidas nuevas conservan únicamente ruta, tipo de error,
+  tipo de dato recibido y restricción violada. No almacenan valores, respuestas,
+  prompts ni reasoning. Pydantic y las validaciones deterministas ya no se
+  colapsan en una sola categoría.
+- Una violación estructurada determinista se detiene tras un intento técnico;
+  timeouts y fallos transitorios mantienen la política de reintentos. Los fallos
+  empresariales siguen usando feedback y generaciones reales hasta el máximo de
+  tres. Esto evita repetir a temperatura cero llamadas idénticas que no pueden
+  corregirse sin cambiar contrato o prompt.
+- QA sin tráfico externo: regresión focal **108 PASS**, clasificación de
+  reintentos **52 PASS**, regresión RFP completa **127 PASS, 16 SKIP** y
+  PostgreSQL 16 aislado **13 PASS**. El run B1B permanece intacto con cinco
+  llamadas, un borrador Warehouse y cero handoffs; su infraestructura sigue
+  encendida para revisión manual.
+
+## Hito 9 / Parte 2 — Gate LLM B1B.1 Last Mile — 2026-11-20
+
+- El preflight offline del adaptador y grafo pasó **47/47 pruebas**. El proceso
+  real cargó `services/rfp_response/llm.py` desde el worktree correctivo actual,
+  con modo FourGeeks explícito, presupuesto global de dos llamadas,
+  concurrencia uno, salida máxima de 3.000 tokens y sin fallback.
+- Se realizaron exactamente dos llamadas reales al modelo
+  `online/openrouter/deepseek/deepseek-v4-flash`: generación Last Mile y
+  pertinencia del mismo borrador. Ambas devolvieron HTTP 200, `finish_reason`
+  `stop`, JSON Schema y Pydantic válidos. El consumo informado fue 1.245 tokens
+  de prompt y 1.109 de completion (2.354 total), con latencias HTTP de
+  10.237,544 ms y 3.206,782 ms respectivamente.
+- La generación produjo exactamente `LAST_MILE_RATE_REQUIRED`; la tarifa quedó
+  `pending`, sin valor ni moneda. Grounding determinista y safety aprobaron, el
+  preview seguro quedó disponible y no se detectó precio inventado.
+- La pertinencia calificó el aspecto sintético como `addressed` con dos claims
+  visibles, score 100 y evidencia determinista válida. El hash del borrador no
+  cambió y coincide con el hash asociado a la evaluación.
+- El éxito fue técnico, no comercial: compliance departamental falló con
+  `TF-COMMERCIAL-001`, `blocks_commercial_completeness=true`,
+  `requires_human_input=true`, `overall_pass=false` y terminal
+  `needs_human_input`. No hubo embeddings, reintentos automáticos ni llamadas
+  adicionales, y el entorno B1B histórico no se modificó ni reinició.
+
+## Hito 9 / Parte 2 — B1B.2, aceptación visual y cierre pre-PR — 2026-11-20
+
+- El E2E B1B.2 ejecutó una RFP sintética Warehouse + Last Mile mediante
+  FastAPI, outbox, relay, Redis, Celery, LangGraph, PostgreSQL y FourGeeks real.
+  Consumó exactamente cuatro llamadas: generación y pertinencia para cada
+  departamento, sin fallback ni fallos técnicos. Warehouse terminó `passed` en
+  la primera generación; Last Mile terminó `needs_human_input` en la primera
+  generación con `LAST_MILE_RATE_REQUIRED`, sin inventar tarifa.
+- Compliance global aprobó moneda USD, SLA aplicable del 90 % y la estructura
+  documentada de descuentos. El handoff durable `rfp-response-v1` conservó
+  ambos borradores y evaluaciones con outcome `needs_human_review`. El job
+  técnico terminó `succeeded` en un intento.
+- Se corrigió exclusivamente la proyección HTTP/presentación global: el estado
+  visible se deriva de `global_compliance.passed`, mientras el outcome
+  consolidado permanece separado. Usuario + ChatGPT verificaron visualmente en
+  Backoffice Warehouse aprobado, Last Mile con información humana pendiente,
+  términos globales aprobados, propuesta en revisión humana y job finalizado.
+- La auditoría pre-PR no encontró secretos, `.env` privados, artefactos QA
+  crudos ni archivos ajenos a Parte 2. Confirmó que `rfp-response-v1` referencia
+  borradores y evaluaciones recuperables. Detectó dos bloqueos de entrega: el
+  antiguo techo publicado de salida no reproducía los E2E reales y faltaba un
+  runbook estable de migración/operación/pruebas.
+- El techo configurable `RFP_RESPONSE_LLM_MAX_OUTPUT_TOKENS` queda alineado en
+  código, `.env.example` y documentación a **3000 tokens máximos por solicitud**;
+  no representa consumo obligatorio. Se mantiene el presupuesto global, entrada
+  máxima, concurrencia, pacing, timeout, modelo, JSON Schema y prohibición de
+  fallback. El runbook versionado vive en
+  `docs/operations/rfp-response-generation.md`.
+- QA final offline: configuración/grafo/API/Backoffice **70 PASS**; regresión
+  RFP completa **141 PASS, 16 SKIP** opt-in; suite principal **1470 PASS,
+  58 SKIP, 1 FAIL**. El único fallo,
+  `test_invalidate_products_preserves_orders`, y sus archivos relevantes son
+  idénticos al baseline `2f3076e`. La colección adicional de `mcps/trackflow`
+  permanece bloqueada por dependencias opcionales ausentes (`trackflow_mcp` y
+  `mcpauth`). Los skips PostgreSQL/E2E requieren infraestructura aislada y no se
+  ejecutaron durante este cierre. No se realizaron llamadas FourGeeks nuevas.

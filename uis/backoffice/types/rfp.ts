@@ -1,4 +1,10 @@
-export type RfpTicketStatus = "analizando" | "descartado" | "analisis_completo";
+export type RfpTicketStatus =
+  | "analizando"
+  | "descartado"
+  | "analisis_completo"
+  | "generando_borrador"
+  | "en_evaluación"
+  | "needs_human_review";
 
 export type RfpJobStatus =
   | "queued"
@@ -104,4 +110,97 @@ export interface RfpTicketDetail extends RfpTicketListItem {
 export interface RfpTicketListResponse {
   items: RfpTicketListItem[];
   total: number;
+}
+
+export type RfpResponseRunStatus =
+  | "pending"
+  | "generando_borrador"
+  | "en_evaluación"
+  | "ready_for_part3"
+  | "needs_human_review"
+  | "technical_failure";
+
+export type RfpCarrierModel = "unknown" | "trackflow_managed" | "customer_managed";
+
+export type RfpPreviewStatus = "passed" | "blocked" | "indeterminate" | "technical_error";
+
+export type RfpGlobalComplianceStatus =
+  | "not_started"
+  | "en_evaluación"
+  | "passed"
+  | "failed"
+  | "technical_failure";
+
+export interface RfpResponseAccepted {
+  ticket_id: string;
+  run_id: string;
+  job_id: string;
+  status: "queued";
+}
+
+export interface RfpResponsePreview {
+  gate_status: RfpPreviewStatus;
+  content: string | null;
+  reason_codes: string[];
+}
+
+export interface RfpResponseEvaluation {
+  evaluation_id: string;
+  overall_pass: boolean;
+  terminal_status: string | null;
+  actionable_feedback: string[];
+  missing_aspect_ids: string[];
+  contradicted_aspect_ids: string[];
+  blocks_commercial_completeness: boolean;
+  requires_human_input: boolean;
+  blocking_rule_ids: string[];
+}
+
+export interface RfpPendingCommercialItem {
+  code: string;
+  description: string;
+  owner: string;
+}
+
+export interface RfpResponseDepartment {
+  department: RfpDepartmentId;
+  responsible: string;
+  status: string;
+  iteration_count: number;
+  preview: RfpResponsePreview | null;
+  evaluation: RfpResponseEvaluation | null;
+  pending_commercial_items: RfpPendingCommercialItem[];
+}
+
+export interface RfpResponseGlobalTerms {
+  status: RfpGlobalComplianceStatus;
+  compliance_status: RfpGlobalComplianceStatus;
+  compliance_pass: boolean | null;
+  evaluation_executed: boolean;
+  iteration_count: number;
+  preview: RfpResponsePreview | null;
+  evaluation: RfpResponseEvaluation | null;
+  pending_commercial_items: RfpPendingCommercialItem[];
+}
+
+export interface RfpOperationalFailure {
+  evaluator: string;
+  infrastructure_attempts: number;
+  error_code: string;
+  terminal: boolean;
+  occurred_at: string;
+}
+
+export interface RfpResponseRun {
+  ticket_id: string;
+  run_id: string;
+  carrier_model: RfpCarrierModel;
+  status: RfpResponseRunStatus;
+  outcome: "ready_for_part3" | "needs_human_review" | null;
+  technical_failure: boolean;
+  job: (RfpJobSummary & { job_id: string }) | null;
+  departments: RfpResponseDepartment[];
+  global_terms: RfpResponseGlobalTerms;
+  operational_failures: RfpOperationalFailure[];
+  updated_at: string;
 }

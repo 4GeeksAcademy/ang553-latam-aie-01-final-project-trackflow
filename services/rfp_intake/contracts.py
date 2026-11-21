@@ -8,7 +8,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-TicketStatus = Literal["analizando", "descartado", "analisis_completo"]
+TicketStatus = Literal[
+    "analizando", "descartado", "analisis_completo", "generando_borrador",
+    "en_evaluación", "needs_human_review",
+]
 JobStatus = Literal["queued", "running", "retry_wait", "succeeded", "failed", "dead_letter"]
 
 

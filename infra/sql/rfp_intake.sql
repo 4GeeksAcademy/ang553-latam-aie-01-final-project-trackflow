@@ -2,7 +2,7 @@
 BEGIN;
 CREATE TABLE IF NOT EXISTS rfp_tickets (
  ticket_id uuid PRIMARY KEY, rfp_id text,
- status text NOT NULL CHECK(status IN ('analizando','descartado','analisis_completo')),
+ status text NOT NULL CHECK(status IN ('analizando','descartado','analisis_completo','generando_borrador','en_evaluación','needs_human_review')),
  raw_pdf_path text NOT NULL, markdown_path text, discard_reason_code text, discard_summary text,
  uploaded_by_subject text NOT NULL, created_at timestamptz NOT NULL DEFAULT clock_timestamp(), updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  CONSTRAINT rfp_ticket_discard_shape_ck CHECK ((status='descartado' AND discard_reason_code IS NOT NULL) OR (status<>'descartado' AND discard_reason_code IS NULL AND discard_summary IS NULL)));
@@ -25,12 +25,13 @@ CREATE TABLE IF NOT EXISTS rfp_handoffs (
  payload jsonb NOT NULL CHECK(jsonb_typeof(payload)='object'), created_at timestamptz NOT NULL DEFAULT clock_timestamp());
 CREATE TABLE IF NOT EXISTS rfp_jobs (
  job_id uuid PRIMARY KEY, ticket_id uuid NOT NULL REFERENCES rfp_tickets(ticket_id) ON DELETE RESTRICT,
+ job_kind text NOT NULL DEFAULT 'intake' CHECK(job_kind IN ('intake','response_generation')),
  status text NOT NULL CHECK(status IN ('queued','running','retry_wait','succeeded','failed','dead_letter')),
  attempt_count integer NOT NULL DEFAULT 0 CHECK(attempt_count BETWEEN 0 AND 3), max_attempts integer NOT NULL DEFAULT 3 CHECK(max_attempts=3),
  next_attempt_at timestamptz, claim_token uuid, execution_epoch integer NOT NULL DEFAULT 0 CHECK(execution_epoch>=0),
  lease_until timestamptz, heartbeat_at timestamptz, last_error_code text, last_error_summary text,
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(), updated_at timestamptz NOT NULL DEFAULT clock_timestamp());
-CREATE UNIQUE INDEX IF NOT EXISTS uq_rfp_active_job_per_ticket ON rfp_jobs(ticket_id) WHERE status IN ('queued','running','retry_wait');
+CREATE UNIQUE INDEX IF NOT EXISTS uq_rfp_active_job_per_ticket ON rfp_jobs(ticket_id,job_kind) WHERE status IN ('queued','running','retry_wait');
 CREATE INDEX IF NOT EXISTS ix_rfp_job_ticket ON rfp_jobs(ticket_id,created_at DESC);
 CREATE TABLE IF NOT EXISTS rfp_outbox (
  outbox_id uuid PRIMARY KEY, job_id uuid NOT NULL REFERENCES rfp_jobs(job_id) ON DELETE RESTRICT,
