@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
-from fastapi import HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, UploadFile
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.schema import CreateTable
@@ -58,13 +58,19 @@ def test_invalid_pdf_signature_is_rejected(tmp_path: Path) -> None:
 def test_http_contract_hides_artifact_paths_and_exposes_attempt_limit() -> None:
     fields = set(RFPJobPublic.model_fields)
     assert fields == {"status", "attempt_count", "max_attempts", "last_error_code", "last_error_summary"}
-    paths = {(route.path, tuple(sorted(route.methods or []))) for route in router.routes}
-    assert ("/rfps", ("POST",)) in paths
-    assert ("/rfps", ("GET",)) in paths
-    assert ("/rfps/{ticket_id}", ("GET",)) in paths
-    assert ("/rfps/{ticket_id}/response", ("POST",)) in paths
-    assert ("/rfps/{ticket_id}/response", ("GET",)) in paths
-    assert ("/rfps/{ticket_id}/response/{run_id}", ("GET",)) in paths
+    app = FastAPI()
+    app.include_router(router)
+    paths = app.openapi()["paths"]
+    assert {"post", "get"} <= set(paths["/rfps"])
+    assert "get" in paths["/rfps/{ticket_id}"]
+    assert {"post", "get"} <= set(paths["/rfps/{ticket_id}/response"])
+    assert "get" in paths["/rfps/{ticket_id}/response/{run_id}"]
+    assert "get" in paths["/rfps/notifications/snapshot"]
+    assert "get" in paths["/rfps/notifications/{ticket_id}"]
+    stream = paths["/rfps/notifications/stream"]["get"]
+    assert set(stream["responses"]["200"]["content"]) == {"text/event-stream"}
+    assert any(parameter["name"] == "Last-Event-ID" and parameter["in"] == "header"
+               for parameter in stream["parameters"])
 
 
 def test_list_rfps_serializes_accepted_and_discarded_tickets(monkeypatch) -> None:

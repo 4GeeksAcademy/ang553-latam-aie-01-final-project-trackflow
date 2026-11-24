@@ -7,6 +7,7 @@ Uses bcrypt via passlib for password operations and python-jose for JWT.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
@@ -15,7 +16,7 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.hash import bcrypt
 
-from services.api.auth_database import users as _users_db
+from services.api.auth_database import auth_storage_access, users as _users_db
 from services.api.auth_models import UserInDB
 from services.api.auth_settings import (
     JWT_ALGORITHM,
@@ -147,52 +148,67 @@ def decode_password_reset_token(token: str) -> dict[str, str]:
 _oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 
+@auth_storage_access()
 def _find_user_by_id(user_id: str) -> UserInDB | None:
     """Look up a user by their TinyDB id string."""
-    from tinydb import Query as _TinyQuery
-
-    q = _TinyQuery()
-    results = _users_db.search(q.id == user_id)
-    if not results:
-        return None
-    return UserInDB(**results[0])
+    # Avoid TinyDB's query cache when checking current identity and role.
+    for row in _users_db.all():
+        if row.get("id") == user_id:
+            return UserInDB(**row)
+    return None
 
 
-def get_current_user(token: Annotated[str, Depends(_oauth2_scheme)]) -> UserInDB:
-    """Dependency — extract and validate the JWT, return the authenticated user.
-
-    Raises ``401 Unauthorized`` if:
-    - no token provided
-    - token is invalid (bad signature, malformed)
-    - token is expired
-    - ``sub`` claim is missing
-    - ``sub`` does not match an existing user
-    - user is inactive
-    """
-    credentials_exception = HTTPException(
+def _unauthorized() -> HTTPException:
+    return HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
 
+def _decode_access_token(token: str) -> dict:
     try:
         payload = jwt.decode(
             token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM]
         )
-        sub: str | None = payload.get("sub")
-        if sub is None:
-            raise credentials_exception
+        sub = payload.get("sub")
+        if not isinstance(sub, str) or not sub:
+            raise _unauthorized()
         token_type = payload.get("type")
         if token_type not in (None, "access"):
-            raise credentials_exception
-    except JWTError:
-        raise credentials_exception
+            raise _unauthorized()
+    except (JWTError, TypeError, ValueError):
+        raise _unauthorized() from None
+    return payload
 
-    user = _find_user_by_id(sub)
-    if user is None:
-        raise credentials_exception
 
-    if not user.is_active:
-        raise credentials_exception
-
+def get_current_user(token: Annotated[str, Depends(_oauth2_scheme)]) -> UserInDB:
+    """Validate the access JWT and resolve the existing active user."""
+    user = _find_user_by_id(_decode_access_token(token)["sub"])
+    if user is None or not user.is_active:
+        raise _unauthorized()
     return user
+
+
+@dataclass(frozen=True)
+class ExpiringAccessSession:
+    user_id: str
+    expires_at: int
+
+    def current_user(self) -> UserInDB:
+        if datetime.now(timezone.utc).timestamp() >= self.expires_at:
+            raise _unauthorized()
+        user = _find_user_by_id(self.user_id)
+        if user is None or not user.is_active:
+            raise _unauthorized()
+        return user
+
+
+def get_expiring_access_session(
+    token: Annotated[str, Depends(_oauth2_scheme)],
+) -> ExpiringAccessSession:
+    """Verify a JWT whose explicit expiration bounds a long-lived response."""
+    payload = _decode_access_token(token)
+    expiry = payload.get("exp")
+    if type(expiry) is not int:
+        raise _unauthorized()
+    return ExpiringAccessSession(user_id=payload["sub"], expires_at=expiry)

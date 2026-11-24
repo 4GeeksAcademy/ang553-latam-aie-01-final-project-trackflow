@@ -257,11 +257,12 @@ def test_rfp_http_outbox_celery_graph_postgres_e2e() -> None:
             timeout=30, description="PostgreSQL",
         )
         assert _psql(names["postgres"], "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'") == "0"
-        ddl = (ROOT / "infra" / "sql" / "rfp_intake.sql").read_text(encoding="utf-8")
-        _docker(
-            "exec", "-i", names["postgres"], "psql", "-v", "ON_ERROR_STOP=1", "-U",
-            "trackflow_rfp_test", "-d", "trackflow_rfp_test", check=True, input_text=ddl,
-        )
+        for migration in ("rfp_intake.sql", "rfp_sse.sql"):
+            ddl = (ROOT / "infra" / "sql" / migration).read_text(encoding="utf-8")
+            _docker(
+                "exec", "-i", names["postgres"], "psql", "-v", "ON_ERROR_STOP=1", "-U",
+                "trackflow_rfp_test", "-d", "trackflow_rfp_test", check=True, input_text=ddl,
+            )
 
         _run_container(
             names["redis"], names["network"], "redis:7.4.1-alpine",

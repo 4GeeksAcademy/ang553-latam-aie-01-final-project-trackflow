@@ -227,6 +227,30 @@ class RFPExecutionResult(StrictContract):
     handoff: RFPHandoff | None
 
 
+class RFPIntakeDecision(StrictContract):
+    """Durable state needed to resume at the validated intake boundary."""
+
+    version: Literal[1] = 1
+    ticket_id: UUID
+    markdown_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    classification: ClassificationDecision
+    metadata: RFPMetadata
+    conversion_metrics: ConversionMetrics
+
+    @model_validator(mode="after")
+    def processable(self) -> "RFPIntakeDecision":
+        requested = {service.service_id for service in self.metadata.services_requested if service.requested}
+        if not self.classification.is_valid_rfp or not requested or (
+            self.metadata.departments_needed != [department for department in DepartmentId if department in requested]
+        ):
+            raise ValueError("intake decision must be valid and routed")
+        return self
+
+
+class RFPIntakeDecisionSink(Protocol):
+    def persist_intake_decision(self, decision: RFPIntakeDecision) -> None: ...
+
+
 class RFPResultSink(Protocol):
     """Persistence boundary. Implementations own the PostgreSQL transaction."""
 

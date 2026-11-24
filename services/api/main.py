@@ -18,10 +18,12 @@ from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from scripts.incidents.analyzer import analyze_records, export_results_csv, load_csv
 from scripts.incidents import CsvLoadError
+from services.api.auth_database import AuthStoreUnavailable
 from services.api.auth_security import get_current_user
 from services.api.database import create_db_and_tables
 from services.api.routes.auth import router as auth_router
@@ -141,6 +143,11 @@ app = FastAPI(
     ),
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(AuthStoreUnavailable)
+async def _auth_store_unavailable(_request: Request, _error: AuthStoreUnavailable) -> JSONResponse:
+    return JSONResponse(status_code=503, content={"detail": "Authentication storage is temporarily unavailable"})
 
 # ── Allowed file extensions for upload validation ────────────────────────────
 

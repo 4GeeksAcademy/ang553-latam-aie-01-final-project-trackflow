@@ -6,9 +6,11 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import insert, update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session
 
-from data.pipelines.rfp_intake.contracts import DepartmentId, RESPONSIBLE_BY_DEPARTMENT
+from data.pipelines.rfp_intake.contracts import DepartmentId, RESPONSIBLE_BY_DEPARTMENT, RFPIntakeDecision
+from services.rfp_intake.intake_events import get_intake_decision, record_intake_decision, require_intake_claim
 from services.rfp_intake.models import rfp_department_sections, rfp_handoffs, rfp_metadata, rfp_tickets
 from services.rfp_intake.store import finish_job
 
@@ -33,8 +35,22 @@ class PostgresRFPResultSink:
     def __init__(self, session: Session, job: dict[str, Any]) -> None:
         self._session, self._job = session, job
 
+    def persist_intake_decision(self, decision: RFPIntakeDecision) -> None:
+        record_intake_decision(self._session, self._job, decision)
+        try:
+            self._session.commit()
+        except SQLAlchemyError:
+            self._session.rollback()
+            with Session(self._session.get_bind()) as reconciliation:
+                if get_intake_decision(reconciliation, decision.ticket_id) != decision:
+                    raise
+                require_intake_claim(reconciliation, self._job)
+
     def persist_discard(self, ticket_id: UUID, classification: Any,
                         conversion_metrics: Any, readability_metrics: Any) -> None:
+        require_intake_claim(self._session, self._job)
+        if get_intake_decision(self._session, ticket_id) is not None:
+            raise ValueError("A committed intake decision cannot be discarded")
         classification_data = _dump(classification)
         self._session.execute(insert(rfp_metadata).values(
             ticket_id=ticket_id, services_requested=[], departments_needed=[],
@@ -50,6 +66,7 @@ class PostgresRFPResultSink:
 
     def persist_complete(self, ticket_id: UUID, metadata: Any, sections: Any, handoff: Any,
                          conversion_metrics: Any, readability_metrics: Any) -> None:
+        require_intake_claim(self._session, self._job)
         metadata_data, section_rows, handoff_data = _dump(metadata), _dump(sections), _dump(handoff)
         departments = list(metadata_data.get("departments_needed", []))
         section_ids = [row["department_id"] for row in section_rows]

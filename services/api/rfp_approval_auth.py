@@ -61,13 +61,18 @@ def _credentials_exception() -> HTTPException:
 
 def _verified_local(token: str) -> RFPApprovalAuthentication:
     user = get_current_user(token)
+    return RFPApprovalAuthentication(user=user, context=verified_local_context(user))
+
+
+def verified_local_context(user: UserInDB) -> VerifiedAuthenticationContext:
+    """Build the local binding context for an already JWT-verified user."""
     environment = _environment()
     issuer = (
         "trackflow-local"
         if environment == "production"
         else "urn:trackflow:qa:local"
     )
-    context = VerifiedAuthenticationContext._from_verified_authenticator(
+    return VerifiedAuthenticationContext._from_verified_authenticator(
         environment=environment,
         auth_source="local",
         issuer=issuer,
@@ -75,7 +80,6 @@ def _verified_local(token: str) -> RFPApprovalAuthentication:
         trackflow_user_id=user.id,
         general_role=user.role.value,
     )
-    return RFPApprovalAuthentication(user=user, context=context)
 
 
 def _verified_oidc(token: str) -> RFPApprovalAuthentication:
