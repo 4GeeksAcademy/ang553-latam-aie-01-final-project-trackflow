@@ -3,11 +3,13 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { AuthGuard } from "@/components/layout/AuthGuard";
 import { BackofficeHeader } from "@/components/layout/BackofficeHeader";
+import { RfpApprovalInbox } from "@/components/rfp/RfpApprovalInbox";
 import { useAuth } from "@/lib/AuthContext";
-import { getRfpResponse, getRfpTicket, listRfpTickets, RfpApiError, startRfpResponse, uploadRfp } from "@/lib/rfpApi";
-import type { RfpCarrierModel, RfpDepartmentId, RfpJobStatus, RfpResponseEvaluation, RfpResponseGlobalTerms, RfpResponsePreview, RfpResponseRun, RfpSourceReference, RfpTicketDetail, RfpTicketListItem, RfpTicketStatus } from "@/types/rfp";
+import { getRfpFinalDocumentForTicket, getRfpResponse, getRfpTicket, listRfpTickets, RfpApiError, startRfpResponse, uploadRfp } from "@/lib/rfpApi";
+import type { RfpCarrierModel, RfpDepartmentId, RfpFinalDocument, RfpJobStatus, RfpResponseEvaluation, RfpResponseGlobalTerms, RfpResponsePreview, RfpResponseRun, RfpSourceReference, RfpTicketDetail, RfpTicketListItem, RfpTicketStatus } from "@/types/rfp";
 
 const POLL_INTERVAL_MS = 3000;
+const SELECTED_TICKET_STORAGE_KEY = "trackflow.rfp.selected-ticket";
 const DEPARTMENT_LABELS: Record<RfpDepartmentId, string> = {
   warehouse: "Warehouse Operations",
   lastmile: "Last Mile and Carrier Management",
@@ -20,6 +22,8 @@ const TICKET_LABELS: Record<RfpTicketStatus, string> = {
   generando_borrador: "Generando borrador",
   en_evaluación: "En evaluación",
   needs_human_review: "Revisión humana necesaria",
+  esperando_aprobación: "Esperando aprobación",
+  terminado: "Terminado",
 };
 const JOB_LABELS: Record<RfpJobStatus, string> = {
   queued: "En cola",
@@ -101,8 +105,9 @@ function isPollingTerminal(detail: RfpTicketDetail): boolean {
 }
 
 function statusClasses(status: RfpTicketStatus): string {
+  if (status === "terminado") return "border-emerald-400/30 bg-emerald-950/40 text-emerald-200";
   if (status === "analisis_completo" || status === "en_evaluación") return "border-emerald-400/30 bg-emerald-950/40 text-emerald-200";
-  if (status === "needs_human_review") return "border-amber-400/30 bg-amber-950/40 text-amber-200";
+  if (status === "needs_human_review" || status === "esperando_aprobación") return "border-amber-400/30 bg-amber-950/40 text-amber-200";
   if (status === "descartado") return "border-amber-400/30 bg-amber-950/40 text-amber-200";
   return "border-cyan-400/30 bg-cyan-950/40 text-cyan-200";
 }
@@ -297,6 +302,36 @@ function TicketDetail({ detail }: { detail: RfpTicketDetail }) {
   );
 }
 
+function FinalDocumentAccess({ document }: { document: RfpFinalDocument }) {
+  const markdownUrl = () => URL.createObjectURL(
+    new Blob([document.markdown], { type: "text/markdown;charset=utf-8" }),
+  );
+  const openDocument = () => {
+    const url = markdownUrl();
+    window.open(url, "_blank", "noopener,noreferrer");
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  };
+  const downloadDocument = () => {
+    const url = markdownUrl();
+    const link = window.document.createElement("a");
+    link.href = url;
+    link.download = document.download_filename;
+    window.document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
+  return <section className="rounded-2xl border border-emerald-400/30 bg-emerald-950/20 p-5" aria-label="Documento final del ticket">
+    <h3 className="font-semibold text-emerald-100">Documento final</h3>
+    <p className="mt-1 text-sm text-slate-300">{document.title}</p>
+    <div className="mt-3 flex flex-wrap gap-3">
+      <button type="button" onClick={openDocument} className="rounded-lg border border-emerald-300/30 px-4 py-2 text-sm font-medium text-emerald-100 hover:bg-emerald-900/40">Abrir Markdown</button>
+      <button type="button" onClick={downloadDocument} className="rounded-lg bg-emerald-300 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-200">Descargar .md</button>
+    </div>
+    <p className="mt-2 break-all text-xs text-slate-500">Documento {document.final_document_id} · hash {document.markdown_hash}</p>
+  </section>;
+}
+
 function RfpPageContent() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
@@ -306,6 +341,9 @@ function RfpPageContent() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<RfpTicketDetail | null>(null);
   const [response, setResponse] = useState<RfpResponseRun | null>(null);
+  const [finalDocument, setFinalDocument] = useState<RfpFinalDocument | null>(null);
+  const [finalDocumentError, setFinalDocumentError] = useState<string | null>(null);
+  const [isLoadingFinalDocument, setIsLoadingFinalDocument] = useState(false);
   const [isStartingResponse, setIsStartingResponse] = useState(false);
   const [carrierModel, setCarrierModel] = useState<RfpCarrierModel | "">("");
   const [pollKey, setPollKey] = useState(0);
@@ -313,6 +351,16 @@ function RfpPageContent() {
   const [isLoadingList, setIsLoadingList] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [acceptance, setAcceptance] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    const restored = window.sessionStorage.getItem(SELECTED_TICKET_STORAGE_KEY);
+    if (restored) setSelectedId(restored);
+  }, [isAdmin]);
+  useEffect(() => {
+    if (!isAdmin || !selectedId) return;
+    window.sessionStorage.setItem(SELECTED_TICKET_STORAGE_KEY, selectedId);
+  }, [isAdmin, selectedId]);
 
   const loadList = useCallback(async () => {
     if (!isAdmin) return;
@@ -352,6 +400,23 @@ function RfpPageContent() {
     void poll();
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
   }, [isAdmin, loadDetail, loadResponse, pollKey, selectedId]);
+  useEffect(() => {
+    setFinalDocument(null);
+    setFinalDocumentError(null);
+    if (!isAdmin || !detail || detail.status !== "terminado" ||
+        selectedId !== detail.ticket_id) return;
+    let cancelled = false;
+    setIsLoadingFinalDocument(true);
+    void getRfpFinalDocumentForTicket(detail.ticket_id)
+      .then((document) => { if (!cancelled) setFinalDocument(document); })
+      .catch((caught: unknown) => {
+        if (!cancelled) setFinalDocumentError(
+          caught instanceof Error ? caught.message : "No se pudo cargar el documento final.",
+        );
+      })
+      .finally(() => { if (!cancelled) setIsLoadingFinalDocument(false); });
+    return () => { cancelled = true; };
+  }, [detail, isAdmin, selectedId]);
 
   const beginResponse = async () => {
     if (!selectedId || !carrierModel) return;
@@ -380,10 +445,12 @@ function RfpPageContent() {
     } finally { setIsUploading(false); }
   };
 
-  if (!isAdmin) return <section role="alert" className="rounded-2xl border border-rose-400/30 bg-rose-950/30 p-5 text-sm text-rose-200">Tu rol no tiene acceso a la recepción de RFPs. Esta función está limitada a administradores durante QA.</section>;
+  if (!isAdmin) return <RfpApprovalInbox />;
 
   return (
-    <div className="grid min-w-0 max-w-full gap-8 overflow-hidden xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+    <div className="space-y-8">
+      <RfpApprovalInbox />
+      <div className="grid min-w-0 max-w-full gap-8 overflow-hidden xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
       <div className="min-w-0 space-y-6 overflow-hidden">
         <form onSubmit={submit} className="rounded-2xl border border-white/10 bg-slate-900/70 p-6">
           <h2 className="text-lg font-semibold text-white">Nueva recepción</h2><p className="mt-2 text-sm text-slate-400">Cada carga crea un ticket independiente y continúa en segundo plano.</p>
@@ -403,8 +470,12 @@ function RfpPageContent() {
         </section>
       </div>
       <div className="min-w-0 space-y-5 overflow-hidden">{detail && selectedId === detail.ticket_id ? <><TicketDetail detail={detail} />
+        {isLoadingFinalDocument && <p className="rounded-xl border border-white/10 p-4 text-sm text-slate-400">Comprobando documento final…</p>}
+        {finalDocumentError && <p role="alert" className="rounded-xl border border-amber-400/30 bg-amber-950/20 p-4 text-sm text-amber-100">{finalDocumentError}</p>}
+        {finalDocument && <FinalDocumentAccess document={finalDocument} />}
         {detail.status === "analisis_completo" && !response && <section className="rounded-2xl border border-white/10 bg-slate-900/70 p-5"><label htmlFor="carrier-model" className="block text-sm font-semibold text-white">Modelo de transportista confirmado</label><p className="mt-1 text-xs text-slate-400">Selecciona explícitamente el modelo operativo. Esta confirmación administrativa no procede del documento RFP.</p><select id="carrier-model" value={carrierModel} onChange={(event) => setCarrierModel(event.target.value as RfpCarrierModel | "")} disabled={isStartingResponse} className="mt-4 w-full rounded-xl border border-white/10 bg-slate-950 p-3 text-sm text-slate-200"><option value="">Selecciona una opción…</option><option value="unknown">Sin confirmar</option><option value="trackflow_managed">Gestionado por TrackFlow</option><option value="customer_managed">Gestionado por el cliente</option></select><button type="button" onClick={() => void beginResponse()} disabled={isStartingResponse || !carrierModel} className="mt-4 w-full rounded-xl bg-cyan-400 px-5 py-3 text-sm font-semibold text-slate-950 hover:bg-cyan-300 disabled:opacity-60">{isStartingResponse ? "Iniciando…" : "Iniciar generación de respuesta"}</button></section>}
         {response && response.ticket_id === detail.ticket_id && <ResponseProgress response={response} />}</> : <section className="rounded-2xl border border-dashed border-white/15 bg-slate-900/40 p-8 text-center text-sm text-slate-400">Selecciona un ticket para consultar su estado y resultado.</section>}</div>
+      </div>
     </div>
   );
 }

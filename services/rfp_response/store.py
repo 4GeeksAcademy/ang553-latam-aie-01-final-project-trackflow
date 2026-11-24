@@ -19,8 +19,8 @@ from data.pipelines.rfp_response.contracts import (
 from data.pipelines.rfp_response.compliance import serialize_global_public_preview
 from data.pipelines.rfp_response.hashing import canonical_hash, canonical_value
 from data.pipelines.rfp_intake.contracts import (
-    BudgetRange, DepartmentId, DepartmentSection, RFPHandoff, ServiceRequest,
-    SourceReference,
+    BudgetRange, DepartmentId, DepartmentSection, ReadabilityReport, RFPHandoff,
+    ServiceRequest, SourceReference,
 )
 from data.pipelines.rfp_intake.contracts import RESPONSIBLE_BY_DEPARTMENT
 from services.rfp_intake.models import (
@@ -69,6 +69,7 @@ def _validated_intake_context(session: Session, *, ticket_id: UUID,
             "operation_country_codes", "services_requested", "monthly_volume_value",
             "monthly_volume_unit", "monthly_volume_source_ref", "deadline",
             "onboarding_target", "budget_range", "currency", "departments_needed",
+            "readability_metrics",
         )}
         if metadata["client_country_code"] not in {None, "US", "ES"}:
             raise ValueError("invalid client country")
@@ -116,6 +117,20 @@ def _validated_intake_context(session: Session, *, ticket_id: UUID,
 
 
 _CARRIER_MODELS = {"unknown", "trackflow_managed", "customer_managed"}
+
+
+def _response_language_from_intake(readability_metrics: Any) -> str:
+    """Select a supported document language from Parte 1's persisted report."""
+    try:
+        report = ReadabilityReport.model_validate(readability_metrics, strict=False)
+    except Exception:
+        return "en"
+    languages = {metric.language for metric in report.metrics}
+    if len(languages) == 1:
+        language = next(iter(languages))
+        if language in {"en", "es"}:
+            return language
+    return "en"
 
 
 def start_response_run(session: Session, *, ticket_id: UUID,
@@ -419,7 +434,7 @@ def get_response_generation(session: Session, *, ticket_id: UUID,
 
 
 def load_response_start(session: Session, *, run_id: UUID,
-                        language: str = "en") -> RFPResponseStart:
+                        language: str | None = None) -> RFPResponseStart:
     run = session.execute(select(rfp_response_runs).where(
         rfp_response_runs.c.run_id == run_id)).mappings().one_or_none()
     if run is None:
@@ -451,6 +466,9 @@ def load_response_start(session: Session, *, run_id: UUID,
         "m3", "cubic meter", "cubic meters", "metro cubico", "metros cubicos",
         "metro cúbico", "metros cúbicos",
     } else None
+    selected_language = language or _response_language_from_intake(
+        metadata["readability_metrics"]
+    )
     return RFPResponseStart(ticket_id=run["ticket_id"], run_id=run_id,
         source_handoff_hash=run["source_handoff_hash"],
         summary_for_sales=handoff.summary_for_sales, key_aspects=aspects,
@@ -466,7 +484,7 @@ def load_response_start(session: Session, *, run_id: UUID,
             "source": run["carrier_confirmation_source"],
             "confirmed_at": run["carrier_confirmed_at"],
         }),
-        language=language)
+        language=selected_language)
 
 
 def claim_response_run(session: Session, run_id: UUID, *, lease_seconds: int) -> dict[str, Any] | None:

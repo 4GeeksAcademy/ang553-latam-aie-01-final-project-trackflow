@@ -63,7 +63,7 @@ export function BackofficeHeader() {
           >
             Reporting
           </Link>
-          {user?.role === "admin" && (
+          {user && (
             <Link
               href="/backoffice/rfps"
               className="text-sm font-medium text-slate-100 transition-colors hover:text-white"

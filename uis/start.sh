@@ -29,7 +29,7 @@ website_pid=$!
 # ---- backoffice ----
 cd /app/uis/backoffice
 echo ">>> Starting backoffice on 0.0.0.0:3001 ..."
-npm run dev -- --hostname 0.0.0.0 --port 3001 &
+NODE_ENV=production npm run start -- --hostname 0.0.0.0 --port 3001 &
 backoffice_pid=$!
 
 # ---- Monitor loop: detect exit of either process ----

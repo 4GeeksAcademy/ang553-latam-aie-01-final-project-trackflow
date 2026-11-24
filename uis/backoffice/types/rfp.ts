@@ -4,7 +4,9 @@ export type RfpTicketStatus =
   | "analisis_completo"
   | "generando_borrador"
   | "en_evaluación"
-  | "needs_human_review";
+  | "needs_human_review"
+  | "esperando_aprobación"
+  | "terminado";
 
 export type RfpJobStatus =
   | "queued"
@@ -203,4 +205,90 @@ export interface RfpResponseRun {
   global_terms: RfpResponseGlobalTerms;
   operational_failures: RfpOperationalFailure[];
   updated_at: string;
+}
+
+export type RfpApprovalAction = "approve" | "reject" | "request_changes";
+
+export interface RfpApprovalInboxItem {
+  approval_run_id: string;
+  ticket_id: string;
+  revision_id: string;
+  department: RfpDepartmentId;
+  review_revision_no: number;
+  status: "pending_approval";
+  content_hash: string;
+  validation_bundle_id: string;
+  created_at: string;
+}
+
+export interface RfpDepartmentReview {
+  approval_run_id: string;
+  ticket_id: string;
+  revision_id: string;
+  department: RfpDepartmentId;
+  run_status: string;
+  revision_status: string;
+  is_current: boolean;
+  state_version: number;
+  content_hash: string;
+  validation_bundle_id: string;
+  validated_at: string;
+  safe_preview_artifact_id: string;
+  safe_preview_payload_hash: string;
+  safe_preview: string;
+  validation: Record<string, unknown>;
+  pending_commercial_items: unknown[];
+  evidence: unknown[];
+  provenance: unknown;
+  allowed_actions: RfpApprovalAction[];
+}
+
+export interface RfpApprovalDecisionResult {
+  thread_id: string;
+  status: string | null;
+  interrupted: boolean;
+  decision: Record<string, unknown> | null;
+  application: Record<string, unknown> | null;
+  coordination: Record<string, unknown> | null;
+}
+
+export interface RfpFinalDocumentSection {
+  department: RfpDepartmentId;
+  title: string;
+  markdown: string;
+}
+
+export interface RfpFinalDocumentLocator {
+  ticket_id: string;
+  approval_run_id: string;
+  final_document_id: string;
+}
+
+export interface RfpFinalDocument {
+  contract_version: "rfp-public-final-document-v1";
+  final_document_id: string;
+  title: string;
+  executive_summary_markdown: string;
+  sections: RfpFinalDocumentSection[];
+  currency: {
+    value: "EUR" | "USD" | null;
+    status: "documented" | "pending";
+  };
+  sla: {
+    applicability: "applicable" | "not_applicable" | "pending";
+    percentage: number | null;
+    measurement_period: string | null;
+    scope: string[];
+    exclusions: string[];
+  };
+  volume_discounts: Array<{
+    volume_from: number | null;
+    volume_to: number | null;
+    discount_percentage: number | null;
+    condition: string;
+    status: "documented" | "pending";
+  }>;
+  markdown: string;
+  markdown_hash: string;
+  download_filename: string;
 }

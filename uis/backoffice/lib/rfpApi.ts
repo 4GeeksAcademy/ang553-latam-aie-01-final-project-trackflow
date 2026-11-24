@@ -1,6 +1,12 @@
 import { authFetch } from "@/lib/authFetch";
 import type {
+  RfpApprovalAction,
+  RfpApprovalDecisionResult,
+  RfpApprovalInboxItem,
   RfpDepartmentId,
+  RfpDepartmentReview,
+  RfpFinalDocument,
+  RfpFinalDocumentLocator,
   RfpCarrierModel,
   RfpDepartmentSection,
   RfpDetectedConflict,
@@ -39,6 +45,8 @@ const TICKET_STATUSES = new Set<RfpTicketStatus>([
   "generando_borrador",
   "en_evaluación",
   "needs_human_review",
+  "esperando_aprobación",
+  "terminado",
 ]);
 const JOB_STATUSES = new Set<RfpJobStatus>([
   "queued",
@@ -566,4 +574,229 @@ export async function getRfpResponse(ticketId: string, runId?: string): Promise<
   const value = await request(`/rfps/${encodeURIComponent(ticketId)}${suffix}`, template);
   try { return parseResponseRun(value); }
   catch { throw new RfpApiError("El servicio devolvió un estado de respuesta inválido."); }
+}
+
+function parseApprovalInboxItem(value: unknown): RfpApprovalInboxItem {
+  if (!isRecord(value) || typeof value.approval_run_id !== "string" ||
+      typeof value.ticket_id !== "string" || typeof value.revision_id !== "string" ||
+      typeof value.review_revision_no !== "number" ||
+      value.status !== "pending_approval" || typeof value.content_hash !== "string" ||
+      typeof value.validation_bundle_id !== "string" || typeof value.created_at !== "string") {
+    throw new Error("invalid approval inbox item");
+  }
+  return {
+    approval_run_id: value.approval_run_id,
+    ticket_id: value.ticket_id,
+    revision_id: value.revision_id,
+    department: parseDepartment(value.department),
+    review_revision_no: value.review_revision_no,
+    status: "pending_approval",
+    content_hash: value.content_hash,
+    validation_bundle_id: value.validation_bundle_id,
+    created_at: value.created_at,
+  };
+}
+
+export async function listRfpApprovalInbox(): Promise<RfpApprovalInboxItem[]> {
+  const value = await request("/rfps/approval/inbox", "/rfps/approval/inbox");
+  if (!isRecord(value) || !Array.isArray(value.items)) {
+    throw new RfpApiError("El servicio devolvió una bandeja de aprobación inválida.");
+  }
+  try { return value.items.map(parseApprovalInboxItem); }
+  catch { throw new RfpApiError("La bandeja contiene revisiones inválidas."); }
+}
+
+export async function getRfpDepartmentReview(
+  item: RfpApprovalInboxItem,
+): Promise<RfpDepartmentReview> {
+  const prefix = `/rfps/${encodeURIComponent(item.ticket_id)}/approval/${encodeURIComponent(item.approval_run_id)}`;
+  const suffix = `/departments/${encodeURIComponent(item.department)}/revisions/${encodeURIComponent(item.revision_id)}/review`;
+  const value = await request(
+    `${prefix}${suffix}`,
+    "/rfps/{ticket_id}/approval/{approval_run_id}/departments/{department}/revisions/{revision_id}/review",
+  );
+  if (!isRecord(value) || typeof value.approval_run_id !== "string" ||
+      typeof value.ticket_id !== "string" || typeof value.revision_id !== "string" ||
+      typeof value.run_status !== "string" || typeof value.revision_status !== "string" ||
+      typeof value.is_current !== "boolean" || typeof value.state_version !== "number" ||
+      typeof value.content_hash !== "string" || typeof value.validation_bundle_id !== "string" ||
+      typeof value.validated_at !== "string" ||
+      typeof value.safe_preview_artifact_id !== "string" ||
+      typeof value.safe_preview_payload_hash !== "string" ||
+      typeof value.safe_preview !== "string" || !isRecord(value.validation) ||
+      !Array.isArray(value.pending_commercial_items) || !Array.isArray(value.evidence) ||
+      !Array.isArray(value.allowed_actions)) {
+    throw new RfpApiError("El servicio devolvió una revisión inválida.");
+  }
+  const allowed = value.allowed_actions;
+  if (allowed.some((action) => !["approve", "reject", "request_changes"].includes(String(action)))) {
+    throw new RfpApiError("La revisión contiene acciones no permitidas.");
+  }
+  return {
+    approval_run_id: value.approval_run_id,
+    ticket_id: value.ticket_id,
+    revision_id: value.revision_id,
+    department: parseDepartment(value.department),
+    run_status: value.run_status,
+    revision_status: value.revision_status,
+    is_current: value.is_current,
+    state_version: value.state_version,
+    content_hash: value.content_hash,
+    validation_bundle_id: value.validation_bundle_id,
+    validated_at: value.validated_at,
+    safe_preview_artifact_id: value.safe_preview_artifact_id,
+    safe_preview_payload_hash: value.safe_preview_payload_hash,
+    safe_preview: value.safe_preview,
+    validation: value.validation,
+    pending_commercial_items: value.pending_commercial_items,
+    evidence: value.evidence,
+    provenance: value.provenance,
+    allowed_actions: allowed as RfpApprovalAction[],
+  };
+}
+
+export async function submitRfpApprovalDecision(
+  item: RfpApprovalInboxItem,
+  action: RfpApprovalAction,
+  reason: string | null,
+  acknowledgePendingCommercialItems: boolean,
+): Promise<RfpApprovalDecisionResult> {
+  const prefix = `/rfps/${encodeURIComponent(item.ticket_id)}/approval/${encodeURIComponent(item.approval_run_id)}`;
+  const suffix = `/departments/${encodeURIComponent(item.department)}/revisions/${encodeURIComponent(item.revision_id)}/decision`;
+  const value = await request(
+    `${prefix}${suffix}`,
+    "/rfps/{ticket_id}/approval/{approval_run_id}/departments/{department}/revisions/{revision_id}/decision",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action,
+        reason,
+        acknowledge_pending_commercial_items: acknowledgePendingCommercialItems,
+      }),
+    },
+  );
+  if (!isRecord(value) || typeof value.thread_id !== "string" ||
+      (value.status !== null && typeof value.status !== "string") ||
+      typeof value.interrupted !== "boolean") {
+    throw new RfpApiError("El servicio devolvió un resultado de aprobación inválido.");
+  }
+  return {
+    thread_id: value.thread_id,
+    status: value.status as string | null,
+    interrupted: value.interrupted,
+    decision: isRecord(value.decision) ? value.decision : null,
+    application: isRecord(value.application) ? value.application : null,
+    coordination: isRecord(value.coordination) ? value.coordination : null,
+  };
+}
+
+export async function getRfpFinalDocument(
+  ticketId: string,
+  approvalRunId: string,
+): Promise<RfpFinalDocument> {
+  let value: unknown;
+  try {
+    value = await request(
+      `/rfps/${encodeURIComponent(ticketId)}/approval/${encodeURIComponent(approvalRunId)}/document`,
+      "/rfps/{ticket_id}/approval/{approval_run_id}/document",
+    );
+  } catch (caught: unknown) {
+    if (caught instanceof RfpApiError && caught.statusCode === 403) {
+      throw new RfpApiError(
+        "Tu identidad ya no tiene permiso para consultar el documento final.",
+        403,
+      );
+    }
+    if (caught instanceof RfpApiError && caught.statusCode === 404) {
+      throw new RfpApiError("El documento final todavía no está disponible.", 404);
+    }
+    throw caught;
+  }
+
+  try {
+    if (!isRecord(value) ||
+        value.contract_version !== "rfp-public-final-document-v1" ||
+        typeof value.final_document_id !== "string" ||
+        typeof value.title !== "string" ||
+        typeof value.executive_summary_markdown !== "string" ||
+        !Array.isArray(value.sections) || !isRecord(value.currency) ||
+        !isRecord(value.sla) || !Array.isArray(value.volume_discounts) ||
+        typeof value.markdown !== "string" ||
+        typeof value.markdown_hash !== "string" ||
+        typeof value.download_filename !== "string" ||
+        !/^[A-Za-z0-9._-]+\.md$/.test(value.download_filename)) {
+      throw new Error("invalid final document");
+    }
+    const sections = value.sections.map((section) => {
+      if (!isRecord(section) || typeof section.title !== "string" ||
+          typeof section.markdown !== "string") {
+        throw new Error("invalid final document section");
+      }
+      return {
+        department: parseDepartment(section.department),
+        title: section.title,
+        markdown: section.markdown,
+      };
+    });
+    const currencyValue = stringOrNull(value.currency.value);
+    if ((currencyValue !== null && currencyValue !== "EUR" && currencyValue !== "USD") ||
+        (value.currency.status !== "documented" && value.currency.status !== "pending")) {
+      throw new Error("invalid final currency");
+    }
+    if (!Array.isArray(value.sla.scope) || !Array.isArray(value.sla.exclusions)) {
+      throw new Error("invalid final SLA");
+    }
+    return {
+      ...(value as unknown as RfpFinalDocument),
+      sections,
+      currency: {
+        value: currencyValue as "EUR" | "USD" | null,
+        status: value.currency.status,
+      },
+    };
+  } catch {
+    throw new RfpApiError("El servicio devolvió un documento final inválido.");
+  }
+}
+
+export async function getRfpFinalDocumentForTicket(
+  ticketId: string,
+): Promise<RfpFinalDocument> {
+  let value: unknown;
+  try {
+    value = await request(
+      `/rfps/${encodeURIComponent(ticketId)}/approval/document-locator`,
+      "/rfps/{ticket_id}/approval/document-locator",
+    );
+  } catch (caught: unknown) {
+    if (caught instanceof RfpApiError && caught.statusCode === 403) {
+      throw new RfpApiError(
+        "Tu identidad no tiene permiso para consultar el documento final.",
+        403,
+      );
+    }
+    if (caught instanceof RfpApiError && caught.statusCode === 404) {
+      throw new RfpApiError("El ticket todavía no tiene documento final.", 404);
+    }
+    throw caught;
+  }
+  if (!isRecord(value) || value.ticket_id !== ticketId ||
+      typeof value.approval_run_id !== "string" ||
+      typeof value.final_document_id !== "string") {
+    throw new RfpApiError("El servicio devolvió un locator de documento inválido.");
+  }
+  const locator: RfpFinalDocumentLocator = {
+    ticket_id: value.ticket_id,
+    approval_run_id: value.approval_run_id,
+    final_document_id: value.final_document_id,
+  };
+  const document = await getRfpFinalDocument(
+    locator.ticket_id,
+    locator.approval_run_id,
+  );
+  if (document.final_document_id !== locator.final_document_id) {
+    throw new RfpApiError("El documento final no coincide con el locator autenticado.");
+  }
+  return document;
 }

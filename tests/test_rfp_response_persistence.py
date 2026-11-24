@@ -9,7 +9,10 @@ from services.rfp_response.models import (
     rfp_response_drafts, rfp_response_evaluations, rfp_response_execution_failures,
     rfp_response_handoffs, rfp_response_llm_invocations, rfp_response_runs,
 )
-from services.rfp_response.store import canonical_hash
+from services.rfp_response.store import (
+    _response_language_from_intake,
+    canonical_hash,
+)
 
 
 ROOT = Path(__file__).parents[1]
@@ -61,6 +64,55 @@ def test_fresh_intake_ddl_remains_compatible_with_part1_and_part2_job_kinds() ->
 def test_canonical_hash_is_order_independent_and_content_sensitive() -> None:
     assert canonical_hash({"a": 1, "b": [2]}) == canonical_hash({"b": [2], "a": 1})
     assert canonical_hash({"a": 1}) != canonical_hash({"a": 2})
+
+
+def test_response_language_rehydrates_from_persisted_part1_readability() -> None:
+    def report(language: str) -> dict[str, object]:
+        return {
+            "contract_version": "rfp-readability-v1",
+            "metrics": [
+                {
+                    "name": name,
+                    "value": None,
+                    "status": "not_applicable",
+                    "language": language,
+                    "method_version": "test",
+                    "reason": "formula_not_validated_for_document_language",
+                }
+                for name in ("flesch_kincaid", "gunning_fog")
+            ],
+        }
+
+    assert _response_language_from_intake(report("es")) == "es"
+    assert _response_language_from_intake(report("en")) == "en"
+    assert _response_language_from_intake(report("unknown")) == "en"
+    assert _response_language_from_intake({}) == "en"
+
+
+def test_response_language_requires_one_consistent_supported_language() -> None:
+    mixed = {
+        "contract_version": "rfp-readability-v1",
+        "metrics": [
+            {
+                "name": "flesch_kincaid",
+                "value": None,
+                "status": "not_applicable",
+                "language": "es",
+                "method_version": "test",
+                "reason": "not_applicable",
+            },
+            {
+                "name": "gunning_fog",
+                "value": None,
+                "status": "not_applicable",
+                "language": "en",
+                "method_version": "test",
+                "reason": "not_applicable",
+            },
+        ],
+    }
+
+    assert _response_language_from_intake(mixed) == "en"
 
 
 def test_package_discovery_change_is_exactly_scoped() -> None:

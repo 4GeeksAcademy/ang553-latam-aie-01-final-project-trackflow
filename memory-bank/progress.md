@@ -2218,3 +2218,294 @@ revisión y autorización arquitectónica.
   permanece bloqueada por dependencias opcionales ausentes (`trackflow_mcp` y
   `mcpauth`). Los skips PostgreSQL/E2E requieren infraestructura aislada y no se
   ejecutaron durante este cierre. No se realizaron llamadas FourGeeks nuevas.
+
+## Hito 9 / Parte 3 — cierre funcional offline y auditoría académica — 2026-11-22
+
+- Se añadió un entrypoint HTTP autenticado para iniciar y recuperar ramas HITL,
+  consultar la revisión segura, reanudar decisiones departamentales, reconciliar
+  fan-in y consultar el documento final. La autenticación local/OIDC conserva
+  issuer/subject verificados y el ambiente queda fail-closed; permisos y
+  responsables siguen resolviéndose desde PostgreSQL, sin autoridad implícita
+  por rol admin.
+- Se implementó la materialización autorizada de una propuesta global únicamente
+  cuando las tres fuentes departamentales aplicables están aprobadas y conservan
+  intactos los artefactos de Parte 2. El coordinador revalida el grant de gestión
+  bajo lock, persiste draft/evaluación/preview/bundle con procedencia y rechaza
+  correcciones departamentales que necesitarían una reevaluación global real.
+  No inventa valores comerciales ni suplanta a Miguel Torres.
+- El runtime operativo usa checkpoints SQLite persistentes con msgpack estricto,
+  directorio permitido explícito y espera de locks configurada. PostgreSQL sigue
+  siendo la fuente empresarial para identidades, revisiones, decisiones, eventos
+  y documentos. Se añadió una proyección de lectura que expone solamente preview
+  validado, evidencia y procedencia para la revisión humana.
+- QA focal nueva: **13 PASS**; AST y collect-only correctos. La suite amplia de
+  aprobación terminó sin fallos observados y mantiene las integraciones
+  PostgreSQL opt-in sin autorización. No se ejecutaron Docker, PostgreSQL,
+  DDL/DML, FourGeeks ni mutaciones Git durante esta misión.
+- La Parte 3 todavía no debe declararse terminada: falta conectar el Backoffice,
+  integrar el nodo de arbitraje con el orquestador operativo, automatizar la
+  materialización con una identidad de servicio autorizada y ejecutar un E2E
+  oficial PDF→Partes 1/2/3→FinalDocument. Los PDFs oficiales también requieren
+  una corrección comercial humana verificable; no se permite convertir órdenes
+  a m³ ni fabricar volumen o tarifas.
+- El inicio Parte 2→Parte 3 ya cuenta con un coordinador productivo offline:
+  descubre el handoff vigente del ticket, valida contratos y hashes, deriva
+  revisiones/artefactos/bundles sin aceptar contenido libre del cliente y los
+  persiste en una sola transacción. Las revisiones elegibles quedan
+  `pending_assessment`: no se habilita HITL hasta persistir los tres assessments
+  oficiales sobre los hashes actuales y enlazar el bundle mediante CAS con
+  autorización revalidada y auditoría durable. El replay reconstruye el
+  timestamp persistido del envelope, por lo que no crea otro run al recuperarse
+  tras un crash.
+- La fixture persistente futura ya prepara la capacidad QA mediante el store de
+  inputs autorizado y persiste los tres resultados `no_conflict` antes del
+  enlace; no usa SQL directo para aprobar ni omite el requisito de evidencia.
+  Continúa **SKIP** porque no se autorizó PostgreSQL en esta misión.
+- La propuesta global importada declara procedencia precisa: preview y términos
+  de Parte 2 se conservan como `part2_import`, mientras la comprobación de
+  fuentes vigentes/aprobadas es `deterministic_evaluator`; ya no se atribuye el
+  bundle a un compliance evaluator inexistente.
+- Regresión adicional del cierre: schemas/contratos/store/coordinador afectados
+  **129 PASS, 5 SKIP PostgreSQL**; coordinador global/API/finalización **19 PASS**;
+  fixture HITL persistente offline **3 PASS, 1 SKIP PostgreSQL**. El escenario
+  con volumen comercial faltante queda `blocked_input` y conserva el código
+  original, sin crear valores.
+- Regresión consolidada final de Parte 3: **396 PASS, 83 SKIP**, sin FAIL ni
+  ERROR. Los 83 skips son integraciones opt-in; no acreditan PostgreSQL real.
+  En ese corte todavía estaba pendiente el coordinador operativo de facts; la
+  inicialización quedó deliberadamente fail-closed hasta completar el stage
+  descrito a continuación.
+- Se implementó después el stage operativo faltante. Deriva los tres assessments
+  exclusivamente desde metadata Parte 1, drafts/evaluaciones Parte 2 con hash y
+  inputs empresariales inmutables. `volume-vs-capacity` queda `not_applicable`
+  si no participan Warehouse y Last Mile; si falta capacidad registra
+  `insufficient_information` sin crear una contradicción falsa. Los promises de
+  devoluciones reutilizan el extractor determinista de compliance y la moneda
+  se compara contra país, propuesta y términos departamentales estructurados.
+- La API incorpora registro de inputs comerciales sin aceptar actor, principal
+  ni authorization_id del cliente: el servidor construye al responsable desde
+  la identidad/binding/grant persistidos. `assess-and-start` confirma primero
+  assessments y enlaces CAS y abre después únicamente las ramas despejadas.
+  Regresiones focales nuevas: **95 PASS**, **86 PASS** y **38 PASS** en los
+  grupos de detector/contratos, API/commercial store y arbitraje/store.
+- Regresión consolidada posterior al stage de assessments: **405 PASS, 83
+  SKIP**, sin FAIL ni ERROR. Los skips continúan siendo integraciones PostgreSQL
+  opt-in y no se ejecutaron Docker, PostgreSQL, DDL/DML ni FourGeeks.
+- La creación automática de la propuesta global permanece bloqueada por una
+  frontera de autorización legítima: `InitialProposalRevisionCommand` exige un
+  importador con `manage_approval_run`, pero el coordinador invocado tras la
+  última aprobación no transporta una identidad gestora ni existe una
+  delegación de servicio persistida. La ruta HTTP permite que un gestor
+  autenticado materialice y luego reconcilie; automatizarla sin un contrato de
+  delegación explícito suplantaría al iniciador o rebajaría el permiso.
+- El Backoffice no se modificó. Su `AGENTS.md` obliga a leer la documentación
+  local de la versión instalada de Next antes de escribir y
+  `uis/backoffice/node_modules/next/dist/docs` no existe; instalar dependencias
+  estaba fuera del alcance autorizado. El E2E oficial PDF→FinalDocument también
+  queda pendiente de PostgreSQL, worker y credenciales QA; las pruebas offline
+  no sustituyen esa evidencia.
+- Se cerró después el bloqueo de delegación sin suplantar responsables. El
+  request de inicialización puede activar explícitamente
+  `automate_proposal_materialization`; solo un grant vigente
+  `manage_approval_run` puede hacerlo. El run conserva principal, binding, rol,
+  grant y versión. Tras la última aprobación, el nodo de coordinación revalida
+  esa referencia bajo lock, materializa la propuesta exacta de Parte 2,
+  reconstruye fan-in y finaliza en la misma transacción. Runs antiguos, sin
+  opt-in o con grant revocado/expirado permanecen fail-closed.
+- Regresión consolidada con delegación automática: **413 PASS, 83 SKIP**, sin
+  FAIL ni ERROR. AST aprobó los 14 archivos Python tocados y `git diff --check`
+  no encontró errores; Ruff no está instalado y no se añadieron dependencias.
+- El Backoffice ya consume una bandeja departamental autenticada, muestra el
+  preview seguro, evidencia y procedencia, exige confirmación de lectura y
+  obliga a explicar `reject`/`request_changes`. Las decisiones pasan por el
+  endpoint HITL real; el navegador no aporta principal ni authorization_id y
+  el rol admin por sí solo no recibe aprobaciones. Se añadieron regresiones de
+  API, read model y contrato estático del cliente.
+- Regresión consolidada posterior a la conexión del Backoffice y runner E2E:
+  **424 PASS, 85 SKIP**, sin FAIL ni ERROR. La prueba focal
+  API/read-model/contratos/Backoffice
+  produjo **71 PASS**. En una copia temporal se reutilizaron exactamente las
+  dependencias locales Next 16.4.5 del monorepo principal: `tsc --noEmit`
+  terminó con exit 0 y `next build --webpack` compiló, ejecutó TypeScript y
+  prerenderizó las 20 rutas, incluida `/backoffice/rfps`, también con exit 0.
+  La copia y su junction temporal se eliminaron; no se instalaron ni
+  modificaron dependencias en el worktree.
+- Se corrigió además la proyección pública compartida del ticket: los contratos
+  Python, parser y tipos/labels del Backoffice ya aceptan
+  `esperando_aprobación` y `terminado`. Sin esta conexión, un ticket cerrado por
+  Parte 3 podía existir en PostgreSQL pero fallar al responder
+  `GET /rfps/{ticket_id}`. Las regresiones focales fueron **23 PASS** y el
+  typecheck posterior volvió a terminar con exit 0. La regresión RFP de Partes
+  1 y 2 terminó **156 PASS, 16 SKIP**.
+- Se añadió `tests/test_rfp_approval_official_e2e.py`: dos recorridos HTTP
+  opt-in para ModaViva y Luna y cuatro guardrails offline. Exige URL loopback,
+  manifiesto QA externo y tokens ya emitidos para admin, manager y responsables;
+  no importa SQL, subprocess ni `VerifiedAuthenticationContext`. Resultado:
+  **4 PASS, 2 SKIP**, seis tests recopilados. Los skips no acreditan el E2E.
+- La configuración de setuptools ahora incluye explícitamente
+  `services.rfp_approval*`, además del `pipelines*` ya presente, para que el
+  servicio de Parte 3 no quede fuera de un artefacto Python. La regresión TOML
+  y la suite de packaging/job runner terminaron **35 PASS**. No se instaló el
+  backend de build ausente en el entorno dev.
+- El runbook `docs/operations/rfp-approval-e2e.md` deja preparado el recorrido
+  reproducible para ModaViva y Luna Cosmetics, pero no se ejecutó: aún requiere
+  PostgreSQL/worker aislados, identidades y grants QA persistidos, correcciones
+  comerciales humanas verificables y autorización explícita de DDL/DML. Por
+  ello, en ese punto histórico, el Hito 9 permanecía **NO-GO de entrega**,
+  aunque el cierre funcional offline de Parte 3 quedaba listo para validación.
+  Ese estado fue superado por el PASS integrado documentado el 2026-11-24.
+- El Backoffice ahora consulta la proyección pública autenticada del
+  `FinalDocument` después de una decisión que cierra el run y ofrece abrir o
+  descargar el Markdown mediante una URL `blob:` local; no coloca tokens en la
+  URL ni altera la finalización. La regresión contractual quedó en **3 PASS** y
+  una copia aislada volvió a completar `tsc --noEmit` y `next build --webpack`
+  con exit 0 y 20 rutas prerenderizadas.
+- El runbook distingue ya la idempotencia same-process del runner respecto de
+  una recuperación real: la demostración de reinicio debe detener y crear un
+  proceso API nuevo conservando PostgreSQL/checkpoint, reconciliar sin otra
+  decisión y comparar hashes/conteos mediante SQL de solo lectura. Esta
+  preparación no acredita todavía que el reinicio haya sido ejecutado.
+- El preflight de packaging detectó que la imagen API instalaba `langgraph`
+  pero no el paquete separado requerido por `SqliteSaver`. Se añadió
+  `langgraph-checkpoint-sqlite==3.1.3` a `services/api/requirements.txt`, en la
+  misma versión ya fijada por `pyproject.toml` y `uv.lock`, más una regresión
+  estática. No se instalaron ni actualizaron dependencias.
+- El runbook ya no atribuye al endpoint público una verificación imposible:
+  `GET .../document` omite deliberadamente el manifest interno. El runner HTTP
+  acredita la proyección pública y el replay; los ids/hashes del manifest se
+  comprobarán por separado mediante SQL de solo lectura.
+- Se añadió un locator contextual autenticado
+  `GET /rfps/{ticket_id}/approval/document-locator`: exige el mismo permiso
+  persistido `manage_approval_run`, resuelve el ambiente desde la identidad y
+  devuelve solo los identificadores del run/documento completado. El
+  Backoffice lo usa al recargar un ticket `terminado` para recuperar mediante
+  el endpoint de documento existente el Markdown que se abre o descarga; no
+  expone tokens, no concede permisos de manager a responsables departamentales
+  y conserva 404 cuando no existe documento.
+- La recuperación queda dividida en dos evidencias: replay de un documento ya
+  finalizado tras reinicio, y aprobación committed antes de la coordinación
+  final. La segunda está implementada y cubierta offline por `reconcile`, pero
+  una prueba real necesita un launcher ASGI exclusivo de QA con una barrera
+  antes de `coordinate_completion`; el endpoint productivo síncrono no ofrece
+  una pausa determinista y no se añadirá un failpoint de producción.
+- La API ya expone el workflow departamental de corrección: el responsable con
+  `provide_business_input` selecciona inputs persistidos y el servidor deriva
+  draft, evaluación real, safe preview, validation bundle, hashes y sucesor
+  CAS mediante el store existente. La reevaluación manager posterior vincula
+  los tres assessments al contenido corregido y solo entonces abre un thread
+  HITL nuevo; la aprobación anterior no se reutiliza. El runner oficial usa ya
+  esta transición sin SQL directo. El E2E completo sigue fail-closed porque no
+  existe un input tipado de volumen mensual global (valor/unidad/periodo/scope)
+  consumido por Parte 2 y el assessment; no se convertirán SKUs/órdenes a m3 ni
+  se sustituirá por texto libre.
+- El Backoffice conserva únicamente el `ticket_id` seleccionado en
+  `sessionStorage`, por lo que una recarga de la pestaña recupera el contexto y
+  vuelve a solicitar locator/documento; nunca persiste token, identidad ni
+  autorización en el navegador. El gate focal terminó **37 PASS, 2 SKIP** (los
+  dos E2E HTTP opt-in), AST aprobó seis archivos y la copia aislada completó
+  `tsc --noEmit` y `next build --webpack` con exit 0, incluidas las 20 rutas.
+  No se ejecutaron Docker, PostgreSQL, E2E HTTP ni FourGeeks.
+- La preparación offline de la aprobación humana inicial ya rehidrata
+  `creation_reason` desde `content_payload` JSONB (su ubicación contractual)
+  en vez de solicitar una columna inexistente. También rehidrata el `draft_id`
+  corregido desde el mismo envelope y falla cerrado ante razones ausentes o
+  desconocidas. El enlace RFP del Backoffice queda visible para toda identidad
+  autenticada, sin alterar la autorización persistida de la API. Las pruebas
+  focales terminaron **202 PASS, 1 SKIP** y el typecheck del Backoffice pasó;
+  la validación PostgreSQL y la aceptación manual de Carlos siguen pendientes
+  de autorización específica.
+- La frontera FourGeeks de Parte 1 conserva ahora diagnósticos content-free por
+  invocación para JSON inválido, validación Pydantic, validación semántica,
+  referencias fuera de rango y fallos HTTP. Los logs correlacionan `job_id`,
+  intento, operación e invocación local y registran únicamente tipos, rutas y
+  observaciones estructurales; no guardan prompts, respuestas ni valores. No se
+  modificaron schemas, prompts, modelo, timeouts, retries ni persistencia
+  empresarial. La regresión offline ampliada terminó **149 PASS, 1 SKIP**;
+  compilación AST y `git diff --check` pasaron, mientras Ruff no está instalado.
+## 2026-11-23 - Isolated FourGeeks structured-output diagnostic prepared
+
+- Added `scripts/rfp_intake_fourgeeks_diagnostic.py` as a QA-only, preflight-by-default
+  runner for one real Classification or Metadata operation using the production
+  analyzer, prompts, JSON Schema, Pydantic/semantic validation, and reference-bound checks.
+- The runner has no Celery, PostgreSQL, ticket, or business-state dependency. A real call
+  requires two explicit QA authorization controls and a fresh durable budget fixed at one
+  request; the slot is reserved before network access and cannot be reused or restored.
+- Added offline coverage for Classification, Metadata, invalid structured output, timeout,
+  official artifact hashes, authorization fail-closed behavior, one-slot exhaustion, and
+  budget-ID reuse. Focal result: 48 passed, with no external requests.
+- The one-request real Classification diagnostic returned HTTP 200 and valid JSON but
+  exposed an incoherent `is_valid_rfp`/`reason_code` pair at the existing Pydantic root
+  validator. The production Classification prompt now states the complete five-value
+  mapping explicitly without changing contracts, schemas, parsing, semantic validation,
+  reference checks, model, timeout, budget, or retries. Offline validation completed with
+  **73 PASS, 1 SKIP** (the opt-in Docker E2E), and no external request was made for the fix.
+
+## 2026-11-23 - Metadata diagnostics and academic stub route
+
+- Metadata root validation now reports three distinct content-free diagnostic codes:
+  `duplicate_service_ids`, `duplicate_operation_countries`, and
+  `optional_value_reference_mismatch`. The Pydantic model, JSON Schema, prompts, parser
+  acceptance, retry classification, and business persistence remain unchanged; all three
+  invalid states continue to be rejected.
+- The diagnostic derives only from the validator's fixed internal messages and logs the
+  operation, root path, category, and safe code. Regression coverage proves that neither
+  the generated object nor document/prompt values appear in the diagnostic or operational
+  log.
+- The existing isolated intake E2E from PR #38 already supplies a deterministic local
+  FourGeeks-compatible stub while retaining the real HTTP upload, outbox, Redis relay,
+  Celery worker, LangGraph intake graph, PostgreSQL persistence, and official PDFs. It can
+  be composed in a future isolated run with the established deterministic Parte 2 and
+  authenticated Parte 3/HITL path; this preparation did not execute Docker, PostgreSQL,
+  FourGeeks, workers, tickets, or any business-state mutation.
+- Relevant offline regression completed with **90 PASS, 1 SKIP**; the skip is the opt-in
+  Docker intake E2E and was not executed. AST and `git diff --check` passed. A broader run
+  also exposed four unrelated global route-accounting assertions whose frozen 61/55 counts
+  no longer match the existing 74/68 application routes; those baseline assertions were
+  not changed as part of this focal diagnostic work.
+
+## 2026-11-23 - Integrated academic Hito 9 E2E prepared
+
+- Added one opt-in runner for the official ModaViva PDF across real HTTP intake, outbox,
+  isolated PostgreSQL/Redis, relay, Celery, the Part 1 LangGraph, deterministic Part 2,
+  authenticated Part 3 HITL/checkpoints, automatic fan-in and the indicative
+  FinalDocument. It imports the controlled local provider stub from the PR #38 test rather
+  than copying or reimplementing any graph.
+- The runner creates an internal-only random Docker network, disposable PostgreSQL/Redis,
+  exclusive artifact/auth/checkpoint volumes and synthetic minimum-scope QA identities.
+  Direct bootstrap writes are restricted to identities/bindings/grants; tickets, jobs,
+  drafts, evaluations, revisions, decisions, events and documents must all be produced by
+  the real workers and HTTP endpoints.
+- The evidence manifest is written only to a pre-existing absolute directory outside the
+  repository. It labels the Part 1 boundary `controlled_local_stub`, records stub/PDF/image/
+  migration hashes, thread and business identifiers, independent persistence counts and
+  FinalDocument hashes. A content-free failure manifest is preserved before directed
+  teardown. No existing environment, port, credential, ledger or business data is reused.
+- Offline preparation result: **3 PASS, 1 SKIP**, four node IDs collected. The skipped node
+  is the integrated Docker/PostgreSQL execution and remains fail-closed without explicit
+  authorization plus fresh image references and an external evidence directory. No Docker,
+  PostgreSQL, Celery worker or external model call was executed during preparation.
+
+## 2026-11-24 - Hito 9 integrated academic E2E passed
+
+- The isolated ModaViva academic E2E completed with **PASS, exit code 0** after
+  applying all six migrations to disposable PostgreSQL 16 and running real
+  Redis, relay, Celery, API, LangGraph, authentication and persistence.
+- Parte 1 used the explicitly labelled `controlled_local_stub`; Parte 2 used
+  deterministic generation/evaluation. This boundary is academic evidence and
+  does not claim an end-to-end FourGeeks validation or production readiness.
+- The run verified Spanish response generation, Warehouse and Reverse HITL
+  branches, HTTP 422 without exact acknowledgement, HTTP 403 for cross-scope
+  authorization, Ana and Sofía decisions, automatic fan-in and one indicative
+  FinalDocument.
+- `RETURN_PROCESSING_RATE_REQUIRED` remained departmental and
+  `MONTHLY_STORAGE_VOLUME_REQUIRED` remained global, each visible exactly once
+  without invented prices, volume or discount percentages.
+- Replay returned the expected HTTP 409, reconcile returned HTTP 200, and
+  PostgreSQL independently confirmed one proposal, one FinalDocument, two
+  applied decisions and matching canonical payload/manifest hashes.
+- Directed teardown removed the academic containers, network and volumes while
+  preserving sanitized evidence outside the repository. UI01, Gate 1B and the
+  official E2E environment remained separate and intact.
+- A manual UI01 review confirmed the completed Warehouse/Reverse scenario and
+  a visible, downloadable FinalDocument. FourGeeks real remains unaccredited
+  end-to-end and must stay explicit as a delivery limitation.

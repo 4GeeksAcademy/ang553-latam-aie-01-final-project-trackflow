@@ -7,13 +7,18 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import operator
 from typing import Annotated, TypedDict, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
 from langgraph.types import Send
 
-from data.pipelines.rfp_intake.analyzer import RFPAnalyzer, StructuredOutputError
+from data.pipelines.rfp_intake.analyzer import (
+    ProviderResponseDiagnostic,
+    RFPAnalyzer,
+    StructuredGenerationContext,
+    structured_contract_error,
+)
 from data.pipelines.rfp_intake.contracts import (
     ClassificationDecision,
     ConversionMetrics,
@@ -73,16 +78,50 @@ def _all_references(section: DepartmentSection) -> list[SourceReference]:
 
 
 def _validate_reference_bounds(
-    line_count: int, references: list[SourceReference]
+    line_count: int,
+    references: list[SourceReference],
+    *,
+    analyzer: RFPAnalyzer,
+    operation: str,
+    path: str,
 ) -> None:
     if line_count < 1:
         raise RFPGraphError("Markdown has no lines")
     if any(ref.line_end > line_count for ref in references):
-        raise StructuredOutputError("structured output cites a nonexistent Markdown line")
+        getter = getattr(analyzer, "diagnostic_context", None)
+        context = getter(operation) if callable(getter) else None
+        if not isinstance(context, StructuredGenerationContext):
+            context = StructuredGenerationContext(
+                operation=operation,
+                invocation_id=uuid4(),
+                provider=ProviderResponseDiagnostic(),
+            )
+        raise structured_contract_error(
+            context=context,
+            category="reference_bounds",
+            error_type="source_reference_out_of_bounds",
+            path=path,
+            received_type="integer",
+            violated_constraint="markdown_line_bounds",
+            message="structured output cites a nonexistent Markdown line",
+        )
 
 
-def _validate_references(markdown: str, references: list[SourceReference]) -> None:
-    _validate_reference_bounds(len(markdown.splitlines()), references)
+def _validate_references(
+    markdown: str,
+    references: list[SourceReference],
+    *,
+    analyzer: RFPAnalyzer,
+    operation: str,
+    path: str,
+) -> None:
+    _validate_reference_bounds(
+        len(markdown.splitlines()),
+        references,
+        analyzer=analyzer,
+        operation=operation,
+        path=path,
+    )
 
 
 def _derive_metadata(draft: RFPMetadataDraft) -> RFPMetadata:
@@ -134,7 +173,13 @@ class RFPIntakeGraph:
     @staticmethod
     def _classify(state: RFPGraphState, runtime: Runtime[RFPGraphContext]) -> RFPGraphState:
         classification = runtime.context.analyzer.classify(state["markdown"])
-        _validate_references(state["markdown"], classification.evidence_refs)
+        _validate_references(
+            state["markdown"],
+            classification.evidence_refs,
+            analyzer=runtime.context.analyzer,
+            operation="trackflow_rfp_classification",
+            path="evidence_refs",
+        )
         return {"classification": classification}
 
     @staticmethod
@@ -172,7 +217,13 @@ class RFPIntakeGraph:
                 references.append(ref)
         if draft.budget_range is not None:
             references.append(draft.budget_range.source_ref)
-        _validate_references(state["markdown"], references)
+        _validate_references(
+            state["markdown"],
+            references,
+            analyzer=runtime.context.analyzer,
+            operation="trackflow_rfp_metadata",
+            path="source_references",
+        )
         return {"metadata_draft": draft}
 
     @staticmethod
@@ -211,7 +262,11 @@ class RFPIntakeGraph:
             relevant_extract=state["relevant_extract"],
         )
         _validate_reference_bounds(
-            state["source_line_count"], _all_references(section)
+            state["source_line_count"],
+            _all_references(section),
+            analyzer=runtime.context.analyzer,
+            operation=f"trackflow_rfp_{state['department_id'].value}_section",
+            path="source_references",
         )
         return {"department_results": [section]}
 
@@ -237,7 +292,13 @@ class RFPIntakeGraph:
         refs.extend(item.source_ref for item in synthesis.open_questions if item.source_ref)
         for conflict in synthesis.detected_conflicts:
             refs.extend(conflict.source_refs)
-        _validate_references(state["markdown"], refs)
+        _validate_references(
+            state["markdown"],
+            refs,
+            analyzer=runtime.context.analyzer,
+            operation="trackflow_rfp_synthesis",
+            path="source_references",
+        )
         handoff = RFPHandoff(
             ticket_id=state["ticket_id"],
             metadata_reference=state["ticket_id"],

@@ -11,3 +11,7 @@ coverage.xml
 services/api/data/suppliers.json
 services/api/data/auth.json
 .env
+
+# Runtime RFP uploads are business artifacts, not versioned academic fixtures.
+# Official fixtures remain under tests/fixtures/rfp_intake/ and are unaffected.
+data/raw/rfp_intake/*/source.pdf
