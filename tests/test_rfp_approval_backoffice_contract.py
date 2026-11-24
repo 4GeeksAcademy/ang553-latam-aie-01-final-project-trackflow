@@ -11,9 +11,14 @@ def test_backoffice_exposes_authenticated_department_review_flow() -> None:
     ).read_text(encoding="utf-8")
     api = (BACKOFFICE / "lib/rfpApi.ts").read_text(encoding="utf-8")
     types = (BACKOFFICE / "types/rfp.ts").read_text(encoding="utf-8")
+    labels = (BACKOFFICE / "lib/rfpLabels.ts").read_text(encoding="utf-8")
 
     assert 'import { RfpApprovalInbox }' in page
-    assert "if (!isAdmin) return <RfpApprovalInbox />" in page
+    non_admin = page.split("if (!isAdmin) return (", 1)[1].split("const displayedTickets", 1)[0]
+    assert "<RfpApprovalInbox />" in non_admin
+    assert "{feed.authorized && <CommercialRfpIntake" in non_admin
+    assert "onSubmit={submit}" not in non_admin
+    assert "beginResponse" not in non_admin
     assert page.count("<RfpApprovalInbox />") == 2
     assert "listRfpApprovalInbox" in component
     assert "getRfpDepartmentReview" in component
@@ -26,8 +31,8 @@ def test_backoffice_exposes_authenticated_department_review_flow() -> None:
     assert 'export type RfpApprovalAction = "approve" | "reject" | "request_changes"' in types
     assert '| "esperando_aprobación"' in types
     assert '| "terminado"' in types
-    assert 'esperando_aprobación: "Esperando aprobación"' in page
-    assert 'terminado: "Terminado"' in page
+    assert 'esperando_aprobación: "Esperando aprobación"' in labels
+    assert 'terminado: "Terminado"' in labels
     assert '"esperando_aprobación",' in api
     assert '"terminado",' in api
 
@@ -86,7 +91,8 @@ def test_terminated_ticket_recovers_document_through_authenticated_locator() -> 
 
     assert 'detail.status !== "terminado"' in page
     assert "getRfpFinalDocumentForTicket(detail.ticket_id)" in page
-    assert "finalDocument && <FinalDocumentAccess" in page
+    assert "setFinalDocument({ ticketId: detail.ticket_id, document })" in page
+    assert "finalDocument?.ticketId === detail.ticket_id && <FinalDocumentAccess" in page
     assert "window.sessionStorage.getItem(SELECTED_TICKET_STORAGE_KEY)" in page
     assert "window.sessionStorage.setItem(SELECTED_TICKET_STORAGE_KEY, selectedId)" in page
     assert "new Blob([document.markdown]" in page
