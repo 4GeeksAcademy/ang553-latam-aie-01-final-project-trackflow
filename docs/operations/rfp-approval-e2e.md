@@ -29,7 +29,7 @@ persisted classification, selected departments and currency after intake.
 6. All database and container guardrails must name the exact verified target.
    Previous gate variables and credentials must not be reused.
 
-The migration order is `rfp_intake.sql`, `rfp_response_generation.sql`,
+The migration order is `rfp_intake.sql`, `rfp_sse.sql`, `rfp_response_generation.sql`,
 `rfp_approval.sql`, `rfp_approval_extension.sql`,
 `rfp_approval_monthly_storage_volume.sql`, then
 `rfp_approval_indicative_validation_bundle.sql`. The new columns

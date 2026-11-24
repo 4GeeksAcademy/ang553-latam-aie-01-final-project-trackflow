@@ -2509,3 +2509,54 @@ revisión y autorización arquitectónica.
 - A manual UI01 review confirmed the completed Warehouse/Reverse scenario and
   a visible, downloadable FinalDocument. FourGeeks real remains unaccredited
   end-to-end and must stay explicit as a delivery limitation.
+
+## 2026-11-24 - Notificaciones SSE Parte 1
+
+- Implementación en `feature/sse-notifications`, basada en `f1012c7`. Intake
+  confirma una decisión durable y un único evento `rfp_ticket_created` antes
+  de los workers departamentales. El replay usa cursor transaccional en
+  PostgreSQL y el reintento reutiliza la clasificación y metadata confirmadas.
+- La API y el Backoffice auténtico usan JWT local y un grant comercial
+  explícito, separado de aprobación y revocable. El detalle comercial limita
+  la proyección de datos. La retención inicial es de siete días y la purga
+  conserva las decisiones de intake.
+- QA independiente: 12 PASS en PostgreSQL/Uvicorn aislados, 235 PASS en
+  regresión focal y 5 PASS en Node. TypeScript, ESLint focal y build Webpack
+  pasaron. Turbopack falló en su subproceso PostCSS y el lint global mantiene
+  cuatro errores y una advertencia preexistentes fuera del diff.
+- Next.js entregó eventos y heartbeats, incluido un evento a los 94,08 s.
+  Chromium verificó dos sesiones comerciales, alta remota, reconexión con
+  replay, deduplicación, selección y rechazo sin grant. Se usó un analizador
+  determinista y PostgreSQL desechable. Capacidad de 50 conexiones: NO MEDIDO.
+- Gate técnico aprobado. El procedimiento está en `docs/operations/rfp-sse.md`.
+  La validación usó permisos sintéticos y se limitó a Parte 1.
+
+### Correctivo de aceptación SSE P01 y P02
+
+- TinyDB serializa dentro del proceso sus accesos de autenticación al handle
+  compartido. Los fallos del almacén devuelven 503 o cierran el SSE abierto.
+  Se conserva el control de JWT, usuario activo y autorización. Usar un
+  proceso API por archivo y ejecutar escritores offline de forma separada.
+- El detalle comercial reconcilia la fila por ID con su consulta existente.
+  La selección persiste durante la actualización y un replay no revierte el
+  estado terminal.
+- QA focal: 13 PASS PostgreSQL/Uvicorn, 6 PASS Node y 9 PASS de la revisión
+  independiente de concurrencia y JWT. Chromium y Next.js validaron dos
+  sesiones, cursor purgado, snapshot, detalle sin peticiones redundantes y
+  rechazo sin grant. Sin llamadas a modelos.
+- Next.js devolvía 500 por conexión rechazada a FastAPI. La causa de la salida
+  de FastAPI sigue indeterminada.
+
+### Aceptación funcional y entrega SSE Parte 1
+
+- Usuario + ChatGPT confirmaron `ACEPTACION_FUNCIONAL_APROBADA_EN_QA` con
+  Backoffice auténtico y analizador determinista. A verificó el aviso al
+  comercial tras la validación. B verificó reconexión, replay, deduplicación
+  y selección. C verificó dos comerciales, restricción sin grant y cierre
+  del stream al cerrar sesión.
+- Los tres UUID y la comprobación de solo lectura están registrados en el
+  runbook. PostgreSQL conservó los tres tickets, sus jobs completados y un
+  evento por ticket. API y Backoffice respondieron HTTP 200.
+- Pendiente de entrega Git. El inventario, staging propuesto, borrador de PR
+  y validación reproducible están en `docs/operations/rfp-sse-delivery.md`.
+  Project Learnings queda para después del Pull Request.
