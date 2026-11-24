@@ -15,7 +15,7 @@ rfp_tickets = Table(
     Column("uploaded_by_subject", String(128), nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
-    CheckConstraint("status IN ('analizando','descartado','analisis_completo','generando_borrador','en_evaluación','needs_human_review')", name="ck_rfp_ticket_status"),
+    CheckConstraint("status IN ('analizando','descartado','analisis_completo','generando_borrador','en_evaluación','needs_human_review','esperando_aprobación','terminado')", name="ck_rfp_ticket_status"),
     CheckConstraint("(status='descartado' AND discard_reason_code IS NOT NULL) OR (status<>'descartado' AND discard_reason_code IS NULL AND discard_summary IS NULL)", name="ck_rfp_ticket_discard_shape"),
 )
 rfp_metadata = Table(
