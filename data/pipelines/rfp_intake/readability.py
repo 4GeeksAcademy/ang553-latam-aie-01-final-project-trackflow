@@ -23,9 +23,9 @@ def detect_readability_language(text: str) -> str:
     words = [word.casefold() for word in _WORDS.findall(text)]
     english = sum(word in _ENGLISH for word in words)
     spanish = sum(word in _SPANISH for word in words)
-    if english >= 2 and spanish == 0:
+    if english >= 2 and english >= 2 * spanish:
         return "en"
-    if spanish >= 2 and english == 0:
+    if spanish >= 2 and spanish >= 2 * english:
         return "es"
     return "unknown"
 

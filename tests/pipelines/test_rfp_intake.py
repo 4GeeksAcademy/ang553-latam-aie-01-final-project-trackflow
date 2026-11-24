@@ -38,7 +38,10 @@ from data.pipelines.rfp_intake.pdf_conversion import (
     PDFConversionError,
     pdf_to_markdown,
 )
-from data.pipelines.rfp_intake.readability import compute_readability
+from data.pipelines.rfp_intake.readability import (
+    compute_readability,
+    detect_readability_language,
+)
 from data.pipelines.rfp_intake.routing import department_extract, selected_departments
 
 
@@ -415,6 +418,22 @@ def test_readability_computes_english_and_marks_spanish_not_applicable() -> None
     assert all(metric.status == "not_applicable" for metric in spanish.metrics)
 
 
+def test_language_detection_allows_bilingual_headings_with_dominant_body() -> None:
+    spanish_body = (
+        "REQUEST FOR PROPOSAL. The solicitud para el almacén con la empresa, "
+        "para los pedidos con almacenamiento."
+    )
+    english_body = (
+        "Solicitud. The warehouse and delivery request is for the customer "
+        "with warehouse support."
+    )
+    balanced = "The request para el almacén and warehouse support."
+
+    assert detect_readability_language(spanish_body) == "es"
+    assert detect_readability_language(english_body) == "en"
+    assert detect_readability_language(balanced) == "unknown"
+
+
 def test_join_rejects_partial_results() -> None:
     state = {
         "selected_departments": [DepartmentId.warehouse, DepartmentId.reverse],
@@ -444,6 +463,47 @@ class FakeGateway:
         return self.response
 
 
+@pytest.mark.parametrize(
+    ("reason_code", "is_valid_rfp"),
+    [
+        ("legitimate_rfp", True),
+        ("vendor_pitch", False),
+        ("not_a_request", False),
+        ("outside_trackflow_scope", False),
+        ("ambiguous", False),
+    ],
+)
+def test_classification_contract_accepts_each_coherent_reason_mapping(
+    reason_code: str, is_valid_rfp: bool
+) -> None:
+    decision = ClassificationDecision(
+        is_valid_rfp=is_valid_rfp,
+        reason_code=reason_code,
+        evidence_refs=[ref(1)],
+    )
+
+    assert decision.reason_code == reason_code
+    assert decision.is_valid_rfp is is_valid_rfp
+
+
+@pytest.mark.parametrize(
+    ("reason_code", "is_valid_rfp"),
+    [
+        ("legitimate_rfp", False),
+        ("vendor_pitch", True),
+    ],
+)
+def test_classification_contract_rejects_both_incoherent_mapping_classes(
+    reason_code: str, is_valid_rfp: bool
+) -> None:
+    with pytest.raises(ValidationError, match="classification result and reason disagree"):
+        ClassificationDecision(
+            is_valid_rfp=is_valid_rfp,
+            reason_code=reason_code,
+            evidence_refs=[ref(1)],
+        )
+
+
 def test_fourgeeks_classifier_uses_closed_schema_and_accepts_valid_json() -> None:
     gateway = FakeGateway(
         '{"is_valid_rfp":true,"reason_code":"legitimate_rfp",'
@@ -454,6 +514,57 @@ def test_fourgeeks_classifier_uses_closed_schema_and_accepts_valid_json() -> Non
     assert gateway.calls[0]["schema_name"] == "trackflow_rfp_classification"
     assert gateway.calls[0]["schema"]["additionalProperties"] is False
     assert "<untrusted_rfp_markdown>" in gateway.calls[0]["user"]
+
+
+def test_fourgeeks_classifier_prompt_contains_complete_reason_mapping() -> None:
+    gateway = FakeGateway(
+        '{"is_valid_rfp":true,"reason_code":"legitimate_rfp",'
+        '"evidence_refs":[{"line_start":1,"line_end":1}]}'
+    )
+
+    FourGeeksRFPAnalyzer(gateway).classify("Generic client request")
+    system = gateway.calls[0]["system"]
+
+    assert "is_valid_rfp=true if and only if reason_code=legitimate_rfp" in system
+    assert (
+        "is_valid_rfp=false when reason_code is vendor_pitch, not_a_request, "
+        "outside_trackflow_scope, or ambiguous"
+    ) in system
+    assert "use ambiguous with is_valid_rfp=false instead" in system
+    assert "Cite real one-based Markdown lines" in system
+    assert "ModaViva" not in system
+
+
+def test_fourgeeks_classifier_prompt_does_not_force_document_outcome() -> None:
+    legitimate = FakeGateway(
+        '{"is_valid_rfp":true,"reason_code":"legitimate_rfp",'
+        '"evidence_refs":[{"line_start":1,"line_end":1}]}'
+    )
+    rejected = FakeGateway(
+        '{"is_valid_rfp":false,"reason_code":"not_a_request",'
+        '"evidence_refs":[{"line_start":1,"line_end":1}]}'
+    )
+
+    accepted = FourGeeksRFPAnalyzer(legitimate).classify("Please prepare a proposal")
+    discarded = FourGeeksRFPAnalyzer(rejected).classify("Irregular verbs exercise")
+
+    assert accepted.is_valid_rfp is True
+    assert discarded.is_valid_rfp is False
+    assert legitimate.calls[0]["system"] == rejected.calls[0]["system"]
+    assert legitimate.calls[0]["user"] != rejected.calls[0]["user"]
+
+
+def test_ambiguous_mapping_remains_semantically_rejected_after_contract_validation() -> None:
+    gateway = FakeGateway(
+        '{"is_valid_rfp":false,"reason_code":"ambiguous",'
+        '"evidence_refs":[{"line_start":1,"line_end":1}]}'
+    )
+
+    with pytest.raises(StructuredOutputError, match="ambiguous") as captured:
+        FourGeeksRFPAnalyzer(gateway).classify("Insufficiently clear request")
+
+    assert captured.value.diagnostic.category == "semantic_validation"
+    assert captured.value.diagnostic.path == "reason_code"
 
 
 def test_structured_not_a_request_discards_without_workers_or_handoff() -> None:

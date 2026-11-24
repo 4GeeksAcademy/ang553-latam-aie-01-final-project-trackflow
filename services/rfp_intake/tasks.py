@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from threading import Event, Thread
@@ -13,7 +14,13 @@ from sqlalchemy import create_engine, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session
 
-from data.pipelines.rfp_intake.analyzer import FourGeeksRFPAnalyzer, StructuredOutputError
+from data.pipelines.rfp_intake.analyzer import (
+    FourGeeksRFPAnalyzer,
+    ProviderResponseDiagnostic,
+    StructuredGenerationContext,
+    StructuredOutputError,
+    structured_generation_context,
+)
 from data.pipelines.rfp_intake.pdf_conversion import PDFConversionError, pdf_to_markdown
 from data.pipelines.rfp_intake.readability import compute_readability
 from data.pipelines.rfp_intake.runtime import process_rfp_ticket
@@ -23,10 +30,111 @@ from services.rag.config import load_settings
 from services.rag.contracts import RAGConfigurationError, RAGProviderError
 from services.rfp_intake.artifacts import persist_markdown
 from services.rfp_intake.config import RFPSettings, get_rfp_settings
+from services.rfp_intake.fourgeeks_budget import (
+    BudgetedIntakeFourGeeksGateway,
+    IntakeFourGeeksBudgetError,
+    IntakeFourGeeksRequestLedger,
+    load_intake_fourgeeks_budget_settings,
+)
 from services.rfp_intake.models import rfp_jobs, rfp_tickets
 from services.rfp_intake.sink import PostgresRFPResultSink
 from services.rfp_intake.store import claim_job, finish_job, heartbeat_job, schedule_retry
 from services.task_queue.celery_app import celery_app
+
+
+diagnostic_logger = logging.getLogger("trackflow.rfp_intake.structured_output")
+
+
+def _validation_stage(category: str) -> str:
+    return {
+        "json_invalid": "json",
+        "pydantic_validation": "pydantic",
+        "semantic_validation": "semantic",
+        "reference_bounds": "graph_reference",
+        "validation_error": "provider_envelope",
+        "timeout": "provider_http",
+    }.get(category, "provider_http")
+
+
+def _log_content_free_diagnostic(
+    job: dict[str, Any],
+    *,
+    context: StructuredGenerationContext | None,
+    category: str,
+    error_type: str,
+    path: str,
+    received_type: str,
+    violated_constraint: str,
+) -> None:
+    provider = context.provider if context is not None else ProviderResponseDiagnostic()
+    diagnostic_logger.warning(
+        "rfp_intake_structured_failure "
+        "job_id=%s attempt=%s operation=%s invocation_id=%s "
+        "validation_stage=%s category=%s error_type=%s path=%s "
+        "received_type=%s violated_constraint=%s http_status=%s "
+        "content_type=%s finish_reason=%s content_value_type=%s content_length=%s "
+        "refusal_present=%s tool_calls_present=%s reasoning_present=%s "
+        "latency_ms=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s "
+        "provider_request_id=%s",
+        job["job_id"],
+        job["attempt_count"],
+        context.operation if context is not None else "unknown",
+        context.invocation_id if context is not None else "unknown",
+        _validation_stage(category),
+        category,
+        error_type,
+        path,
+        received_type,
+        violated_constraint,
+        provider.http_status,
+        provider.content_type,
+        provider.finish_reason,
+        provider.content_value_type,
+        provider.content_length,
+        provider.refusal_present,
+        provider.tool_calls_present,
+        provider.reasoning_present,
+        provider.latency_ms,
+        provider.prompt_tokens,
+        provider.completion_tokens,
+        provider.total_tokens,
+        provider.request_id,
+    )
+
+
+def _log_structured_output_failure(
+    job: dict[str, Any], error: StructuredOutputError
+) -> None:
+    diagnostic = error.diagnostic
+    _log_content_free_diagnostic(
+        job,
+        context=StructuredGenerationContext(
+            operation=diagnostic.operation,
+            invocation_id=diagnostic.invocation_id,
+            provider=diagnostic.provider,
+        ),
+        category=diagnostic.category,
+        error_type=diagnostic.error_type,
+        path=diagnostic.path,
+        received_type=diagnostic.received_type,
+        violated_constraint=diagnostic.violated_constraint,
+    )
+
+
+def _log_provider_failure(job: dict[str, Any], error: RAGProviderError) -> None:
+    category = error.category if error.category in {
+        "timeout", "network_error", "http_error", "validation_error",
+        "deadline_exhausted", "retry_exhausted",
+    } else "provider_error"
+    _log_content_free_diagnostic(
+        job,
+        context=structured_generation_context(error),
+        category=category,
+        error_type="provider_error",
+        path="root",
+        received_type="unknown",
+        violated_constraint="provider_request",
+    )
 
 
 def _engine() -> Any:
@@ -137,8 +245,23 @@ def execute_claimed_job(engine: Any, job: dict[str, Any], settings: RFPSettings)
 
     gateway = FourGeeksHTTPClient(load_settings())
     try:
+        budget_settings = load_intake_fourgeeks_budget_settings(
+            artifact_root=settings.artifact_root
+        )
+        analyzer_gateway: Any = gateway
+        if budget_settings is not None:
+            analyzer_gateway = BudgetedIntakeFourGeeksGateway(
+                gateway,
+                IntakeFourGeeksRequestLedger(
+                    budget_settings,
+                    job_id=UUID(str(job["job_id"])),
+                    ticket_id=ticket_id,
+                    actual_pdf_sha256=conversion.metrics.sha256,
+                ),
+            )
         analyzer = FourGeeksRFPAnalyzer(
-            gateway, timeout_seconds=gateway.settings.generation_timeout_seconds
+            analyzer_gateway,
+            timeout_seconds=gateway.settings.generation_timeout_seconds,
         )
         readability = compute_readability(conversion.markdown)
         with Session(engine) as session:
@@ -184,12 +307,20 @@ def process_rfp(self: Any, job_id: str) -> None:
             self, engine, job, settings, retryable=False,
             code="provider_configuration_invalid", summary="RFP provider configuration is invalid",
         )
-    except StructuredOutputError:
+    except IntakeFourGeeksBudgetError:
+        _record_failure_or_redeliver(
+            self, engine, job, settings, retryable=False,
+            code="fourgeeks_request_budget_blocked",
+            summary="The isolated QA FourGeeks request budget blocked intake",
+        )
+    except StructuredOutputError as exc:
+        _log_structured_output_failure(job, exc)
         _record_failure_or_redeliver(
             self, engine, job, settings, retryable=True, code="structured_output_invalid",
             summary="Structured provider output did not satisfy the contract",
         )
     except RAGProviderError as exc:
+        _log_provider_failure(job, exc)
         _record_failure_or_redeliver(self, engine, job, settings, retryable=True,
                                      code=exc.category, summary="RFP provider request failed")
     except SQLAlchemyError as exc:
