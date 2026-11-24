@@ -80,3 +80,28 @@ overlapping invocations. An hourly cadence is recommended when the 24-hour
 proposal TTL should have no more than about one hour of operational delay; using
 a daily cadence requires accepting retention until the next pass. Validate the
 job first with one supervised execution followed by an idempotent second pass.
+
+## FourGeeks RFP intake diagnostic (QA only)
+
+`python -m scripts.rfp_intake_fourgeeks_diagnostic` isolates one production
+structured-generation boundary (`classification` or `metadata`) without
+Celery, PostgreSQL, tickets, or business writes. It verifies the official
+ModaViva PDF and Markdown hashes, the production endpoint/model, the 45-second
+generation timeout, deterministic Part 2, and a fresh durable budget whose
+immutable maximum is exactly one request.
+
+The default is preflight-only. A real request additionally requires
+`--execute`, `TRACKFLOW_RFP_INTAKE_DIAGNOSTIC_EXTERNAL_AUTHORIZED=YES`, and
+`TRACKFLOW_RFP_INTAKE_DIAGNOSTIC_ENVIRONMENT=qa`. Use a new UUID and budget ID
+for each separately authorized operation. The ledger root must be a restricted,
+persistent directory outside the repository. Reusing a budget ID is rejected;
+the request slot is atomically reserved before network access and is never
+returned after failure. The HTTP transport has zero retries.
+
+Run `classification` first. Only if it is valid should a separate authorization,
+UUID, and one-slot budget be prepared for `metadata`. Inject only the existing
+private `FOUR_GEEKS_API_KEY`; never put it on the command line or in repository
+files. Output is content-free JSON containing status, validation category,
+sanitized field path/type/constraint, finish reason, latency, token usage, and a
+sanitized provider request ID when available. It never prints prompts, response
+content, field values, the PDF text, or secrets.
