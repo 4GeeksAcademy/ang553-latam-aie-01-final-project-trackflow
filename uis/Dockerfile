@@ -5,8 +5,8 @@ WORKDIR /app
 # ---------------------------------------------------------------
 # Dependency installation layer (leverages Docker cache)
 # ---------------------------------------------------------------
-COPY website/package.json website/package-lock.json ./uis/website/
-COPY backoffice/package.json backoffice/package-lock.json ./uis/backoffice/
+COPY uis/website/package.json uis/website/package-lock.json ./uis/website/
+COPY uis/backoffice/package.json uis/backoffice/package-lock.json ./uis/backoffice/
 
 RUN cd /app/uis/website && npm ci
 RUN cd /app/uis/backoffice && npm ci
@@ -14,13 +14,18 @@ RUN cd /app/uis/backoffice && npm ci
 # ---------------------------------------------------------------
 # Source code layer
 # ---------------------------------------------------------------
-COPY website/ ./uis/website/
-COPY backoffice/ ./uis/backoffice/
+COPY uis/website/ ./uis/website/
+COPY uis/backoffice/ ./uis/backoffice/
+COPY src/ ./src/
+
+ARG API_BACKEND_URL=http://api:8000
+ENV API_BACKEND_URL=${API_BACKEND_URL}
+RUN cd /app/uis/backoffice && npm run build
 
 # ---------------------------------------------------------------
 # Start script
 # ---------------------------------------------------------------
-COPY start.sh /uis/start.sh
+COPY uis/start.sh /uis/start.sh
 RUN sed -i 's/\r$//' /uis/start.sh && chmod +x /uis/start.sh
 
 # ---------------------------------------------------------------

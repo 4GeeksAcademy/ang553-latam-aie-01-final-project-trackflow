@@ -69,7 +69,6 @@ Thumbs.db
 .dockerignore
 
 # Ignore the UI directory — not needed by backend build
-uis/
 
 # Ignore nested Docker context rules; service Dockerfiles remain explicit inputs.
 services/.dockerignore

@@ -20,6 +20,7 @@ COPY pipelines/ /app/pipelines/
 COPY data/pipelines/rfp_intake/ /app/data/pipelines/rfp_intake/
 COPY data/pipelines/rfp_response/ /app/data/pipelines/rfp_response/
 COPY docs/company-knowledge-base/ /app/docs/company-knowledge-base/
+COPY agents/ /app/agents/
 COPY services/ /app/services/
 COPY scripts/ /app/scripts/
 
