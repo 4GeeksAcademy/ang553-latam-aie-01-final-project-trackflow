@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from hashlib import sha256
 from pathlib import Path
 from threading import Event, Thread
 from typing import Any
@@ -21,7 +22,8 @@ from data.pipelines.rfp_intake.analyzer import (
     StructuredOutputError,
     structured_generation_context,
 )
-from data.pipelines.rfp_intake.pdf_conversion import PDFConversionError, pdf_to_markdown
+from data.pipelines.rfp_intake.contracts import RFPIntakeDecision
+from data.pipelines.rfp_intake.pdf_conversion import PDFConversionError, PDFConversionResult, pdf_to_markdown
 from data.pipelines.rfp_intake.readability import compute_readability
 from data.pipelines.rfp_intake.runtime import process_rfp_ticket
 from pipelines.database_identity import sqlalchemy_postgresql_url
@@ -36,6 +38,7 @@ from services.rfp_intake.fourgeeks_budget import (
     IntakeFourGeeksRequestLedger,
     load_intake_fourgeeks_budget_settings,
 )
+from services.rfp_intake.intake_events import IntakeClaimLost, get_intake_decision, require_intake_claim
 from services.rfp_intake.models import rfp_jobs, rfp_tickets
 from services.rfp_intake.sink import PostgresRFPResultSink
 from services.rfp_intake.store import claim_job, finish_job, heartbeat_job, schedule_retry
@@ -152,6 +155,22 @@ def _source_path(root: Path, ticket_id: UUID) -> Path:
     return source
 
 
+def _resume_conversion(root: Path, decision: RFPIntakeDecision) -> PDFConversionResult:
+    markdown_path = (root / str(decision.ticket_id) / "source.md").resolve()
+    if root.resolve() not in markdown_path.parents:
+        raise PDFConversionError("RFP Markdown path is invalid")
+    try:
+        with markdown_path.open("rb") as source:
+            content = source.read(decision.conversion_metrics.markdown_characters * 4 + 1)
+        markdown = content.decode("utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise PDFConversionError("Stored RFP Markdown is unavailable or invalid") from exc
+    if (len(markdown) != decision.conversion_metrics.markdown_characters
+        or sha256(content).hexdigest() != decision.markdown_sha256):
+        raise PDFConversionError("Stored RFP Markdown differs from the committed decision")
+    return PDFConversionResult(markdown, decision.conversion_metrics)
+
+
 class _LeaseHeartbeat:
     """Renew a claim from an independent session while provider calls run."""
 
@@ -223,25 +242,31 @@ def execute_claimed_job(engine: Any, job: dict[str, Any], settings: RFPSettings)
     """Execute one already-claimed job; terminal business state and job commit together."""
     ticket_id = UUID(str(job["ticket_id"]))
     markdown_reference = f"rfp_intake/{ticket_id}/source.md"
-    conversion = pdf_to_markdown(
-        _source_path(settings.artifact_root, ticket_id),
-        markdown_reference=markdown_reference,
-        max_pages=settings.max_pdf_pages,
-        timeout_seconds=settings.pdf_conversion_timeout_seconds,
-    )
-    markdown_path = persist_markdown(root=settings.artifact_root, ticket_id=ticket_id,
-                                     markdown=conversion.markdown)
-    if markdown_path != markdown_reference:
-        raise RuntimeError("Persisted Markdown reference does not match conversion metrics")
     with Session(engine) as session:
-        changed = session.execute(update(rfp_tickets).where(
-            rfp_tickets.c.ticket_id == ticket_id,
-            rfp_tickets.c.status == "analizando",
-        ).values(markdown_path=markdown_path)).rowcount
-        if changed != 1:
-            session.rollback()
-            raise RuntimeError("RFP ticket is no longer processable")
-        session.commit()
+        decision = get_intake_decision(session, ticket_id)
+    if decision is not None:
+        conversion = _resume_conversion(settings.artifact_root, decision)
+    else:
+        conversion = pdf_to_markdown(
+            _source_path(settings.artifact_root, ticket_id),
+            markdown_reference=markdown_reference,
+            max_pages=settings.max_pdf_pages,
+            timeout_seconds=settings.pdf_conversion_timeout_seconds,
+        )
+        with Session(engine) as session:
+            require_intake_claim(session, job)
+            changed = session.execute(update(rfp_tickets).where(
+                rfp_tickets.c.ticket_id == ticket_id,
+                rfp_tickets.c.status == "analizando",
+            ).values(markdown_path=markdown_reference)).rowcount
+            if changed != 1:
+                raise IntakeClaimLost("RFP ticket is no longer processable")
+            markdown_path = persist_markdown(root=settings.artifact_root, ticket_id=ticket_id,
+                                             markdown=conversion.markdown)
+            if markdown_path != markdown_reference:
+                raise RuntimeError("Persisted Markdown reference does not match conversion metrics")
+            require_intake_claim(session, job)
+            session.commit()
 
     gateway = FourGeeksHTTPClient(load_settings())
     try:
@@ -273,6 +298,8 @@ def execute_claimed_job(engine: Any, job: dict[str, Any], settings: RFPSettings)
                 readability_metrics=readability,
                 analyzer=analyzer,
                 sink=sink,
+                intake_sink=sink,
+                decision=decision,
             )
     finally:
         gateway.close()
@@ -323,6 +350,10 @@ def process_rfp(self: Any, job_id: str) -> None:
         _log_provider_failure(job, exc)
         _record_failure_or_redeliver(self, engine, job, settings, retryable=True,
                                      code=exc.category, summary="RFP provider request failed")
+    except IntakeClaimLost as exc:
+        if _terminal_state(engine, parsed_job_id) in {"succeeded", "failed", "dead_letter"}:
+            return
+        raise self.retry(exc=exc, countdown=settings.retry_backoff_seconds[0])
     except SQLAlchemyError as exc:
         # The previous COMMIT may have succeeded even when its acknowledgement failed.
         if _terminal_state(engine, parsed_job_id) == "succeeded":

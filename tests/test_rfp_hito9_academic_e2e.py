@@ -54,6 +54,7 @@ FIXTURE = FIXTURES / "trackflow-request-1.pdf"
 FIXTURE_SHA256 = "6e5ccfb2bc31ee846a8a33d853076e79824b09e387b4a8c98530626b59e2f37e"
 MIGRATIONS = (
     ROOT / "infra/sql/rfp_intake.sql",
+    ROOT / "infra/sql/rfp_sse.sql",
     ROOT / "infra/sql/rfp_response_generation.sql",
     ROOT / "infra/sql/rfp_approval.sql",
     ROOT / "infra/sql/rfp_approval_extension.sql",
@@ -692,6 +693,7 @@ def test_academic_e2e_reuses_pr38_stub_and_official_modaviva_pdf() -> None:
     assert all(path.is_file() and path.stat().st_size > 0 for path in MIGRATIONS)
     assert [path.name for path in MIGRATIONS] == [
         "rfp_intake.sql",
+        "rfp_sse.sql",
         "rfp_response_generation.sql",
         "rfp_approval.sql",
         "rfp_approval_extension.sql",

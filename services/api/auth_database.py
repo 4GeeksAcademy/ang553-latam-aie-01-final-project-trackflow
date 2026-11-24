@@ -12,9 +12,34 @@ Exposes:
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
+from json import JSONDecodeError
 from pathlib import Path
+from threading import RLock
 
 from tinydb import TinyDB
+
+
+class AuthStoreUnavailable(RuntimeError):
+    """The auth store could not be read or written."""
+
+
+_auth_lock = RLock()
+
+
+@contextmanager
+def auth_storage_access() -> Iterator[None]:
+    """Serialize auth transactions that share a JSONStorage handle in this process.
+
+    The lock is reentrant for nested auth operations. Use one API process per
+    auth file and keep offline writers separate.
+    """
+    with _auth_lock:
+        try:
+            yield
+        except (OSError, JSONDecodeError, UnicodeError):
+            raise AuthStoreUnavailable("Authentication storage is temporarily unavailable") from None
 
 # ── Database path ────────────────────────────────────────────────────────────
 # Same data directory as suppliers, but different file.

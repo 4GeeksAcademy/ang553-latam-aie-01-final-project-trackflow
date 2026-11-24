@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from tinydb import Query
 
-from services.api.auth_database import password_reset_tokens, profiles, users
+from services.api.auth_database import auth_storage_access, password_reset_tokens, profiles, users
 from services.api.auth_models import (
     PasswordResetTokenInDB,
     ProfileCreate,
@@ -78,6 +78,7 @@ def _find_profile_doc_by_user_id(user_id: str) -> dict | None:
 # ── User services ────────────────────────────────────────────────────────────
 
 
+@auth_storage_access()
 def create_user(payload: UserCreate) -> UserResponse:
     """Create a new user. Password is hashed with bcrypt before storage.
 
@@ -97,6 +98,7 @@ def create_user(payload: UserCreate) -> UserResponse:
     return _user_to_response(user)
 
 
+@auth_storage_access()
 def get_user_by_id(user_id: str) -> UserResponse | None:
     """Retrieve a user by UUID. Returns None if not found."""
     doc = _find_user_doc_by_id(user_id)
@@ -105,6 +107,7 @@ def get_user_by_id(user_id: str) -> UserResponse | None:
     return _user_to_response(UserInDB(**doc))
 
 
+@auth_storage_access()
 def get_user_by_email(email: str) -> UserResponse | None:
     """Retrieve a user by email. Returns None if not found."""
     doc = _find_user_doc_by_email(email)
@@ -113,6 +116,7 @@ def get_user_by_email(email: str) -> UserResponse | None:
     return _user_to_response(UserInDB(**doc))
 
 
+@auth_storage_access()
 def get_user_in_db_by_email(email: str) -> UserInDB | None:
     """Retrieve full UserInDB (with hashed_password) by email. Internal use."""
     doc = _find_user_doc_by_email(email)
@@ -121,6 +125,7 @@ def get_user_in_db_by_email(email: str) -> UserInDB | None:
     return UserInDB(**doc)
 
 
+@auth_storage_access()
 def list_users() -> list[UserResponse]:
     """Return all users as public ``UserResponse`` objects.
 
@@ -134,6 +139,7 @@ def list_users() -> list[UserResponse]:
     return result
 
 
+@auth_storage_access()
 def update_user(user_id: str, payload: UserUpdate) -> UserResponse:
     """Update non-credential user fields. Raises ValueError if not found.
 
@@ -164,6 +170,7 @@ def update_user(user_id: str, payload: UserUpdate) -> UserResponse:
     return _user_to_response(UserInDB(**updated))  # type: ignore[arg-type]
 
 
+@auth_storage_access()
 def delete_user(user_id: str) -> None:
     """Delete a user and their associated profile. Silent if not found."""
     # Delete profile first if it exists
@@ -177,6 +184,7 @@ def delete_user(user_id: str) -> None:
 # ── Profile services ─────────────────────────────────────────────────────────
 
 
+@auth_storage_access()
 def create_profile(payload: ProfileCreate) -> ProfileResponse:
     """Create a new profile for a user."""
     # Verify user exists
@@ -199,6 +207,7 @@ def create_profile(payload: ProfileCreate) -> ProfileResponse:
     return _profile_to_response(profile)
 
 
+@auth_storage_access()
 def get_profile_by_user_id(user_id: str) -> ProfileResponse | None:
     """Retrieve a profile by user_id. Returns None if not found."""
     doc = _find_profile_doc_by_user_id(user_id)
@@ -207,6 +216,7 @@ def get_profile_by_user_id(user_id: str) -> ProfileResponse | None:
     return _profile_to_response(ProfileInDB(**doc))
 
 
+@auth_storage_access()
 def update_profile(user_id: str, payload: ProfileUpdate) -> ProfileResponse:
     """Update a profile by user_id. Raises ValueError if not found."""
     doc = _find_profile_doc_by_user_id(user_id)
@@ -228,6 +238,7 @@ def update_profile(user_id: str, payload: ProfileUpdate) -> ProfileResponse:
     return _profile_to_response(ProfileInDB(**updated))  # type: ignore[arg-type]
 
 
+@auth_storage_access()
 def delete_profile(user_id: str) -> None:
     """Delete a profile by user_id. Silent if not found."""
     profiles.remove(_ProfileQuery.user_id == user_id)
@@ -251,6 +262,7 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+@auth_storage_access()
 def issue_password_reset_token(user_id: str) -> str:
     """Create a password-reset JWT and persist its ``jti`` hash in TinyDB.
 
@@ -278,6 +290,7 @@ def issue_password_reset_token(user_id: str) -> str:
     return token
 
 
+@auth_storage_access()
 def validate_password_reset_token(token: str) -> str:
     """Validate a password-reset JWT and check its persisted state.
 
@@ -323,6 +336,7 @@ def validate_password_reset_token(token: str) -> str:
     return user_id
 
 
+@auth_storage_access()
 def invalidate_password_reset_token(token: str) -> None:
     """Mark a password-reset token as used so it cannot be reused.
 
@@ -349,6 +363,7 @@ def invalidate_password_reset_token(token: str) -> None:
     )
 
 
+@auth_storage_access()
 def reset_password(token: str, new_password: str) -> None:
     """Validate a password-reset token, update the user's password, and
     invalidate the token (single-use enforcement).
@@ -386,6 +401,7 @@ def reset_password(token: str, new_password: str) -> None:
     )
 
 
+@auth_storage_access()
 def change_password(user_id: str, current_password: str, new_password: str) -> None:
     """Change the password for an authenticated user.
 

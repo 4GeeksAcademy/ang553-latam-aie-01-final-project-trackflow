@@ -105,15 +105,20 @@ Apply the current Parte 1 schema first, then the forward Parte 2 migration:
 psql "$env:RFP_RESPONSE_MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 `
   -f infra/sql/rfp_intake.sql
 psql "$env:RFP_RESPONSE_MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 `
+  -f infra/sql/rfp_sse.sql
+psql "$env:RFP_RESPONSE_MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 `
   -f infra/sql/rfp_response_generation.sql
 ```
 
 ### Existing Parte 1 database
 
-Do **not** replay the original schema over an existing environment. After the
-identity, backup and baseline checks above, apply only:
+Do **not** replay the original intake schema over an existing environment.
+The current worker requires `rfp_sse.sql` before processing intake. After
+the identity, backup and baseline checks above, apply these forward migrations:
 
 ```powershell
+psql "$env:RFP_RESPONSE_MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 `
+  -f infra/sql/rfp_sse.sql
 psql "$env:RFP_RESPONSE_MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 `
   -f infra/sql/rfp_response_generation.sql
 ```

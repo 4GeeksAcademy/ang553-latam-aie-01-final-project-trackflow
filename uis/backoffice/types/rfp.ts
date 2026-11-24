@@ -292,3 +292,25 @@ export interface RfpFinalDocument {
   markdown_hash: string;
   download_filename: string;
 }
+
+export interface RfpTicketCreated {
+  ticket_id: string;
+  rfp_id: string | null;
+  client_name: string | null;
+  client_country: "ES" | "US" | null;
+  services_requested: RfpDepartmentId[];
+  status: "analyzing";
+  created_at: string;
+}
+
+export interface RfpCommercialTicket extends Omit<RfpTicketCreated, "status"> {
+  status: RfpTicketStatus;
+  job_status: RfpJobStatus | null;
+  updated_at: string;
+}
+
+export interface RfpCommercialSnapshot {
+  items: RfpCommercialTicket[];
+  total: number;
+  cursor: string;
+}

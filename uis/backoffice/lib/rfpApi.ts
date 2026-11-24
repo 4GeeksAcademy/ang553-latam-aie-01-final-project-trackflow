@@ -1,8 +1,11 @@
 import { authFetch } from "@/lib/authFetch";
+import { InvalidRfpSseFrame, isRfpCursor } from "@/lib/rfpSse";
 import type {
   RfpApprovalAction,
   RfpApprovalDecisionResult,
   RfpApprovalInboxItem,
+  RfpCommercialSnapshot,
+  RfpCommercialTicket,
   RfpDepartmentId,
   RfpDepartmentReview,
   RfpFinalDocument,
@@ -20,6 +23,7 @@ import type {
   RfpServiceRequest,
   RfpSourceReference,
   RfpTicketAccepted,
+  RfpTicketCreated,
   RfpTicketDetail,
   RfpTicketListItem,
   RfpTicketListResponse,
@@ -501,6 +505,98 @@ async function request(path: string, pathTemplate: string, init?: RequestInit): 
   }
 }
 
+const NOTIFICATIONS_PATH = "/rfps/notifications";
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UTC_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+
+function parseRfpNotificationFields(value: unknown): Omit<RfpTicketCreated, "status"> {
+  if (!isRecord(value) || typeof value.ticket_id !== "string" || !UUID_RE.test(value.ticket_id)
+    || typeof value.created_at !== "string" || !Number.isFinite(Date.parse(value.created_at))
+    || !("rfp_id" in value) || !("client_name" in value) || !("client_country" in value)) {
+    throw new Error("invalid RFP notification fields");
+  }
+  const country = value.client_country;
+  const rfpId = stringOrNull(value.rfp_id);
+  const clientName = stringOrNull(value.client_name);
+  if ((country !== null && country !== "ES" && country !== "US")
+    || (rfpId !== null && Array.from(rfpId).length > 160)
+    || (clientName !== null && Array.from(clientName).length > 200)) {
+    throw new Error("invalid RFP notification metadata");
+  }
+  return {
+    ticket_id: value.ticket_id,
+    rfp_id: rfpId,
+    client_name: clientName,
+    client_country: country,
+    created_at: value.created_at,
+    services_requested: parseDepartments(value.services_requested),
+  };
+}
+
+export function parseRfpTicketCreated(data: string): RfpTicketCreated {
+  try {
+    const value: unknown = JSON.parse(data);
+    if (!isRecord(value) || value.status !== "analyzing" || Object.keys(value).length !== 7) {
+      throw new Error("invalid RFP event contract");
+    }
+    const fields = parseRfpNotificationFields(value);
+    if (!UTC_DATE_RE.test(fields.created_at) || fields.services_requested.length === 0) {
+      throw new Error("invalid RFP event values");
+    }
+    return { ...fields, status: "analyzing" };
+  } catch {
+    throw new InvalidRfpSseFrame("Evento RFP inválido.");
+  }
+}
+
+function parseCommercialRfpTicket(value: unknown): RfpCommercialTicket {
+  if (!isRecord(value) || typeof value.updated_at !== "string"
+    || !Number.isFinite(Date.parse(value.updated_at))) throw new Error("invalid RFP ticket");
+  return {
+    ...parseRfpNotificationFields(value),
+    status: parseTicketStatus(value.status),
+    job_status: value.job_status === null ? null : parseJobStatus(value.job_status),
+    updated_at: value.updated_at,
+  };
+}
+
+export async function getRfpCommercialSnapshot(signal: AbortSignal): Promise<RfpCommercialSnapshot> {
+  const path = `${NOTIFICATIONS_PATH}/snapshot`;
+  const value = await request(path, path, { signal, cache: "no-store" });
+  try {
+    if (!isRecord(value) || !isRfpCursor(value.cursor) || !Array.isArray(value.items)
+      || typeof value.total !== "number" || !Number.isSafeInteger(value.total) || value.total < 0) {
+      throw new Error("invalid RFP snapshot");
+    }
+    return { cursor: value.cursor, total: value.total, items: value.items.map(parseCommercialRfpTicket) };
+  } catch {
+    throw new RfpApiError("La lista comercial de RFPs tiene un formato inválido.");
+  }
+}
+
+export async function getRfpCommercialTicket(ticketId: string, signal: AbortSignal): Promise<RfpCommercialTicket> {
+  const value = await request(
+    `${NOTIFICATIONS_PATH}/${encodeURIComponent(ticketId)}`, `${NOTIFICATIONS_PATH}/{ticket_id}`,
+    { signal, cache: "no-store" },
+  );
+  try { return parseCommercialRfpTicket(value); }
+  catch { throw new RfpApiError("El detalle comercial de la RFP tiene un formato inválido."); }
+}
+
+export async function openRfpNotificationStream(cursor: string, signal: AbortSignal): Promise<ReadableStream<Uint8Array>> {
+  const path = `${NOTIFICATIONS_PATH}/stream`;
+  const response = await authFetch(`${BASE_URL}${path}`, {
+    signal, cache: "no-store",
+    headers: { Accept: "text/event-stream", "Last-Event-ID": cursor },
+  }, { pathTemplate: path });
+  if (!response.ok || !response.body ||
+    response.headers.get("content-type")?.split(";")[0].trim() !== "text/event-stream") {
+    void response.body?.cancel().catch(() => undefined);
+    throw new RfpApiError("No se pudo conectar el stream de RFPs.", response.status);
+  }
+  return response.body;
+}
+
 export async function uploadRfp(file: File): Promise<RfpTicketAccepted> {
   if (!file.name.toLowerCase().endsWith(".pdf")) {
     throw new RfpApiError("Selecciona un archivo PDF.");
@@ -514,8 +610,8 @@ export async function uploadRfp(file: File): Promise<RfpTicketAccepted> {
   return { ticket_id: value.ticket_id, status: "analizando" };
 }
 
-export async function listRfpTickets(): Promise<RfpTicketListResponse> {
-  const value = await request("/rfps", "/rfps");
+export async function listRfpTickets(signal?: AbortSignal): Promise<RfpTicketListResponse> {
+  const value = await request("/rfps", "/rfps", { signal });
   if (!isRecord(value) || !Array.isArray(value.items) || typeof value.total !== "number") {
     throw new RfpApiError("El servicio de RFPs devolvió una lista inválida.");
   }
@@ -526,10 +622,11 @@ export async function listRfpTickets(): Promise<RfpTicketListResponse> {
   }
 }
 
-export async function getRfpTicket(ticketId: string): Promise<RfpTicketDetail> {
+export async function getRfpTicket(ticketId: string, signal?: AbortSignal): Promise<RfpTicketDetail> {
   const value = await request(
     `/rfps/${encodeURIComponent(ticketId)}`,
     "/rfps/{ticket_id}",
+    { signal },
   );
   try {
     const item = parseListItem(value);
@@ -568,10 +665,10 @@ export async function startRfpResponse(
   return { ticket_id: value.ticket_id, run_id: value.run_id, job_id: value.job_id, status: "queued" };
 }
 
-export async function getRfpResponse(ticketId: string, runId?: string): Promise<RfpResponseRun> {
+export async function getRfpResponse(ticketId: string, runId?: string, signal?: AbortSignal): Promise<RfpResponseRun> {
   const suffix = runId ? `/response/${encodeURIComponent(runId)}` : "/response";
   const template = runId ? "/rfps/{ticket_id}/response/{run_id}" : "/rfps/{ticket_id}/response";
-  const value = await request(`/rfps/${encodeURIComponent(ticketId)}${suffix}`, template);
+  const value = await request(`/rfps/${encodeURIComponent(ticketId)}${suffix}`, template, { signal });
   try { return parseResponseRun(value); }
   catch { throw new RfpApiError("El servicio devolvió un estado de respuesta inválido."); }
 }

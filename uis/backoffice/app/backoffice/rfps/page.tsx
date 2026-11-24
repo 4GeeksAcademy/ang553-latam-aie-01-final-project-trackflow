@@ -1,38 +1,19 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { AuthGuard } from "@/components/layout/AuthGuard";
 import { BackofficeHeader } from "@/components/layout/BackofficeHeader";
 import { RfpApprovalInbox } from "@/components/rfp/RfpApprovalInbox";
 import { useAuth } from "@/lib/AuthContext";
 import { getRfpFinalDocumentForTicket, getRfpResponse, getRfpTicket, listRfpTickets, RfpApiError, startRfpResponse, uploadRfp } from "@/lib/rfpApi";
-import type { RfpCarrierModel, RfpDepartmentId, RfpFinalDocument, RfpJobStatus, RfpResponseEvaluation, RfpResponseGlobalTerms, RfpResponsePreview, RfpResponseRun, RfpSourceReference, RfpTicketDetail, RfpTicketListItem, RfpTicketStatus } from "@/types/rfp";
+import { mergeRfpAdminList } from "@/lib/rfpFeedState";
+import { DEPARTMENT_LABELS, displayRfpDate as displayDate, JOB_LABELS, TICKET_LABELS } from "@/lib/rfpLabels";
+import { CommercialRfpIntake, NewTicketBadge, RfpNotificationStatus } from "@/components/rfp/CommercialRfpIntake";
+import { useRfpNotifications } from "@/lib/useRfpNotifications";
+import type { RfpCarrierModel, RfpFinalDocument, RfpResponseEvaluation, RfpResponseGlobalTerms, RfpResponsePreview, RfpResponseRun, RfpSourceReference, RfpTicketDetail, RfpTicketListItem, RfpTicketStatus } from "@/types/rfp";
 
 const POLL_INTERVAL_MS = 3000;
 const SELECTED_TICKET_STORAGE_KEY = "trackflow.rfp.selected-ticket";
-const DEPARTMENT_LABELS: Record<RfpDepartmentId, string> = {
-  warehouse: "Warehouse Operations",
-  lastmile: "Last Mile and Carrier Management",
-  reverse: "Reverse Logistics",
-};
-const TICKET_LABELS: Record<RfpTicketStatus, string> = {
-  analizando: "Analizando",
-  descartado: "Descartado",
-  analisis_completo: "Análisis completo",
-  generando_borrador: "Generando borrador",
-  en_evaluación: "En evaluación",
-  needs_human_review: "Revisión humana necesaria",
-  esperando_aprobación: "Esperando aprobación",
-  terminado: "Terminado",
-};
-const JOB_LABELS: Record<RfpJobStatus, string> = {
-  queued: "En cola",
-  running: "En ejecución",
-  retry_wait: "Esperando reintento",
-  succeeded: "Finalizado",
-  failed: "Fallo técnico",
-  dead_letter: "Requiere intervención",
-};
 const CARRIER_MODEL_LABELS: Record<RfpCarrierModel, string> = {
   unknown: "Sin confirmar",
   trackflow_managed: "Gestionado por TrackFlow",
@@ -88,11 +69,6 @@ type GlobalPreviewPayload = {
   }>;
   pending_commercial_items: Array<{ code: string; description: string; owner: string }>;
 };
-
-function displayDate(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("es-ES");
-}
 
 function displaySourceReference(reference: RfpSourceReference): string {
   return reference.line_start === reference.line_end
@@ -332,16 +308,15 @@ function FinalDocumentAccess({ document }: { document: RfpFinalDocument }) {
   </section>;
 }
 
-function RfpPageContent() {
-  const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
+function RfpPageContent({ userId, isAdmin }: { userId: string; isAdmin: boolean }) {
+  const feed = useRfpNotifications(userId);
   const [file, setFile] = useState<File | null>(null);
   const [inputKey, setInputKey] = useState(0);
   const [tickets, setTickets] = useState<RfpTicketListItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<RfpTicketDetail | null>(null);
   const [response, setResponse] = useState<RfpResponseRun | null>(null);
-  const [finalDocument, setFinalDocument] = useState<RfpFinalDocument | null>(null);
+  const [finalDocument, setFinalDocument] = useState<{ ticketId: string; document: RfpFinalDocument } | null>(null);
   const [finalDocumentError, setFinalDocumentError] = useState<string | null>(null);
   const [isLoadingFinalDocument, setIsLoadingFinalDocument] = useState(false);
   const [isStartingResponse, setIsStartingResponse] = useState(false);
@@ -351,71 +326,113 @@ function RfpPageContent() {
   const [isLoadingList, setIsLoadingList] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [acceptance, setAcceptance] = useState<string | null>(null);
+  const selectedRef = useRef<string | null>(null);
+  const listRequest = useRef(0);
+  const detailRequest = useRef(0);
+  const responseRequest = useRef(0);
+
+  const selectTicket = useCallback((ticketId: string) => {
+    selectedRef.current = ticketId;
+    setSelectedId(ticketId);
+  }, []);
 
   useEffect(() => {
     if (!isAdmin) return;
-    const restored = window.sessionStorage.getItem(SELECTED_TICKET_STORAGE_KEY);
-    if (restored) setSelectedId(restored);
-  }, [isAdmin]);
+    const restore = setTimeout(() => {
+      const restored = window.sessionStorage.getItem(SELECTED_TICKET_STORAGE_KEY);
+      if (restored) selectTicket(restored);
+    }, 0);
+    return () => clearTimeout(restore);
+  }, [isAdmin, selectTicket]);
   useEffect(() => {
     if (!isAdmin || !selectedId) return;
     window.sessionStorage.setItem(SELECTED_TICKET_STORAGE_KEY, selectedId);
   }, [isAdmin, selectedId]);
 
-  const loadList = useCallback(async () => {
+  const loadList = useCallback(async (signal?: AbortSignal) => {
     if (!isAdmin) return;
+    const request = ++listRequest.current;
+    const current = () => !signal?.aborted && request === listRequest.current;
     setIsLoadingList(true);
-    try { setTickets((await listRfpTickets()).items); }
-    catch (caught: unknown) { setError(caught instanceof Error ? caught.message : "No se pudo cargar la lista de RFPs."); }
-    finally { setIsLoadingList(false); }
+    try {
+      const result = await listRfpTickets(signal);
+      if (current()) setTickets(result.items);
+    } catch (caught: unknown) {
+      if (current()) setError(caught instanceof Error ? caught.message : "No se pudo cargar la lista de RFPs.");
+    } finally {
+      if (current()) setIsLoadingList(false);
+    }
   }, [isAdmin]);
 
-  const loadDetail = useCallback(async (ticketId: string, showError = true) => {
-    try { const value = await getRfpTicket(ticketId); setDetail(value); return value; }
-    catch (caught: unknown) { if (showError) setError(caught instanceof Error ? caught.message : "No se pudo cargar el ticket."); return null; }
+  const loadDetail = useCallback(async (ticketId: string, signal?: AbortSignal) => {
+    const request = ++detailRequest.current;
+    const current = () => !signal?.aborted && request === detailRequest.current && ticketId === selectedRef.current;
+    try {
+      const value = await getRfpTicket(ticketId, signal);
+      if (current()) setDetail(value);
+      return value;
+    } catch (caught: unknown) {
+      if (current()) setError(caught instanceof Error ? caught.message : "No se pudo cargar el ticket.");
+      return null;
+    }
   }, []);
 
-  const loadResponse = useCallback(async (ticketId: string, showError = true) => {
-    try { const value = await getRfpResponse(ticketId); setResponse(value); return value; }
+  const loadResponse = useCallback(async (ticketId: string, signal?: AbortSignal) => {
+    const request = ++responseRequest.current;
+    const current = () => !signal?.aborted && request === responseRequest.current && ticketId === selectedRef.current;
+    try {
+      const value = await getRfpResponse(ticketId, undefined, signal);
+      if (current()) setResponse(value);
+      return value;
+    }
     catch (caught: unknown) {
-      if (caught instanceof RfpApiError && caught.statusCode === 404) { setResponse(null); return null; }
-      if (showError) setError(caught instanceof Error ? caught.message : "No se pudo cargar la respuesta.");
+      if (caught instanceof RfpApiError && caught.statusCode === 404) {
+        if (current()) setResponse(null);
+        return null;
+      }
+      if (current()) setError(caught instanceof Error ? caught.message : "No se pudo cargar la respuesta.");
       return null;
     }
   }, []);
 
   useEffect(() => {
-    const timer = setTimeout(() => void loadList(), 0);
-    return () => clearTimeout(timer);
+    const controller = new AbortController();
+    const timer = setTimeout(() => void loadList(controller.signal), 0);
+    return () => { controller.abort(); clearTimeout(timer); };
   }, [loadList]);
   useEffect(() => {
     if (!selectedId || !isAdmin) return;
-    let cancelled = false;
+    const controller = new AbortController();
+    const signal = controller.signal;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const poll = async () => {
-      const [value, responseValue] = await Promise.all([loadDetail(selectedId, !cancelled), loadResponse(selectedId, !cancelled)]);
-      if (cancelled || (value && isPollingTerminal(value) && (!responseValue || responseIsTerminal(responseValue)))) return;
+      const [value, responseValue] = await Promise.all([loadDetail(selectedId, signal), loadResponse(selectedId, signal)]);
+      if (signal.aborted || (value && isPollingTerminal(value) && (!responseValue || responseIsTerminal(responseValue)))) return;
       timer = setTimeout(() => void poll(), POLL_INTERVAL_MS);
     };
     void poll();
-    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+    return () => { controller.abort(); if (timer) clearTimeout(timer); };
   }, [isAdmin, loadDetail, loadResponse, pollKey, selectedId]);
   useEffect(() => {
-    setFinalDocument(null);
-    setFinalDocumentError(null);
     if (!isAdmin || !detail || detail.status !== "terminado" ||
         selectedId !== detail.ticket_id) return;
     let cancelled = false;
-    setIsLoadingFinalDocument(true);
-    void getRfpFinalDocumentForTicket(detail.ticket_id)
-      .then((document) => { if (!cancelled) setFinalDocument(document); })
-      .catch((caught: unknown) => {
-        if (!cancelled) setFinalDocumentError(
-          caught instanceof Error ? caught.message : "No se pudo cargar el documento final.",
-        );
-      })
-      .finally(() => { if (!cancelled) setIsLoadingFinalDocument(false); });
-    return () => { cancelled = true; };
+    const fetchDocument = setTimeout(() => {
+      setFinalDocument(null);
+      setFinalDocumentError(null);
+      setIsLoadingFinalDocument(true);
+      void getRfpFinalDocumentForTicket(detail.ticket_id)
+        .then((document) => {
+          if (!cancelled) setFinalDocument({ ticketId: detail.ticket_id, document });
+        })
+        .catch((caught: unknown) => {
+          if (!cancelled) setFinalDocumentError(
+            caught instanceof Error ? caught.message : "No se pudo cargar el documento final.",
+          );
+        })
+        .finally(() => { if (!cancelled) setIsLoadingFinalDocument(false); });
+    }, 0);
+    return () => { cancelled = true; clearTimeout(fetchDocument); };
   }, [detail, isAdmin, selectedId]);
 
   const beginResponse = async () => {
@@ -434,18 +451,26 @@ function RfpPageContent() {
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!file) { setError("Selecciona un archivo PDF."); return; }
+    if (isUploading || !feed.beginOwnUpload()) return;
     setIsUploading(true); setError(null); setAcceptance(null);
     try {
       const accepted = await uploadRfp(file);
+      feed.finishOwnUpload(accepted.ticket_id);
       setAcceptance(`Ticket ${accepted.ticket_id} aceptado para análisis.`);
-      setSelectedId(accepted.ticket_id); setFile(null); setInputKey((value) => value + 1);
+      selectTicket(accepted.ticket_id); setFile(null); setInputKey((value) => value + 1);
       await loadList();
     } catch (caught: unknown) {
       setError(caught instanceof RfpApiError ? caught.message : "No se pudo cargar la RFP.");
-    } finally { setIsUploading(false); }
+    } finally { feed.finishOwnUpload(); setIsUploading(false); }
   };
 
-  if (!isAdmin) return <RfpApprovalInbox />;
+  if (!isAdmin) return (
+    <div className="space-y-8">
+      {feed.authorized && <CommercialRfpIntake feed={feed} />}
+      <RfpApprovalInbox />
+    </div>
+  );
+  const displayedTickets = mergeRfpAdminList(tickets, feed.tickets);
 
   return (
     <div className="space-y-8">
@@ -462,17 +487,18 @@ function RfpPageContent() {
         {error && <p role="alert" className="rounded-xl border border-rose-400/30 bg-rose-950/30 p-4 text-sm text-rose-200">{error}</p>}
         <section className="rounded-2xl border border-white/10 bg-slate-900/70 p-5">
           <div className="flex items-center justify-between gap-3"><h2 className="text-lg font-semibold text-white">Tickets</h2><button type="button" onClick={() => void loadList()} disabled={isLoadingList} className="text-sm font-medium text-cyan-300 hover:text-cyan-200 disabled:opacity-60">{isLoadingList ? "Actualizando…" : "Actualizar"}</button></div>
-          {tickets.length === 0 && !isLoadingList ? <p className="mt-4 text-sm text-slate-400">Todavía no hay tickets disponibles.</p> : (
-            <ul className="mt-4 space-y-2">{tickets.map((ticket) => <li key={ticket.ticket_id}><button type="button" onClick={() => { setError(null); setResponse(null); setCarrierModel(""); setSelectedId(ticket.ticket_id); }} className={`w-full rounded-xl border p-3 text-left transition ${selectedId === ticket.ticket_id ? "border-cyan-400/50 bg-cyan-950/30" : "border-white/10 bg-slate-950/50 hover:border-white/20"}`}>
-              <span className="block truncate text-sm font-medium text-white">{ticket.client_name ?? ticket.rfp_id ?? ticket.ticket_id}</span><span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-400"><span>{TICKET_LABELS[ticket.status]}</span>{ticket.job_status && <span>{JOB_LABELS[ticket.job_status]}</span>}<span>{displayDate(ticket.created_at)}</span></span>
+          <div className="mt-3"><RfpNotificationStatus feed={feed} /></div>
+          {displayedTickets.length === 0 && !isLoadingList ? <p className="mt-4 text-sm text-slate-400">Todavía no hay tickets disponibles.</p> : (
+            <ul className="mt-4 space-y-2">{displayedTickets.map((ticket) => <li key={ticket.ticket_id}><button type="button" onClick={() => { setError(null); setResponse(null); setCarrierModel(""); selectTicket(ticket.ticket_id); }} className={`w-full rounded-xl border p-3 text-left transition ${selectedId === ticket.ticket_id ? "border-cyan-400/50 bg-cyan-950/30" : "border-white/10 bg-slate-950/50 hover:border-white/20"}`}>
+              <span className="flex flex-wrap items-center gap-2 text-sm font-medium text-white">{ticket.client_name ?? ticket.rfp_id ?? ticket.ticket_id}{feed.newTickets.has(ticket.ticket_id) && <NewTicketBadge />}</span><span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-400"><span>{TICKET_LABELS[ticket.status]}</span>{ticket.job_status && <span>{JOB_LABELS[ticket.job_status]}</span>}<span>{displayDate(ticket.created_at)}</span></span>
             </button></li>)}</ul>
           )}
         </section>
       </div>
       <div className="min-w-0 space-y-5 overflow-hidden">{detail && selectedId === detail.ticket_id ? <><TicketDetail detail={detail} />
-        {isLoadingFinalDocument && <p className="rounded-xl border border-white/10 p-4 text-sm text-slate-400">Comprobando documento final…</p>}
-        {finalDocumentError && <p role="alert" className="rounded-xl border border-amber-400/30 bg-amber-950/20 p-4 text-sm text-amber-100">{finalDocumentError}</p>}
-        {finalDocument && <FinalDocumentAccess document={finalDocument} />}
+        {detail.status === "terminado" && isLoadingFinalDocument && <p className="rounded-xl border border-white/10 p-4 text-sm text-slate-400">Comprobando documento final…</p>}
+        {detail.status === "terminado" && finalDocumentError && <p role="alert" className="rounded-xl border border-amber-400/30 bg-amber-950/20 p-4 text-sm text-amber-100">{finalDocumentError}</p>}
+        {finalDocument?.ticketId === detail.ticket_id && <FinalDocumentAccess document={finalDocument.document} />}
         {detail.status === "analisis_completo" && !response && <section className="rounded-2xl border border-white/10 bg-slate-900/70 p-5"><label htmlFor="carrier-model" className="block text-sm font-semibold text-white">Modelo de transportista confirmado</label><p className="mt-1 text-xs text-slate-400">Selecciona explícitamente el modelo operativo. Esta confirmación administrativa no procede del documento RFP.</p><select id="carrier-model" value={carrierModel} onChange={(event) => setCarrierModel(event.target.value as RfpCarrierModel | "")} disabled={isStartingResponse} className="mt-4 w-full rounded-xl border border-white/10 bg-slate-950 p-3 text-sm text-slate-200"><option value="">Selecciona una opción…</option><option value="unknown">Sin confirmar</option><option value="trackflow_managed">Gestionado por TrackFlow</option><option value="customer_managed">Gestionado por el cliente</option></select><button type="button" onClick={() => void beginResponse()} disabled={isStartingResponse || !carrierModel} className="mt-4 w-full rounded-xl bg-cyan-400 px-5 py-3 text-sm font-semibold text-slate-950 hover:bg-cyan-300 disabled:opacity-60">{isStartingResponse ? "Iniciando…" : "Iniciar generación de respuesta"}</button></section>}
         {response && response.ticket_id === detail.ticket_id && <ResponseProgress response={response} />}</> : <section className="rounded-2xl border border-dashed border-white/15 bg-slate-900/40 p-8 text-center text-sm text-slate-400">Selecciona un ticket para consultar su estado y resultado.</section>}</div>
       </div>
@@ -481,5 +507,6 @@ function RfpPageContent() {
 }
 
 export default function RfpPage() {
-  return <AuthGuard><div className="min-h-screen max-w-full overflow-x-hidden"><BackofficeHeader /><main className="mx-auto min-w-0 max-w-7xl px-4 py-10 sm:px-6"><header className="mb-8"><p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">Commercial intake</p><h1 className="mt-2 text-3xl font-bold text-white">Recepción de RFPs</h1><p className="mt-3 max-w-3xl text-sm text-slate-400">Carga solicitudes de propuesta, consulta el procesamiento asíncrono y revisa los workstreams antes de continuar a la siguiente etapa comercial.</p></header><RfpPageContent /></main></div></AuthGuard>;
+  const { user } = useAuth();
+  return <AuthGuard><div className="min-h-screen max-w-full overflow-x-hidden"><BackofficeHeader /><main className="mx-auto min-w-0 max-w-7xl px-4 py-10 sm:px-6"><header className="mb-8"><p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">Commercial intake</p><h1 className="mt-2 text-3xl font-bold text-white">Recepción de RFPs</h1><p className="mt-3 max-w-3xl text-sm text-slate-400">Consulta las solicitudes de propuesta y su estado de procesamiento.</p></header>{user && <RfpPageContent key={`${user.id}:${user.role}`} userId={user.id} isAdmin={user.role === "admin"} />}</main></div></AuthGuard>;
 }

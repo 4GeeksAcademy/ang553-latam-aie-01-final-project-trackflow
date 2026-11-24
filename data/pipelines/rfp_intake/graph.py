@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from hashlib import sha256
 import operator
 from typing import Annotated, TypedDict, cast
 from uuid import UUID, uuid4
@@ -29,6 +30,8 @@ from data.pipelines.rfp_intake.contracts import (
     RESPONSIBLE_BY_DEPARTMENT,
     RFPExecutionResult,
     RFPHandoff,
+    RFPIntakeDecision,
+    RFPIntakeDecisionSink,
     RFPMetadata,
     RFPMetadataDraft,
     RFPResultSink,
@@ -59,6 +62,7 @@ class RFPGraphState(TypedDict, total=False):
     synthesis: SynthesisDraft
     handoff: RFPHandoff
     result: RFPExecutionResult
+    resumed: bool
 
 
 @dataclass(frozen=True)
@@ -66,6 +70,7 @@ class RFPGraphContext:
     analyzer: RFPAnalyzer
     sink: RFPResultSink
     now: Callable[[], datetime]
+    intake_sink: RFPIntakeDecisionSink | None = None
 
 
 def _all_references(section: DepartmentSection) -> list[SourceReference]:
@@ -149,7 +154,10 @@ class RFPIntakeGraph:
         builder.add_node("synthesizer", self._synthesizer)
         builder.add_node("transactional_commit", self._transactional_commit)
         builder.add_edge(START, "validate_input")
-        builder.add_edge("validate_input", "classify")
+        builder.add_conditional_edges(
+            "validate_input", self._after_input_validation,
+            {"fresh": "classify", "resumed": "orchestrator_route"},
+        )
         builder.add_conditional_edges(
             "classify",
             self._after_classification,
@@ -157,7 +165,7 @@ class RFPIntakeGraph:
         )
         builder.add_edge("persist_discard", END)
         builder.add_edge("extract_metadata", "orchestrator_route")
-        builder.add_conditional_edges("orchestrator_route", self._dispatch_workers)
+        builder.add_conditional_edges("orchestrator_route", self._dispatch_validated_workers)
         builder.add_edge("department_worker", "validate_join")
         builder.add_edge("validate_join", "synthesizer")
         builder.add_edge("synthesizer", "transactional_commit")
@@ -169,6 +177,10 @@ class RFPIntakeGraph:
         if not state["markdown"].strip():
             raise RFPGraphError("Markdown must not be empty")
         return {}
+
+    @staticmethod
+    def _after_input_validation(state: RFPGraphState) -> str:
+        return "resumed" if state["resumed"] else "fresh"
 
     @staticmethod
     def _classify(state: RFPGraphState, runtime: Runtime[RFPGraphContext]) -> RFPGraphState:
@@ -228,7 +240,7 @@ class RFPIntakeGraph:
 
     @staticmethod
     def _orchestrator_route(state: RFPGraphState) -> RFPGraphState:
-        metadata = _derive_metadata(state["metadata_draft"])
+        metadata = state["metadata"] if state["resumed"] else _derive_metadata(state["metadata_draft"])
         departments = metadata.departments_needed
         if not departments:
             raise RFPGraphError("valid RFP has no supported requested department")
@@ -252,6 +264,21 @@ class RFPIntakeGraph:
                     },
                 )
             )
+        return sends
+
+    @staticmethod
+    def _dispatch_validated_workers(
+        state: RFPGraphState, runtime: Runtime[RFPGraphContext]
+    ) -> list[Send]:
+        sends = RFPIntakeGraph._dispatch_workers(state)
+        if not state["resumed"] and runtime.context.intake_sink is not None:
+            runtime.context.intake_sink.persist_intake_decision(RFPIntakeDecision(
+                ticket_id=state["ticket_id"],
+                classification=state["classification"],
+                metadata=state["metadata"],
+                markdown_sha256=sha256(state["markdown"].encode("utf-8")).hexdigest(),
+                conversion_metrics=state["conversion_metrics"],
+            ))
         return sends
 
     @staticmethod
@@ -350,20 +377,31 @@ class RFPIntakeGraph:
         readability_metrics: ReadabilityReport,
         analyzer: RFPAnalyzer,
         sink: RFPResultSink,
+        intake_sink: RFPIntakeDecisionSink | None = None,
+        decision: RFPIntakeDecision | None = None,
         now: Callable[[], datetime] | None = None,
     ) -> RFPExecutionResult:
+        state: RFPGraphState = {
+            "ticket_id": ticket_id,
+            "markdown": markdown,
+            "conversion_metrics": conversion_metrics,
+            "readability_metrics": readability_metrics,
+            "department_results": [],
+            "resumed": decision is not None,
+        }
+        if decision is not None:
+            if (decision.ticket_id != ticket_id
+                or decision.markdown_sha256 != sha256(markdown.encode("utf-8")).hexdigest()
+                or decision.conversion_metrics != conversion_metrics):
+                raise RFPGraphError("Stored intake decision does not match the input artifact")
+            state.update(classification=decision.classification, metadata=decision.metadata)
         output = self.graph.invoke(
-            {
-                "ticket_id": ticket_id,
-                "markdown": markdown,
-                "conversion_metrics": conversion_metrics,
-                "readability_metrics": readability_metrics,
-                "department_results": [],
-            },
+            state,
             context=RFPGraphContext(
                 analyzer=analyzer,
                 sink=sink,
                 now=now or (lambda: datetime.now(timezone.utc)),
+                intake_sink=intake_sink,
             ),
         )
         return cast(RFPExecutionResult, output["result"])

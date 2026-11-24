@@ -17,6 +17,7 @@ from services.api.rfp_approval_auth import (
     RFPApprovalAuthentication,
     get_rfp_approval_authentication,
 )
+from services.api.routes.rfp_notifications import router as notifications_router
 from pipelines.rfp_approval.contracts import (
     AuthenticatedPrincipal,
     AuthorizedBusinessInput,
@@ -96,6 +97,7 @@ from services.rfp_response.store import (
 )
 
 router = APIRouter(prefix="/rfps", tags=["RFP intake"])
+router.include_router(notifications_router)
 
 _RESPONSIBLE_NAMES = {
     "ana_whitfield": "Ana Whitfield",

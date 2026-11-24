@@ -11,6 +11,8 @@ from data.pipelines.rfp_intake.contracts import (
     ConversionMetrics,
     ReadabilityReport,
     RFPExecutionResult,
+    RFPIntakeDecision,
+    RFPIntakeDecisionSink,
     RFPResultSink,
 )
 from data.pipelines.rfp_intake.graph import RFPIntakeGraph
@@ -24,6 +26,8 @@ def process_rfp_ticket(
     readability_metrics: ReadabilityReport,
     analyzer: RFPAnalyzer,
     sink: RFPResultSink,
+    intake_sink: RFPIntakeDecisionSink | None = None,
+    decision: RFPIntakeDecision | None = None,
     now: Callable[[], datetime] | None = None,
 ) -> RFPExecutionResult:
     return RFPIntakeGraph().execute(
@@ -33,5 +37,7 @@ def process_rfp_ticket(
         readability_metrics=readability_metrics,
         analyzer=analyzer,
         sink=sink,
+        intake_sink=intake_sink,
+        decision=decision,
         now=now,
     )
