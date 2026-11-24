@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 import json
 from uuid import uuid4
 
@@ -12,7 +13,7 @@ from data.pipelines.rfp_response.compliance import (
     build_global_safe_preview, build_safe_preview, evaluate_section_compliance,
 )
 from data.pipelines.rfp_response.contracts import (
-    DepartmentHandoffResult, GlobalSLA, RequestedAspect, RFPResponseHandoff,
+    DepartmentHandoffResult, EvidenceReference, GlobalSLA, RequestedAspect, RFPResponseHandoff,
     RFPResponseStart, SafetyInspection, VolumeDiscountRow,
 )
 from data.pipelines.rfp_response.evaluators import (
@@ -79,6 +80,71 @@ def test_official_catalog_has_stable_hashes_for_all_four_documents() -> None:
     assert all(len(source.evidence.evidence_hash) == 64 for source in sources)
 
 
+def test_authorized_volume_discount_is_verified_without_relaxing_global_safety() -> None:
+    item_request = request(volume=Decimal("75"))
+    generated = generate_global_terms(
+        item_request,
+        department_draft_ids=[uuid4()],
+        iteration_count=1,
+        generated_at=NOW,
+    )
+    evidence = EvidenceReference(
+        document_id="authorized-business-input-v1",
+        section_id=str(uuid4()),
+        evidence_hash="d" * 64,
+    )
+    row = VolumeDiscountRow(
+        volume_from=50,
+        volume_to=None,
+        discount_percentage=Decimal("5"),
+        condition="Authorized monthly storage volume discount policy.",
+        status="documented",
+        evidence=[evidence],
+    )
+    corrected = generated.model_copy(
+        update={
+            "volume_discounts": [row],
+            "pending_commercial_items": [
+                item
+                for item in generated.pending_commercial_items
+                if item.code != "VOLUME_DISCOUNT_APPROVAL_REQUIRED"
+            ],
+        }
+    )
+    inspection = inspect_global_safety(
+        item_request,
+        corrected,
+        inspected_at=NOW,
+        authorized_discount_rows=(row,),
+    )
+    assert inspection.status == "verified_safe"
+    result, feedback = evaluate_global(
+        item_request,
+        corrected,
+        section_currencies=frozenset({"USD"}),
+        consistency_issues=[],
+        evaluated_at=NOW,
+        authorized_discount_rows=(row,),
+    )
+    assert result.passed is True
+    assert feedback == []
+
+    altered = corrected.model_copy(
+        update={
+            "volume_discounts": [
+                row.model_copy(update={"discount_percentage": Decimal("6")})
+            ]
+        }
+    )
+    rejected = inspect_global_safety(
+        item_request,
+        altered,
+        inspected_at=NOW,
+        authorized_discount_rows=(row,),
+    )
+    assert "global_terms_differ_from_authorized_generation" in rejected.reason_codes
+
+
 def test_deterministic_provider_receives_only_approved_claims_and_pending_codes() -> None:
     captured = {}
 
@@ -123,6 +189,67 @@ def test_each_department_generates_grounded_or_explicitly_pending_draft(departme
         assert draft.draft_status == "complete_candidate"
         assert next(term for term in draft.commercial_terms
                     if term.term_id == "storage_rate_us").value.startswith("18 USD")
+
+
+@pytest.mark.parametrize(
+    ("departments", "country", "currency", "pending_rate"),
+    [
+        (
+            (DepartmentId.warehouse, DepartmentId.reverse),
+            "ES",
+            "EUR",
+            "RETURN_PROCESSING_RATE_REQUIRED",
+        ),
+        (
+            (DepartmentId.warehouse, DepartmentId.lastmile),
+            "US",
+            "USD",
+            "LAST_MILE_RATE_REQUIRED",
+        ),
+    ],
+)
+def test_official_e2e_shapes_remain_indicative_without_invented_commercial_values(
+    departments, country, currency, pending_rate
+) -> None:
+    item_request = request(
+        departments=departments,
+        countries=(country,),
+        currency=currency,
+        volume=None,
+        own_carrier=False,
+    )
+    drafts = [
+        generate_department_draft(
+            item_request,
+            department=department,
+            iteration_count=1,
+            generated_at=NOW,
+        )
+        for department in departments
+    ]
+    global_draft = generate_global_terms(
+        item_request,
+        department_draft_ids=[draft.draft_id for draft in drafts],
+        iteration_count=1,
+        generated_at=NOW,
+    )
+
+    service_draft = drafts[1]
+    assert service_draft.draft_status == "provisional_missing_inputs"
+    assert pending_rate in {
+        item.code for item in service_draft.pending_commercial_items
+    }
+    assert all(
+        term.status == "pending" and term.value is None
+        for term in service_draft.commercial_terms
+        if term.term_id in {"return_processing_rate", "last_mile_rate"}
+    )
+    assert global_draft.currency.value == currency
+    assert "MONTHLY_STORAGE_VOLUME_REQUIRED" in {
+        item.code for item in global_draft.pending_commercial_items
+    }
+    assert global_draft.volume_discounts[0].discount_percentage is None
+    assert global_draft.volume_discounts[0].status == "pending"
 
 
 def test_warehouse_without_location_preserves_real_provisional_draft_and_evaluation() -> None:
@@ -300,12 +427,14 @@ def test_global_preview_is_backend_allowlisted_and_contains_no_internal_structur
         assert forbidden not in encoded
 
 
-@pytest.mark.parametrize(("currency", "volume", "rule"), [
-    (None, 20, "TF-CURRENCY-001"),
-    ("USD", None, "TF-DISCOUNT-001"),
-    ("USD", 60, "TF-DISCOUNT-001"),
+@pytest.mark.parametrize(("currency", "volume", "rule", "compliance_passed"), [
+    (None, 20, "TF-CURRENCY-001", False),
+    ("USD", None, "TF-DISCOUNT-001", True),
+    ("USD", 60, "TF-DISCOUNT-001", True),
 ])
-def test_global_terms_incomplete_inputs_never_pass(currency, volume, rule) -> None:
+def test_global_terms_distinguish_compliance_failure_from_declared_commercial_gaps(
+    currency, volume, rule, compliance_passed
+) -> None:
     item_request = request(currency=currency, volume=volume)
     section = generate_department_draft(item_request, department=DepartmentId.warehouse,
                                         iteration_count=1, generated_at=NOW)
@@ -313,8 +442,13 @@ def test_global_terms_incomplete_inputs_never_pass(currency, volume, rule) -> No
                                   iteration_count=1, generated_at=NOW)
     result, feedback = evaluate_global(item_request, draft, section_currencies=frozenset({"USD"}),
                                        consistency_issues=[], evaluated_at=NOW)
-    assert result.passed is False
+    assert result.passed is compliance_passed
     assert rule in {finding.rule_id for finding in result.findings}
+    finding = next(item for item in result.findings if item.rule_id == rule)
+    assert finding.blocking is (not compliance_passed)
+    if compliance_passed:
+        assert finding.requires_human_input is True
+        assert finding.blocks_commercial_completeness is True
     assert feedback
 
 

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable
+from uuid import UUID
 
 from data.pipelines.rfp_intake.contracts import DepartmentId
 from data.pipelines.rfp_response.compliance import (
@@ -15,6 +17,7 @@ from data.pipelines.rfp_response.contracts import (
     AspectEvaluation, ConsistencyIssue, DepartmentDraft, EvidenceReference,
     GlobalCommercialTermsDraft, RFPResponseStart, RelevanceEvaluation,
     SafetyInspection, SectionEvaluationResult,
+    VolumeDiscountRow,
 )
 from data.pipelines.rfp_response.evaluation import reduce_section_evaluations
 from data.pipelines.rfp_response.generators import (
@@ -38,6 +41,34 @@ _NEGOTIATED_CARRIER_RATE = re.compile(
 _NUMBER = re.compile(r"\b\d+(?:\.\d+)?\b")
 
 
+@dataclass(frozen=True, slots=True)
+class AuthorizedCommercialCorrection:
+    """One exact commercial delta already authorized from persistent state.
+
+    This value is deliberately persistence-neutral.  The approval coordinator
+    may construct it only after it has bound the input to the current ticket,
+    run, department, principal and effective date.  The evaluator still checks
+    that the resulting draft uses the exact id, hash, value and evidence.
+    """
+
+    input_id: UUID
+    payload_hash: str
+    department: DepartmentId
+    term_id: str
+    pending_code: str
+    value: str
+    currency: str
+    statement: str
+
+    @property
+    def evidence(self) -> EvidenceReference:
+        return EvidenceReference(
+            document_id="authorized-business-input-v1",
+            section_id=str(self.input_id),
+            evidence_hash=self.payload_hash,
+        )
+
+
 def _intake_reference_valid(request: RFPResponseStart, reference: EvidenceReference) -> bool:
     if (reference.document_id != "rfp-intake-v1"
             or reference.evidence_hash != request.source_handoff_hash):
@@ -58,7 +89,13 @@ def _admin_confirmation_reference_valid(
 
 
 def _reference_text(request: RFPResponseStart, catalog: OfficialKnowledgeCatalog,
-                    reference: EvidenceReference) -> str | None:
+                    reference: EvidenceReference, *,
+                    authorized_corrections: tuple[AuthorizedCommercialCorrection, ...] = ()) -> str | None:
+    authorized = next(
+        (item for item in authorized_corrections if item.evidence == reference), None
+    )
+    if authorized is not None:
+        return authorized.value
     official = catalog.source_text(reference)
     if official is not None:
         return official
@@ -81,29 +118,84 @@ def _numbers_supported(statement: str, evidence_texts: list[str]) -> bool:
 
 def inspect_department_safety(request: RFPResponseStart, draft: DepartmentDraft, *,
                               inspected_at: datetime,
-                              catalog: OfficialKnowledgeCatalog | None = None) -> SafetyInspection:
+                              catalog: OfficialKnowledgeCatalog | None = None,
+                              authorized_corrections: tuple[AuthorizedCommercialCorrection, ...] = ()) -> SafetyInspection:
     catalog = catalog or OfficialKnowledgeCatalog()
     allowed = {claim.statement for claim in draft.supported_claims}
     prefix = "Dato comercial pendiente" if draft.language == "es" else "Pending commercial input"
     allowed.update(f"{prefix}: {item.code}." for item in draft.pending_commercial_items)
+    allowed.update(item.statement for item in authorized_corrections)
     lines = {line.strip() for line in draft.generated_content.splitlines() if line.strip()}
     reasons: list[str] = []
     material_text = draft.generated_content + "\n" + "\n".join(
         term.value or "" for term in draft.commercial_terms)
     if _SENSITIVE.search(material_text):
         reasons.append("possible_confidential_content")
-    if _NEGOTIATED_CARRIER_RATE.search(material_text):
+    negotiated_rate_text = draft.generated_content
+    authorized_term_evidence = {
+        (
+            item.term_id,
+            item.value,
+            item.evidence.document_id,
+            item.evidence.section_id,
+            item.evidence.evidence_hash,
+        )
+        for item in authorized_corrections
+    }
+    for correction in authorized_corrections:
+        negotiated_rate_text = negotiated_rate_text.replace(correction.statement, "")
+    negotiated_rate_text += "\n" + "\n".join(
+        term.value or ""
+        for term in draft.commercial_terms
+        if len(term.evidence) != 1
+        or (
+            term.term_id,
+            term.value,
+            term.evidence[0].document_id,
+            term.evidence[0].section_id,
+            term.evidence[0].evidence_hash,
+        ) not in authorized_term_evidence
+    )
+    if _NEGOTIATED_CARRIER_RATE.search(negotiated_rate_text):
         reasons.append("negotiated_carrier_rate_not_disclosable")
     if not lines or not lines.issubset(allowed):
         reasons.append("content_provenance_indeterminate")
     expected = generate_department_draft(request, department=draft.department,
         iteration_count=draft.iteration_count, generated_at=draft.generated_at,
         catalog=catalog, generation_feedback=draft.generation_feedback)
+    expected_terms = list(expected.commercial_terms)
+    expected_pending = list(expected.pending_commercial_items)
+    corrections_are_coherent = True
+    for correction in authorized_corrections:
+        if correction.department != draft.department:
+            corrections_are_coherent = False
+            continue
+        matches = [
+            index for index, term in enumerate(expected_terms)
+            if term.term_id == correction.term_id and term.status == "pending"
+        ]
+        pending_matches = [
+            item for item in expected_pending if item.code == correction.pending_code
+        ]
+        if len(matches) != 1 or len(pending_matches) != 1:
+            corrections_are_coherent = False
+            continue
+        expected_terms[matches[0]] = type(expected_terms[matches[0]])(
+            term_id=correction.term_id,
+            status="documented",
+            value=correction.value,
+            currency=correction.currency,
+            evidence=[correction.evidence],
+        )
+        expected_pending = [
+            item for item in expected_pending if item.code != correction.pending_code
+        ]
     if (draft.client_requirements != expected.client_requirements
-            or draft.commercial_terms != expected.commercial_terms
-            or draft.pending_commercial_items != expected.pending_commercial_items
+            or draft.commercial_terms != expected_terms
+            or draft.pending_commercial_items != expected_pending
             or draft.carrier_model != expected.carrier_model
-            or draft.last_mile_commitments != expected.last_mile_commitments):
+            or draft.last_mile_commitments != expected.last_mile_commitments
+            or not corrections_are_coherent):
         reasons.append("material_contract_differs_from_authorized_generation")
     requirements = {item.aspect_id: item for item in draft.client_requirements}
     claims_by_statement = {claim.statement: claim for claim in draft.supported_claims}
@@ -127,7 +219,12 @@ def inspect_department_safety(request: RFPResponseStart, draft: DepartmentDraft,
     for claim in draft.supported_claims:
         texts: list[str] = []
         for reference in claim.evidence:
-            text = _reference_text(request, catalog, reference)
+            text = _reference_text(
+                request,
+                catalog,
+                reference,
+                authorized_corrections=authorized_corrections,
+            )
             if text is None or (
                     reference.document_id != "rfp-intake-v1"
                     and not _admin_confirmation_reference_valid(request, reference)
@@ -156,7 +253,12 @@ def inspect_department_safety(request: RFPResponseStart, draft: DepartmentDraft,
         if term.status != "documented":
             continue
         texts = [text for reference in term.evidence
-                 if (text := _reference_text(request, catalog, reference)) is not None]
+                 if (text := _reference_text(
+                     request,
+                     catalog,
+                     reference,
+                     authorized_corrections=authorized_corrections,
+                 )) is not None]
         if len(texts) != len(term.evidence) or not _numbers_supported(term.value or "", texts):
             reasons.append("commercial_term_evidence_unverified")
     return SafetyInspection(draft_id=draft.draft_id,
@@ -166,7 +268,8 @@ def inspect_department_safety(request: RFPResponseStart, draft: DepartmentDraft,
 
 def inspect_global_safety(request: RFPResponseStart, draft: GlobalCommercialTermsDraft, *,
                           inspected_at: datetime,
-                          catalog: OfficialKnowledgeCatalog | None = None) -> SafetyInspection:
+                          catalog: OfficialKnowledgeCatalog | None = None,
+                          authorized_discount_rows: tuple[VolumeDiscountRow, ...] = ()) -> SafetyInspection:
     catalog = catalog or OfficialKnowledgeCatalog()
     reasons: list[str] = []
     serialized = draft.model_dump_json()
@@ -177,9 +280,21 @@ def inspect_global_safety(request: RFPResponseStart, draft: GlobalCommercialTerm
         iteration_count=draft.global_iteration_count,
         generated_at=draft.generated_at, catalog=catalog,
         generation_feedback=draft.generation_feedback)
+    expected_discounts = (
+        list(authorized_discount_rows)
+        if authorized_discount_rows
+        else expected.volume_discounts
+    )
+    expected_pending = [
+        item for item in expected.pending_commercial_items
+        if not (
+            authorized_discount_rows
+            and item.code == "VOLUME_DISCOUNT_APPROVAL_REQUIRED"
+        )
+    ]
     if (draft.currency != expected.currency or draft.sla != expected.sla
-            or draft.volume_discounts != expected.volume_discounts
-            or draft.pending_commercial_items != expected.pending_commercial_items):
+            or draft.volume_discounts != expected_discounts
+            or draft.pending_commercial_items != expected_pending):
         reasons.append("global_terms_differ_from_authorized_generation")
     if (draft.currency.status == "documented"
             and (draft.currency.value != request.proposal_currency
@@ -197,7 +312,16 @@ def inspect_global_safety(request: RFPResponseStart, draft: GlobalCommercialTerm
     approved_condition = ("Average monthly storage volume above 50 cubic meters is eligible "
                           "for negotiation with Miguel Torres; no percentage is documented.")
     for row in draft.volume_discounts:
-        if (row.status != "pending" or row.discount_percentage is not None
+        authorized = row in authorized_discount_rows
+        if authorized:
+            if (
+                row.status != "documented"
+                or row.discount_percentage is None
+                or len(row.evidence) != 1
+                or row.evidence[0].document_id != "authorized-business-input-v1"
+            ):
+                reasons.append("discount_provenance_indeterminate")
+        elif (row.status != "pending" or row.discount_percentage is not None
                 or row.volume_from != 50 or row.condition != approved_condition
                 or len(row.evidence) != 1 or not catalog.matches(row.evidence[0])
                 or row.evidence[0].section_id != "preferential-rates"):
@@ -275,10 +399,16 @@ def required_terms(request: RFPResponseStart, department: DepartmentId) -> froze
 
 def evaluate_department(request: RFPResponseStart, draft: DepartmentDraft, *,
                         evaluated_at: datetime,
-                        english_factory: Callable[[str], Any] | None = None) -> tuple[SectionEvaluationResult, list[str]]:
+                        english_factory: Callable[[str], Any] | None = None,
+                        authorized_corrections: tuple[AuthorizedCommercialCorrection, ...] = ()) -> tuple[SectionEvaluationResult, list[str]]:
     if (draft.ticket_id, draft.run_id) != (request.ticket_id, request.run_id):
         raise ValueError("draft belongs to a different response request")
-    inspection = inspect_department_safety(request, draft, inspected_at=evaluated_at)
+    inspection = inspect_department_safety(
+        request,
+        draft,
+        inspected_at=evaluated_at,
+        authorized_corrections=authorized_corrections,
+    )
     preview = build_safe_preview(draft, inspection)
     readability = evaluate_readability(draft.generated_content, language=draft.language,
                                        english_factory=english_factory)
@@ -295,8 +425,14 @@ def evaluate_department(request: RFPResponseStart, draft: DepartmentDraft, *,
 
 def evaluate_global(request: RFPResponseStart, draft: GlobalCommercialTermsDraft, *,
                     section_currencies: frozenset[str], consistency_issues: list[ConsistencyIssue],
-                    evaluated_at: datetime):
-    inspection = inspect_global_safety(request, draft, inspected_at=evaluated_at)
+                    evaluated_at: datetime,
+                    authorized_discount_rows: tuple[VolumeDiscountRow, ...] = ()):
+    inspection = inspect_global_safety(
+        request,
+        draft,
+        inspected_at=evaluated_at,
+        authorized_discount_rows=authorized_discount_rows,
+    )
     preview = build_global_safe_preview(draft, inspection)
     result = evaluate_global_compliance(draft,
         volume_discount_required=volume_discount_required(request),
@@ -308,4 +444,8 @@ def evaluate_global(request: RFPResponseStart, draft: GlobalCommercialTermsDraft
             request.operation_countries
             or ([request.client_country_code] if request.client_country_code else [])),
         client_country_code=request.client_country_code)
-    return result, [finding.message for finding in result.findings if finding.blocking]
+    return result, [
+        finding.message
+        for finding in result.findings
+        if finding.blocking or finding.requires_human_input
+    ]

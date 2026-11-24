@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from threading import Barrier, Lock, current_thread
 from uuid import uuid4
 
+import pytest
+
 from data.pipelines.rfp_intake.contracts import DepartmentId
 from data.pipelines.rfp_response.compliance import evaluate_section_compliance
 from data.pipelines.rfp_response.contracts import (
@@ -38,7 +40,7 @@ HASH = "d" * 64
 
 
 def request(*, departments=(DepartmentId.warehouse,), own_carrier=True,
-            volume=20) -> RFPResponseStart:
+            volume=20, country="US", currency="USD") -> RFPResponseStart:
     aspects = [RequestedAspect(
         aspect_id=f"{department.value}:01:1-2", department=department,
         fact=f"Client requests {department.value} service in scope.",
@@ -48,8 +50,8 @@ def request(*, departments=(DepartmentId.warehouse,), own_carrier=True,
         ticket_id=uuid4(), run_id=uuid4(), source_handoff_hash=HASH,
         summary_for_sales="Prepare the requested TrackFlow service response.",
         key_aspects=aspects, selected_departments=list(departments),
-        client_country_code="US", operation_countries=["US"],
-        proposal_currency="USD", average_monthly_volume_m3=volume,
+        client_country_code=country, operation_countries=[country],
+        proposal_currency=currency, average_monthly_volume_m3=volume,
         customer_managed_carrier=own_carrier, language="en")
 
 
@@ -236,6 +238,65 @@ def test_missing_commercial_data_escalates_after_one_real_draft() -> None:
     assert result.handoff.department_results[0].terminal_status == "needs_human_input"
     assert {item.code for item in result.handoff.unresolved_items} >= {
         "LAST_MILE_RATE_REQUIRED"}
+
+
+@pytest.mark.parametrize(
+    ("departments", "country", "currency", "rate_code", "summary"),
+    [
+        (
+            (DepartmentId.warehouse, DepartmentId.reverse),
+            "ES",
+            "EUR",
+            "RETURN_PROCESSING_RATE_REQUIRED",
+            "ModaViva requests Warehouse and Reverse services in Spain.",
+        ),
+        (
+            (DepartmentId.warehouse, DepartmentId.lastmile),
+            "US",
+            "USD",
+            "LAST_MILE_RATE_REQUIRED",
+            (
+                "Luna Cosmetics reports approximately 5,000 orders per month; "
+                "no conversion to cubic metres is documented."
+            ),
+        ),
+    ],
+)
+def test_official_profiles_retain_real_drafts_and_handoff_for_indicative_review(
+    departments, country, currency, rate_code, summary
+) -> None:
+    item_request = request(
+        departments=departments,
+        own_carrier=False,
+        volume=None,
+        country=country,
+        currency=currency,
+    ).model_copy(update={"summary_for_sales": summary})
+    repository = MemoryRepository(item_request)
+
+    result = execute(item_request, repository)
+
+    assert result.technical_failure is False
+    assert result.handoff is not None
+    assert result.handoff.outcome == "needs_human_review"
+    assert repository.draft_counts == {
+        DepartmentId.warehouse: 1,
+        departments[1]: 1,
+    }
+    assert repository.departments[DepartmentId.warehouse].evaluation.overall_pass is True
+    service = repository.departments[departments[1]]
+    assert service.evaluation.overall_pass is False
+    assert service.evaluation.terminal_status == "needs_human_input"
+    assert service.draft is not None
+    assert rate_code in {
+        item.code for item in service.draft.pending_commercial_items
+    }
+    assert f"Pending commercial input: {rate_code}." in service.draft.generated_content
+    unresolved = {item.code for item in result.handoff.unresolved_items}
+    assert rate_code in unresolved
+    assert "MONTHLY_STORAGE_VOLUME_REQUIRED" in unresolved
+    assert repository.global_state.draft.currency.value == currency
+    assert repository.global_state.draft.volume_discounts[0].discount_percentage is None
 
 
 def test_passed_department_is_not_restarted_while_other_department_regenerates() -> None:

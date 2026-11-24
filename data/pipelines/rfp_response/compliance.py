@@ -28,7 +28,10 @@ _ONE_DAY = re.compile(r"(?i)\b(?:one|a|un|una)\s+(?:business\s+|hábil\s+)?(?:da
 _UNSAFE_PUBLIC_TEXT = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
-def _has_sub_48_hour_return_promise(content: str) -> bool:
+def extract_return_processing_hours(content: str) -> list[float]:
+    """Extract only numeric durations stated in explicit return contexts."""
+
+    observed: list[float] = []
     for segment in re.split(r"[\n.!?;]+", content):
         if not _RETURN_CONTEXT.search(segment):
             continue
@@ -36,9 +39,12 @@ def _has_sub_48_hour_return_promise(content: str) -> bool:
         hours.extend(float(value) * 24 for value in _DAYS.findall(segment))
         if _ONE_DAY.search(segment):
             hours.append(24)
-        if any(value < 48 for value in hours):
-            return True
-    return False
+        observed.extend(hours)
+    return observed
+
+
+def _has_sub_48_hour_return_promise(content: str) -> bool:
+    return any(value < 48 for value in extract_return_processing_hours(content))
 
 
 def build_safe_preview(draft: DepartmentDraft, inspection: SafetyInspection) -> SafePreview:
@@ -111,14 +117,14 @@ def evaluate_section_compliance(draft: DepartmentDraft, *,
     for term_id in sorted(required_commercial_terms):
         if term_id not in terms or terms[term_id].status != "documented":
             findings.append(ComplianceFinding(rule_id="TF-COMMERCIAL-001", scope="section",
-                message=f"Required commercial term is not documented: {term_id}", blocking=True,
+                message=f"Commercial term is pending for indicative human review: {term_id}", blocking=False,
                 regenerable=False, requires_human_input=True, blocks_commercial_completeness=True))
     if draft.pending_commercial_items and not any(
             finding.blocks_commercial_completeness for finding in findings):
         findings.append(ComplianceFinding(rule_id="TF-COMMERCIAL-001", scope="section",
-            message="Commercial inputs remain pending: " + ", ".join(
+            message="Commercial inputs remain pending for indicative human review: " + ", ".join(
                 item.code for item in draft.pending_commercial_items),
-            blocking=True, regenerable=False, requires_human_input=True,
+            blocking=False, regenerable=False, requires_human_input=True,
             blocks_commercial_completeness=True))
     if draft.carrier_model == "customer_managed":
         rate = terms.get("last_mile_rate")
@@ -205,7 +211,7 @@ def evaluate_global_compliance(draft: GlobalCommercialTermsDraft, *, volume_disc
             blocks_commercial_completeness=False))
     elif volume_discount_required and any(r.status == "pending" for r in draft.volume_discounts):
         findings.append(ComplianceFinding(rule_id="TF-DISCOUNT-001", scope="proposal",
-            message="Required volume discount table is incomplete", blocking=True,
+            message="Volume discount remains pending for indicative human review", blocking=False,
             regenerable=False, requires_human_input=True, blocks_commercial_completeness=True))
     for issue in consistency_issues:
         findings.append(ComplianceFinding(rule_id="TF-CONSISTENCY-001", scope="proposal",

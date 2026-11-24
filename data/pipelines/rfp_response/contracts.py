@@ -227,8 +227,8 @@ class ComplianceFinding(StrictContract):
     def coherent_disposition(self) -> "ComplianceFinding":
         if self.requires_human_input and self.regenerable:
             raise ValueError("human-input findings cannot be regenerable")
-        if self.blocks_commercial_completeness and not self.blocking:
-            raise ValueError("commercial-completeness findings must be blocking")
+        if self.blocks_commercial_completeness and not self.requires_human_input:
+            raise ValueError("commercial-completeness findings require human review")
         return self
 
 
@@ -273,8 +273,8 @@ class SectionEvaluationResult(StrictContract):
             raise ValueError("evaluation timestamp must be timezone-aware")
         blocking = [f for f in self.compliance.findings if f.blocking]
         ids = [f.rule_id for f in blocking]
-        blocks = any(f.blocks_commercial_completeness for f in blocking)
-        human = any(f.requires_human_input for f in blocking)
+        blocks = any(f.blocks_commercial_completeness for f in self.compliance.findings)
+        human = any(f.requires_human_input for f in self.compliance.findings)
         missing = [item.aspect_id for item in self.relevance.aspect_results if item.status == "missing"]
         contradicted = [item.aspect_id for item in self.relevance.aspect_results if item.status == "contradicted"]
         passed = self.readability.passed is not False and self.relevance.passed and self.compliance.passed and not blocks and not human
@@ -288,7 +288,11 @@ class SectionEvaluationResult(StrictContract):
         )
         terminal = "passed" if passed else "needs_human_input" if human else "iteration_limit_reached" if self.iteration_count == 3 else None
         expected_feedback = list(self.relevance.feedback)
-        expected_feedback.extend(f.message for f in blocking)
+        expected_feedback.extend(
+            f.message
+            for f in self.compliance.findings
+            if f.blocking or f.requires_human_input
+        )
         if self.readability.passed is False:
             expected_feedback.append("Shorten sentences and use clearer language before regenerating the section.")
         expected_feedback = expected_feedback[:60]
@@ -416,8 +420,11 @@ class ProposalEvaluationResult(StrictContract):
         if self.evaluated_at.tzinfo is None:
             raise ValueError("proposal evaluation timestamp must be timezone-aware")
         blocking = [f for f in self.global_compliance.findings if f.blocking]
-        blocks = any(f.blocks_commercial_completeness for f in blocking)
-        human = any(f.requires_human_input for f in blocking)
+        blocks = any(
+            f.blocks_commercial_completeness
+            for f in self.global_compliance.findings
+        )
+        human = any(f.requires_human_input for f in self.global_compliance.findings)
         passed = self.all_departments_passed and self.global_compliance.passed and not blocks and not human
         regenerable = not passed and not human and bool(blocking) and self.global_iteration_count < 3 and all(f.regenerable for f in blocking)
         outcome = "ready_for_part3" if passed else "regenerate" if regenerable else "needs_human_review"

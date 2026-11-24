@@ -17,8 +17,8 @@ def reduce_section_evaluations(*, ticket_id: UUID, run_id: UUID, department: Dep
         readability: ReadabilityEvaluation, relevance: RelevanceEvaluation,
         compliance: SectionComplianceEvaluation, evaluated_at: datetime) -> SectionEvaluationResult:
     blocking = [f for f in compliance.findings if f.blocking]
-    blocks = any(f.blocks_commercial_completeness for f in blocking)
-    human = any(f.requires_human_input for f in blocking)
+    blocks = any(f.blocks_commercial_completeness for f in compliance.findings)
+    human = any(f.requires_human_input for f in compliance.findings)
     passed = readability.passed is not False and relevance.passed and compliance.passed and not blocks and not human
     terminal = "passed" if passed else "needs_human_input" if human else "iteration_limit_reached" if iteration_count == 3 else None
     evaluator_failed = readability.passed is False or not relevance.passed
@@ -32,7 +32,7 @@ def reduce_section_evaluations(*, ticket_id: UUID, run_id: UUID, department: Dep
         iteration_count=iteration_count, readability=readability, relevance=relevance,
         compliance=compliance,
         actionable_feedback=(list(relevance.feedback)
-            + [f.message for f in blocking]
+            + [f.message for f in compliance.findings if f.blocking or f.requires_human_input]
             + (["Shorten sentences and use clearer language before regenerating the section."]
                if readability.passed is False else []))[:60],
         missing_aspect_ids=[item.aspect_id for item in relevance.aspect_results
@@ -54,8 +54,8 @@ def reduce_proposal_evaluations(*, ticket_id: UUID, run_id: UUID,
     if any(r.ticket_id != ticket_id or r.run_id != run_id for r in section_results):
         raise ValueError("section evaluations belong to a different proposal")
     blocking = [f for f in global_compliance.findings if f.blocking]
-    blocks = any(f.blocks_commercial_completeness for f in blocking)
-    human = any(f.requires_human_input for f in blocking)
+    blocks = any(f.blocks_commercial_completeness for f in global_compliance.findings)
+    human = any(f.requires_human_input for f in global_compliance.findings)
     all_passed = all(
         r.terminal_status == "passed" and r.overall_pass
         and not r.blocks_commercial_completeness
