@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime
 import hashlib
@@ -19,6 +20,7 @@ from sqlmodel import Session
 from agents.customer_support.external_graph import (
     ExternalSupportAgent,
     ExternalSupportResult,
+    KnowledgeProjectionSelected,
     SupportUnavailable,
     get_external_support_agent,
 )
@@ -76,7 +78,7 @@ from services.api.agent_memory.service import (
 from services.api.database import get_db
 from services.api.support_oidc import SupportIdentity, require_support_reader
 from services.incidents.models import clients
-from services.rag.contracts import RAGProviderError
+from services.rag.contracts import KnowledgeCoverage, RAGProviderError
 from services.rag.resilience import QueryDeadline
 from services.rag.runtime import rag_service_context
 
@@ -139,6 +141,9 @@ class SupportKnowledgeResponse(BaseModel):
     answer: str | None = None
     insufficient_context: bool = False
     sources: list[SupportKnowledgeSourceResponse] = Field(default_factory=list)
+    coverage: KnowledgeCoverage | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
 
 
 class SupportQueryResponse(BaseModel):
@@ -271,8 +276,6 @@ def get_support_pending_memory(
             assert conversation_id is not None
             recovered_conversation_id = conversation_id
             proposal = memory_store.get_pending(session, conversation_id, access)
-        if proposal is not None and proposal.expires_at <= datetime.now(UTC):
-            proposal = None
         return SupportPendingMemoryResponse(
             conversation_id=recovered_conversation_id,
             proposal=_safe_proposal(proposal),
@@ -295,6 +298,13 @@ def _safe_proposal(
 ) -> SupportMemoryProposalResponse | None:
     if proposal is None:
         return None
+    expires_at = (
+        min(proposal.expires_at, proposal.valid_until)
+        if proposal.valid_until is not None
+        else proposal.expires_at
+    )
+    if expires_at <= datetime.now(UTC):
+        return None
     if validate_memory_proposal(proposal).status is OutputValidationStatus.blocked:
         return None
     return SupportMemoryProposalResponse(
@@ -304,7 +314,7 @@ def _safe_proposal(
         client_id=proposal.client_id,
         category=proposal.category,
         content=proposal.content,
-        expires_at=proposal.expires_at,
+        expires_at=expires_at,
     )
 
 
@@ -361,6 +371,7 @@ def _to_response(
         knowledge = SupportKnowledgeResponse(
             status=result.knowledge_status,
             answer=None if result.knowledge is None else result.knowledge.answer,
+            coverage=None if result.knowledge is None else result.knowledge.coverage,
             insufficient_context=(
                 False
                 if result.knowledge is None
@@ -623,6 +634,13 @@ async def query_support(
     mcp_tools: Annotated[SupportMCPTools, Depends(get_support_mcp_tools)],
     memory_store: Annotated[MemoryStore, Depends(get_memory_store)],
 ) -> SupportQueryResponse:
+    abort_event = getattr(request.state, "support_abort_event", None)
+
+    def check_abort() -> None:
+        if abort_event is not None and abort_event.is_set():
+            raise asyncio.CancelledError
+
+    check_abort()
     deadline = QueryDeadline(SUPPORT_QUERY_BUDGET_SECONDS)
     try:
         access = build_access_context(session, identity.user)
@@ -693,6 +711,7 @@ async def query_support(
                         else payload.question
                     ),
                 )
+                check_abort()
                 consent_result = _resolve_query_consent(
                     session=session,
                     memory_store=memory_store,
@@ -714,12 +733,19 @@ async def query_support(
             classification: ConsentClassification | None = None
             classify = getattr(agent, "classify_pending_consent", None)
             if callable(classify):
-                try:
-                    classification = classify(
+                def classify_pending():
+                    return classify(
                         payload.question,
                         pending_before_query,
                         deadline=deadline,
                         rag_factory=lambda: rag_service_context(deadline=deadline),
+                    )
+
+                try:
+                    classification = (
+                        classify_pending()
+                        if abort_event is None
+                        else await asyncio.to_thread(classify_pending)
                     )
                 except Exception as exc:
                     _CONSENT_LOGGER.info(
@@ -731,6 +757,7 @@ async def query_support(
                 classification = ConservativeTextConsentClassifier().classify(
                     payload.question, pending_before_query
                 )
+            check_abort()
             consent_result = _resolve_query_consent(
                 session=session,
                 memory_store=memory_store,
@@ -789,6 +816,23 @@ async def query_support(
         ) from None
 
     try:
+        check_abort()
+        conversation_context = getattr(
+            request.state, "support_conversation_context", None
+        )
+        context_kwargs = (
+            {"conversation_context": conversation_context}
+            if conversation_context
+            else {}
+        )
+        if abort_event is not None:
+            context_kwargs["abort_event"] = abort_event
+        progress = getattr(request.state, "support_progress", None)
+        if progress is not None:
+            context_kwargs["progress"] = progress
+        projection = getattr(request.state, "support_knowledge_projection", None)
+        if abort_event is not None and pending_before_query is None and projection is not None:
+            context_kwargs["knowledge_projection"] = projection
         execution = await agent.execute(
             support_question,
             session=session,
@@ -803,7 +847,15 @@ async def query_support(
             conversation_id=conversation_id,
             memory_client_id=payload.client_id,
             memory_scope=payload.memory_scope,
+            **context_kwargs,
         )
+    except KnowledgeProjectionSelected:
+        if "knowledge_projection" not in context_kwargs:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="support service unavailable",
+            ) from None
+        raise
     except SupportUnavailable as exc:
         _SUPPORT_LOGGER.warning(
             "Support graph unavailable | error_type=%s",

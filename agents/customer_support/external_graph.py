@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 import inspect
 import hashlib
+from collections.abc import Awaitable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field, replace
 from typing import Callable, Literal, cast
@@ -44,8 +46,13 @@ from agents.customer_support.output_guardrails import (
 )
 from agents.customer_support.graph import (
     SupportState,
+    SupportTurnAborted,
     add_rag_nodes,
+    after_knowledge_generation,
+    generate_answer_async,
 )
+from agents.customer_support.conversation_context import resolve_knowledge_followup
+from agents.customer_support.input_guardrails import support_response_language
 from agents.customer_support.tools import (
     InventoryLookupInput,
     InventoryLookupResult,
@@ -77,15 +84,24 @@ from services.api.agent_memory.service import (
 )
 from services.api.auth_models import Role
 from services.incidents.models import clients
-from services.rag.contracts import QueryResult, RAGConfigurationError, RAGProviderError
+from services.rag.contracts import QueryResult, RAGConfigurationError, RAGProviderError, RetrievalResult
+from services.rag.knowledge_coverage import INSUFFICIENT_KNOWLEDGE
 from services.rag.resilience import QueryDeadline
-from services.rag.service import INSUFFICIENT_INFORMATION_ANSWER, RAGService
+from services.rag.service import RAGService
 
 
 SupportRoute = Literal[
     "clarification", "knowledge", "ticket", "inventory", "tracking", "mixed"
 ]
 ComponentStatus = Literal["ok", "not_found", "timeout", "unavailable"]
+AgentProgress = Callable[[Literal["retrieving_context", "preparing_response"]], Awaitable[None]]
+AnchorRetrieval = Callable[[str], tuple[RetrievalResult, ...]]
+KnowledgeProjection = Callable[[str, tuple[RetrievalResult, ...], AnchorRetrieval], Awaitable[bool]]
+
+
+class KnowledgeProjectionSelected(Exception):
+    """Return control to the QA WebSocket publisher before natural generation."""
+
 
 class ExternalSupportState(SupportState, total=False):
     route: SupportRoute
@@ -371,6 +387,10 @@ class ExternalSupportRuntime:
         conversation_id: UUID | None = None,
         memory_client_id: str | None = None,
         memory_scope: MemoryScope | None = None,
+        conversation_context: str | None = None,
+        abort_event: asyncio.Event | None = None,
+        progress: AgentProgress | None = None,
+        knowledge_projection: KnowledgeProjection | None = None,
     ) -> None:
         self.session = session
         self.access = access
@@ -388,6 +408,10 @@ class ExternalSupportRuntime:
         self.conversation_id = conversation_id
         self.memory_client_id = memory_client_id
         self.memory_scope = memory_scope
+        self.conversation_context = conversation_context
+        self.abort_event = abort_event
+        self.progress = progress
+        self.knowledge_projection = knowledge_projection
         self._rag_context: AbstractContextManager[RAGService] | None = None
         self._service: RAGService | None = None
 
@@ -440,6 +464,7 @@ def _state_summary(state: ExternalSupportState) -> dict[str, object]:
         "knowledge_source_count": 0 if knowledge is None else len(knowledge.sources),
         "partial": state.get("partial", False),
         "needs_clarification": state.get("needs_clarification", False),
+        "contextual_retrieval": "retrieval_question" in state,
         "memory_candidate": (
             None
             if state.get("memory_candidate") is None
@@ -515,7 +540,22 @@ def _recorded_async_node(name: str, operation):
     ) -> ExternalSupportState:
         started = runtime.context.tracer.now()
         try:
+            if runtime.context.progress is not None:
+                if name == "generate_answer":
+                    await runtime.context.progress("preparing_response")
+                elif name in {"ticket_lookup", "inventory_lookup", "tracking_lookup"}:
+                    await runtime.context.progress("retrieving_context")
             updates, transition = await operation(state, runtime.context)
+        except KnowledgeProjectionSelected:
+            runtime.context.tracer.record_node(
+                runtime.context.run_id,
+                node=name,
+                status="completed",
+                started=started,
+                transition="project_knowledge",
+                state=_state_summary(state),
+            )
+            raise
         except Exception as exc:
             runtime.context.tracer.record_node(
                 runtime.context.run_id,
@@ -575,6 +615,8 @@ def _rag_node(name: str, operation):
                 "knowledge_error_category": controlled_category,
             }, "assemble_response"
         if name == "abstain":
+            if support_response_language(state["question"]) == "es":
+                updates["result"] = replace(updates["result"], answer=INSUFFICIENT_KNOWLEDGE)
             updates["knowledge_status"] = "not_found"
             transition = "assemble_response"
         elif name == "finalize_answer":
@@ -585,16 +627,106 @@ def _rag_node(name: str, operation):
     return _recorded_node(name, adapted)
 
 
+def _rag_with_progress(name: str, operation):
+    node = _rag_node(name, operation)
+    if name != "retrieve_context":
+        return node
+
+    async def retrieve(state: ExternalSupportState, runtime: Runtime[ExternalSupportRuntime]):
+        if runtime.context.progress is not None:
+            await runtime.context.progress("retrieving_context")
+        updates = await asyncio.to_thread(node, state, runtime)
+        context = runtime.context
+        projection = context.knowledge_projection
+        if (
+            projection is not None and context.abort_event is not None
+            and state.get("route") == "knowledge"
+            and state.get("memory_read_status") == "empty"
+            and "retrieval_question" not in state
+            and "context" in updates
+            and prefilter_memory_candidate(state["question"]) is None
+        ):
+            def retrieve_anchor(query: str) -> tuple[RetrievalResult, ...]:
+                service = context.service
+                return tuple(service.retrieve(
+                    query, service.default_k, service.default_min_score, request_id=context.request_id,
+                ))
+
+            if context.abort_event.is_set():
+                raise SupportTurnAborted
+            started = context.tracer.now()
+            if await projection(state["question"], tuple(updates["context"]), retrieve_anchor):
+                if context.abort_event.is_set():
+                    raise SupportTurnAborted
+                context.tracer.record_node(
+                    context.run_id, node="project_knowledge", status="completed", started=started,
+                    transition="project_knowledge", state=_state_summary(state),
+                )
+                raise KnowledgeProjectionSelected
+        return updates
+
+    return retrieve
+
+
+def _rag_async_node(name: str, operation):
+    async def adapted(state: ExternalSupportState, runtime: ExternalSupportRuntime):
+        try:
+            updates, transition = await operation(state, runtime)
+        except (RAGConfigurationError, RAGProviderError) as exc:
+            status: ComponentStatus = (
+                "timeout"
+                if getattr(exc, "category", None)
+                in {"timeout", "deadline_exhausted", "retry_exhausted"}
+                else "unavailable"
+            )
+            category = getattr(exc, "category", None)
+            controlled = (
+                category
+                if category in {
+                    "timeout",
+                    "deadline_exhausted",
+                    "retry_exhausted",
+                    "network_error",
+                    "http_error",
+                    "validation_error",
+                    "provider_error",
+                }
+                else "configuration_error"
+                if isinstance(exc, RAGConfigurationError)
+                else "provider_error"
+            )
+            return {
+                "knowledge_status": status,
+                "knowledge_error_category": controlled,
+            }, "assemble_response"
+        return updates, transition
+
+    return _recorded_async_node(name, adapted)
+
+
 def _route_node(state: ExternalSupportState, runtime: ExternalSupportRuntime):
-    decision = route_support_query(state["question"])
-    updates: ExternalSupportState = {
+    question = state["question"]
+    decision = route_support_query(question)
+    updates: ExternalSupportState = {}
+    if runtime.abort_event is not None or runtime.conversation_context is not None:
+        updates["contextual_history"] = None
+        if decision.route == "knowledge":
+            followup = resolve_knowledge_followup(question, runtime.conversation_context)
+            if followup is not None:
+                antecedent = followup.retrieval_question
+                if antecedent is not None and route_support_query(antecedent).route == "knowledge":
+                    updates["retrieval_question"] = antecedent
+                    updates["contextual_history"] = followup.history_json
+                else:
+                    decision = RouteDecision("clarification", clarification=followup.clarification)
+    updates.update({
         "route": decision.route,
         "needs_ticket": decision.needs_ticket,
         "needs_inventory": decision.needs_inventory,
         "needs_tracking": decision.needs_tracking,
         "needs_knowledge": decision.needs_knowledge,
         "memory_read_enabled": runtime.conversation_id is not None,
-    }
+    })
     if decision.incident_id is not None:
         updates["incident_id"] = decision.incident_id
     if decision.product_id is not None:
@@ -735,11 +867,7 @@ def _after_rag_retrieval(state: ExternalSupportState) -> str:
 def _after_rag_generation(state: ExternalSupportState) -> str:
     if state.get("knowledge_status") in {"timeout", "unavailable"}:
         return "terminal"
-    return (
-        "abstain"
-        if state.get("answer") == INSUFFICIENT_INFORMATION_ANSWER
-        else "finalize_answer"
-    )
+    return after_knowledge_generation(state)
 
 
 def _component_sentence(label: str, status: ToolStatus) -> str:
@@ -820,6 +948,8 @@ def _memory_plan(
 
 
 def _assemble_node(state: ExternalSupportState, runtime: ExternalSupportRuntime):
+    if runtime.abort_event is not None and runtime.abort_event.is_set():
+        raise SupportTurnAborted
     route = state["route"]
     if route == "clarification":
         result = ExternalSupportResult(
@@ -960,6 +1090,8 @@ def _evaluate_memory_node(
     state: ExternalSupportState,
     runtime: ExternalSupportRuntime,
 ):
+    if runtime.abort_event is not None and runtime.abort_event.is_set():
+        raise SupportTurnAborted
     primary = state["assembled"]
     candidate = state["memory_candidate"]
     evaluator = runtime.compatible_memory_evaluator()
@@ -1015,6 +1147,8 @@ def _evaluate_memory_node(
             content=content,
             canonical_key=canonical_key_for(decision.category, content),
         )
+        if runtime.abort_event is not None and runtime.abort_event.is_set():
+            raise SupportTurnAborted
         proposal = runtime.memory_store.create_proposal(
             runtime.session,
             proposal_payload,
@@ -1098,9 +1232,11 @@ class ExternalSupportAgent:
         add_rag_nodes(
             builder,
             terminal="assemble_response",
-            node_wrapper=_rag_node,
+            node_wrapper=_rag_with_progress,
             after_retrieval=_after_rag_retrieval,
             after_generation=_after_rag_generation,
+            generation_operation=generate_answer_async,
+            generation_node_wrapper=_rag_async_node,
         )
         builder.add_edge(START, "route_query")
         builder.add_conditional_edges(
@@ -1210,6 +1346,10 @@ class ExternalSupportAgent:
         conversation_id: UUID | None = None,
         memory_client_id: str | None = None,
         memory_scope: MemoryScope | None = None,
+        conversation_context: str | None = None,
+        abort_event: asyncio.Event | None = None,
+        progress: AgentProgress | None = None,
+        knowledge_projection: KnowledgeProjection | None = None,
     ) -> ExternalSupportExecution:
         selected_run_id = run_id or str(uuid4())
         runtime = ExternalSupportRuntime(
@@ -1228,11 +1368,18 @@ class ExternalSupportAgent:
             conversation_id=conversation_id,
             memory_client_id=memory_client_id,
             memory_scope=memory_scope,
+            conversation_context=conversation_context,
+            abort_event=abort_event,
+            progress=progress,
+            knowledge_projection=knowledge_projection,
         )
         self.tracer.begin(selected_run_id)
         try:
+            if abort_event is not None and abort_event.is_set():
+                raise SupportTurnAborted
+            initial_state: ExternalSupportState = {"question": question}
             output = await self.graph.ainvoke(
-                {"question": question},
+                initial_state,
                 config={"configurable": {"thread_id": selected_run_id}},
                 context=runtime,
             )
@@ -1253,6 +1400,15 @@ class ExternalSupportAgent:
                 memory_context=result.memory_context,
                 memory_read_status=result.memory_read_status,
             )
+        except KnowledgeProjectionSelected:
+            self.tracer.finish(selected_run_id, outcome="project_knowledge")
+            raise
+        except SupportTurnAborted as exc:
+            self.tracer.finish(selected_run_id, outcome="cancelled", error=exc)
+            raise asyncio.CancelledError from None
+        except asyncio.CancelledError as exc:
+            self.tracer.finish(selected_run_id, outcome="cancelled", error=exc)
+            raise
         except Exception as exc:
             self.tracer.finish(selected_run_id, outcome="technical_error", error=exc)
             raise

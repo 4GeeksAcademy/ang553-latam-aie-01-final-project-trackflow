@@ -219,7 +219,7 @@ _SPANISH_SIGNAL = re.compile(
 )
 
 
-def _response_language(text: str) -> str:
+def support_response_language(text: str) -> str:
     return "es" if _SPANISH_SIGNAL.search(text) else "en"
 
 
@@ -237,7 +237,7 @@ def _allowed(
             else GuardrailAction.allow_support
         ),
         reason_code=reason,
-        response_language=_response_language(value.user_text),
+        response_language=support_response_language(value.user_text),
         effective_question=value.user_text,
     )
 
@@ -246,7 +246,7 @@ def classify_support_input(value: GuardrailInput) -> GuardrailDecision:
     """Return a closed decision for one normalized Support turn."""
 
     text = value.user_text
-    response_language = _response_language(text)
+    response_language = support_response_language(text)
     if _PROMPT_EXFILTRATION.search(text):
         return GuardrailDecision(
             category=InputCategory.security,

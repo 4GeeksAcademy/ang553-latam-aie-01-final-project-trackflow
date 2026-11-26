@@ -7,6 +7,7 @@ import type {
 } from "@/types/support";
 import {
   clearSupportAccessToken,
+  getCurrentSupportAccessToken,
   getSupportAccessToken,
   SupportAuthorizationError,
   SupportAuthorizationRedirect,
@@ -177,29 +178,49 @@ export async function askSupport(
   }
 }
 
+interface MemoryRequestOptions {
+  signal?: AbortSignal;
+  currentAuthorizationOnly?: boolean;
+}
+
+async function memoryAccessToken(options: MemoryRequestOptions): Promise<string> {
+  options.signal?.throwIfAborted();
+  const token = options.currentAuthorizationOnly
+    ? getCurrentSupportAccessToken()
+    : await getSupportAccessToken();
+  options.signal?.throwIfAborted();
+  if (!token) throw new SupportApiError(messageForStatus(401), 401);
+  return token;
+}
+
 export async function decideSupportMemory(
   decision: SupportMemoryDecisionRequest,
+  options: MemoryRequestOptions = {},
 ): Promise<SupportMemoryDecisionResponse> {
   let response: Response;
+  let requestToken: string;
   try {
-    const token = await getSupportAccessToken();
+    requestToken = await memoryAccessToken(options);
+    options.signal?.throwIfAborted();
     response = await fetch(`${BASE_URL}/support/memory/decision`, {
       method: "POST",
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${requestToken}`,
       },
       body: JSON.stringify(decision),
+      signal: options.signal,
     });
   } catch (error) {
-    if (error instanceof SupportAuthorizationRedirect) throw error;
+    if (error instanceof SupportAuthorizationRedirect || error instanceof SupportApiError) throw error;
     if (error instanceof SupportAuthorizationError) {
       throw new SupportApiError(error.message);
     }
     throw new SupportApiError("No se pudo registrar la decisión de memoria.");
   }
-  if (response.status === 401) clearSupportAccessToken();
+  options.signal?.throwIfAborted();
+  if (response.status === 401) clearSupportAccessToken(requestToken);
   if (!response.ok) {
     throw new SupportApiError(messageForStatus(response.status), response.status);
   }
@@ -214,10 +235,13 @@ export async function decideSupportMemory(
 
 export async function getPendingSupportMemory(
   identifier: { conversationId: string } | { proposalId: string },
+  options: MemoryRequestOptions = {},
 ): Promise<SupportPendingMemoryResponse> {
   let response: Response;
+  let requestToken: string;
   try {
-    const token = await getSupportAccessToken();
+    requestToken = await memoryAccessToken(options);
+    options.signal?.throwIfAborted();
     const query = new URLSearchParams(
       "conversationId" in identifier
         ? { conversation_id: identifier.conversationId }
@@ -225,19 +249,22 @@ export async function getPendingSupportMemory(
     );
     response = await fetch(`${BASE_URL}/support/memory/pending?${query.toString()}`, {
       method: "GET",
+      cache: "no-store",
       headers: {
         Accept: "application/json",
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${requestToken}`,
       },
+      signal: options.signal,
     });
   } catch (error) {
-    if (error instanceof SupportAuthorizationRedirect) throw error;
+    if (error instanceof SupportAuthorizationRedirect || error instanceof SupportApiError) throw error;
     if (error instanceof SupportAuthorizationError) {
       throw new SupportApiError(error.message);
     }
     throw new SupportApiError("No se pudo recuperar la propuesta pendiente.");
   }
-  if (response.status === 401) clearSupportAccessToken();
+  options.signal?.throwIfAborted();
+  if (response.status === 401) clearSupportAccessToken(requestToken);
   if (!response.ok) {
     throw new SupportApiError(messageForStatus(response.status), response.status);
   }

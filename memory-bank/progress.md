@@ -2560,3 +2560,272 @@ revisión y autorización arquitectónica.
 - Pendiente de entrega Git. El inventario, staging propuesto, borrador de PR
   y validación reproducible están en `docs/operations/rfp-sse-delivery.md`.
   Project Learnings queda para después del Pull Request.
+
+## 2026-11-24 - WebSocket chat Parte 2 (implementación parcial validada)
+
+- Se implementaron contratos estrictos, persistencia PostgreSQL separada de
+  Agent Memory, ownership usuario/cliente, historial/snapshot con cursor,
+  Pub/Sub in-process con fan-out y colas acotadas, y un coordinador cancelable
+  de una generación por sesión. La integración PostgreSQL aislada completó
+  **1 PASS** en un schema desechable; la regresión backend consolidada quedó en
+  **68 PASS, 1 SKIP**.
+- La pantalla auténtica de soporte incorpora sesión WebSocket estable,
+  autenticación HS256 + OIDC en primer frame, historial incremental,
+  interrupción/redirección, reconexión con backoff y deduplicación por cursor.
+  El reducer frontend quedó en **6 PASS**. TypeScript y ESLint focal pasaron;
+  `next build --webpack` terminó con exit 0 y 20 páginas estáticas. No se
+  declara aceptación manual.
+- El proveedor FourGeeks actual continúa siendo síncrono. Streaming real,
+  cancelación HTTP remota, guardrails incrementales equivalentes, continuidad
+  contextual efectiva y acceso B2B/B2C permanecen **BLOCKED**. El productor
+  WebSocket real falla cerrado y nunca fragmenta una respuesta completa para
+  simular streaming.
+- El runbook y los tres escenarios manuales están en
+  `docs/operations/websocket-chat.md`. El upgrade WebSocket mediante rewrite de
+  Next.js está **NO MEDIDO**; localhost usa conexión directa a la API en 8000.
+- La recuperación single-process reconcilia al reconectar una generación
+  PostgreSQL `active` sin tarea viva después de reiniciar API: conserva el
+  parcial como `interrupted`, emite un solo cursor durable y habilita un turno
+  nuevo. La regresión offline ampliada quedó en **19 PASS, 1 SKIP**. El test
+  PostgreSQL opt-in ampliado de restart/reconcile se repitió sobre PostgreSQL 16
+  efímero en `tmpfs`: **1 PASS en 2.45 s**, exit 0; el contenedor se eliminó
+  después de verificar su identidad. Multi-worker permanece **BLOCKED** sin
+  lease o coordinación distribuida.
+
+## 2026-11-25 - WebSocket chat, segunda iteración
+
+- El WebSocket ejecuta el flujo Support existente y emite un único resultado
+  tras validar la respuesta completa. Al interrumpir, descarta la salida y
+  espera que la consulta libere sus recursos locales. FourGeeks sigue usando
+  un cliente síncrono. El proceso carecía de `FOUR_GEEKS_API_KEY` y el worktree
+  carecía de `.env`; streaming real, cierre HTTP por cancelación y guardrails
+  equivalentes durante publicación incremental permanecen bloqueados.
+- El grafo puede usar pares completos del mismo chat como datos no confiables
+  en generación de conocimiento. Se conservan los identificadores legados y
+  el consentimiento de Agent Memory. PostgreSQL lee historial y cursor en una
+  misma sentencia. El frontend aísla cursor e historial por sesión.
+- El alcance MCP actual limita la generación WS a managers con un único
+  cliente activo coincidente. El socket revalida acceso antes de entregar
+  eventos. El runbook registra la decisión pendiente para acceso B2B/B2C.
+- El manifiesto HTTP verifica registraciones explícitas, alias ocultos y
+  OpenAPI, incluida la rama SSE anidada. QA independiente final: **161 PASS**
+  backend, incluidos los casos de cancelación y revocación, **7 PASS**
+  frontend Node, TypeScript y ESLint focal con exit 0. En PostgreSQL 16
+  efímero: **1 PASS** chat y **13 PASS** SSE con Uvicorn. Se retiraron los
+  contenedores temporales. La continuidad navegador–proveedor y la aceptación
+  humana siguen pendientes. Estado: `IMPLEMENTACION_PARCIAL_VALIDADA`.
+
+## 2026-11-25 - WebSocket chat, tercera iteración
+
+- La credencial `FOUR_GEEKS_API_KEY` siguió ausente en el proceso de QA. La
+  sonda opt-in de una petición, acotada a datos sintéticos y 96 tokens, devolvió
+  `missing_credential`, código 2 y cero peticiones. Ocho pruebas de transporte
+  controlado aprobaron, incluido cierre local al cancelar y rechazo de deltas
+  agrupados como evidencia de cancelación.
+- El runbook documenta la contradicción entre liberar texto libre antes de
+  terminar y conservar la validación de respuesta completa. La integración
+  del agente, cancelación en vivo y E2E siguen sujetos al gate del proveedor.
+  Estado: `IMPLEMENTACION_PARCIAL_VALIDADA`.
+
+### Reanudación con evidencia del gateway
+
+- El usuario obtuvo HTTP 200, 6 deltas en 2 lecturas, canceló la tarea antes
+  de observar finalización y comprobó cierre local con cero deltas posteriores.
+  La invocación y su resultado exacto constan en el expediente externo.
+- El cliente asíncrono de WebSocket consume SSE en el grafo existente con
+  deadline total y límites de bytes. El abort cierra la respuesta y espera
+  limpieza antes de resolver la interrupción. HTTP conserva su camino
+  síncrono. LangGraph registra el turno cancelado y elimina su checkpoint.
+- QA controlada cubre la traducción del abort en el grafo compilado, frames
+  truncados y excesivos, patrón sensible dividido, consentimiento y
+  reconexión concurrente con redirección. **197 PASS, 1 SKIP**. El skip
+  corresponde al abort integrado contra el gateway real.
+- La barrera de respuesta completa sigue activa. No se habilitó publicación
+  incremental de prosa. Las unidades estructuradas requieren una decisión
+  sobre el contrato de salida y su aceptación académica. El recorrido
+  completo de navegador y la continuidad con proveedor real siguen pendientes.
+
+## 2026-11-25 - WebSocket chat, cuarta iteración
+
+- El usuario acreditó abort local integrado en LangGraph con FourGeeks real
+  y recuperación sintética: **1 PASS en 5.38 s**. El caso valida HTTP 200,
+  lectura con respuesta abierta, una petición, cancelación del turno,
+  respuesta cerrada, traza cancelada y checkpoint eliminado.
+- Nuevo caso integrado con endpoint WebSocket real, PostgreSQL 16,
+  LangGraph y SSE controlado: **1 PASS en 10.48 s**. Verifica cierre antes
+  de confirmar abort, respuesta independiente tras redirección, mismo hilo
+  y cursor al reconectar, uso efectivo del historial con fixture y rechazo
+  de un patrón dividido entre deltas. Las identidades externas y la
+  recuperación se controlaron en el arnés. El contenedor fue retirado.
+- El Backoffice muestra abort sin texto publicado de inmediato. Node
+  **8 PASS**, TypeScript, ESLint focal y diff check con exit 0.
+- El runbook explica por qué la prosa incremental no conserva la semántica
+  de rechazo completo y deja las consultas de streaming y B2B/B2C listas
+  para el evaluador. Se mantiene la entrega terminal validada. Pendientes
+  la publicación visible anticipada, el navegador con gateway real y
+  aceptación humana. Estado: `IMPLEMENTACION_PARCIAL_VALIDADA`.
+
+## 2026-11-25 - TrackFlow CX, Iteración 06
+
+- Usuario + ChatGPT aceptaron los escenarios del baseline WS-07 ejecutados con el Backoffice auténtico y FourGeeks real, incluida reconexión y continuidad contextual. La aceptación reportada cubre el baseline anterior a la Iteración 06.
+- El Backoffice ahora ofrece Asistente CX con compositor único, detención y redirección, borrador aislado, nueva conversación independiente y detalles técnicos secundarios. El controlador ofrece progreso efímero correlacionado por generación y separado del cursor durable. La prosa se valida antes de publicación terminal.
+- El contrato opt-in `generation_progress` expone únicamente etapas de ejecución reales y descarta avance obsoleto. El progreso en vivo puede mostrarse al reconectar; la finalización y el abort lo retiran. Se preservaron los guardrails, routing, herramientas y `RAG_MIN_SCORE=0.57`.
+- Agent Memory conserva la gestión consentida vía HTTP secundario, con propuestas y decisiones explícitas. La paridad de gestión por WebSocket queda pendiente.
+- QA: 14 PASS frontend, 2 PASS PostgreSQL aislado, 167 PASS chat/agente/guardrails/Memory y 113 PASS RAG. Chromium escritorio/móvil PASS, TypeScript/ESLint/Next.js build exit 0. Capturas y evidencia en el expediente externo.
+- Estado `IMPLEMENTACION_PARCIAL_VALIDADA`. Pendientes la evaluación humana de Iteración 06, el criterio académico de prosa token por token y la decisión B2B/B2C. Las unidades experimentales siguen aisladas.
+
+### TrackFlow CX, Iteración 06.1
+
+- Support comparte el contrato de cobertura de conocimiento completa, parcial o
+  insuficiente entre HTTP y WebSocket. El proveedor selecciona pasajes por
+  posición. El servidor verifica las selecciones contra la recuperación y el
+  corpus canónico, aplica los guardrails y publica solo al finalizar.
+- El chat guarda cobertura y fuentes autorizadas por mensaje en los eventos
+  existentes. Entrega estos metadatos tras verificar OIDC y la membresía actual,
+  incluso al reconectar. El campo HTTP `partial` conserva su semántica de
+  fallos operativos y `RAG_MIN_SCORE` se mantiene en `0.57`.
+- QA controlada: 374 pruebas backend focalizadas, 34 de WebSocket incluidas
+  tres de PostgreSQL aislado y 16 del reducer de Backoffice. La consulta de
+  devoluciones produjo un resultado parcial equivalente con JSON y SSE
+  controlados. Persiste la necesidad de verificar la clasificación con
+  FourGeeks durante la aceptación humana. Estado `IMPLEMENTACION_PARCIAL_VALIDADA`.
+
+### TrackFlow CX, Iteración 07
+
+- Support vuelve a generar prosa en HTTP y WebSocket. El prompt conserva los
+  calificadores y pide responder en el idioma de la consulta actual. Hay
+  abstención total localizada. La cobertura parcial explícita queda pospuesta.
+- Las fuentes derivadas de la recuperación autorizada se publican en el evento
+  terminal y se recuperan por mensaje tras revalidar OIDC y membresía. El
+  snapshot conserva la compatibilidad con mensajes de Iteración 06.1.
+- QA controlada: 433 pruebas de regresión backend, 34 de WebSocket con
+  PostgreSQL aislado y 16 de Backoffice. El caso integrado verificó una síntesis
+  natural en español, dos fuentes y su recuperación al reconectar. La
+  publicación terminal validada continúa. Pendientes la verificación humana
+  con FourGeeks y las decisiones académicas de publicación y acceso directo
+  B2B/B2C. Estado `IMPLEMENTACION_PARCIAL_VALIDADA`.
+
+### TrackFlow CX, Iteración 10
+
+- La aceptación humana del flujo anterior confirmó prosa natural en español,
+  plazo y proceso estándar de devolución correctos y fuentes consultadas.
+  Siguen pendientes las limitaciones de consultas compuestas e internacionales.
+- El Asistente CX integra propuestas de memoria del ámbito cliente mediante
+  los endpoints existentes de consulta y decisión. Revalida al reconectar,
+  respeta el vencimiento efectivo y conserva la reconfirmación tras editar.
+  El panel HTTP secundario sigue disponible.
+- WS-07 contiene un único despacho QA de PureStep `WS07-QA-9001`.
+  El lookup real en solo lectura confirmó `recorded_dispatch` para PureStep
+  y `not_found` para la consulta negativa y para el alcance SoundWave
+  controlado. La siembra se verificó como idempotente.
+- Se aceptaron en Asistente CX las consultas `WS07-QA-9001` y
+  `WS07-QA-9002`. Las trazas correlacionadas confirman una llamada real
+  a `get_authorized_tracking` por turno con `ok` y `not_found`.
+- La aceptación humana de Agent Memory confirmó una propuesta de cobertura
+  de SEUR, recuperación al recargar, aprobación y reutilización. PostgreSQL
+  vincula la decisión aprobada con una entrada activa y la traza
+  `memory_read_status=used`. El turno verificado conserva el `session_id`
+  de origen. Quedan por corroborar la lectura en otro hilo y, como mejora
+  futura, la presentación de memoria en lenguaje natural.
+- El expediente recoge el plan mínimo para deltas originales, validación de
+  prefijos y abort con parcial durable. La entrega vigente sigue siendo
+  terminal. Streaming visible y acceso B2B/B2C continúan pendientes.
+  Estado `IMPLEMENTACION_PARCIAL_VALIDADA`.
+
+### TrackFlow CX, Iteración 11
+
+- El cliente FourGeeks ofrece un observador privado de los deltas SSE. El
+  arnés de pruebas retiene por defecto y usa una prueba sintética solo para
+  acreditar transporte, persistencia antes de fan-out, abort y replay.
+- QA controlada: 136 pruebas de regresión y 4 de integración PostgreSQL
+  desechable. La prueba positiva observó deltas originales antes del terminal
+  con un verificador inyectado y dos suscriptores. La prueba de rechazo
+  comprueba retención sin esa señal. No se activó ninguna ruta operativa.
+- Falta acreditar un verificador de prosa libre, autorización del texto
+  durante commit, entrega y replay, y el recorrido real con proveedor y
+  navegador. Se conserva la publicación terminal y el estado
+  `IMPLEMENTACION_PARCIAL_VALIDADA`.
+
+### TrackFlow CX, Iteración 12
+
+- El experimento de streaming verifica procedencia pública explícita y
+  cuerpo SSE efectivo, y retiene los deltas originales. RAG canónico no
+  aporta autorización pública. Faltan el manifiesto operativo, la política
+  de compromiso incremental y una frontera acreditada antes de liberar.
+- El experimento de acceso externo verifica ámbito B2B por cliente y B2C
+  por despacho y sesión, manteniendo al manager. Los fixtures sintéticos
+  aprobaron en SQLite y PostgreSQL WS-07 con rollback. Faltan verificación
+  de identidad y autorización empresarial, credencial específica y
+  aislamiento real de la entrega.
+- No se activaron streaming visible ni acceso externo. Se mantiene
+  `IMPLEMENTACION_PARCIAL_VALIDADA`.
+
+### TrackFlow CX, Iteración 13
+
+- La publicación de unidades autorizadas se integró en el Asistente CX
+  como opción explícita de WS-07 para una sola consulta sintética y un
+  manager verificado. El flujo habitual conserva generación natural y
+  validación terminal.
+- La prueba con WebSocket, PostgreSQL y SSE controlado acreditó entrega
+  antes del terminal, persistencia antes de emitir, cancelación local,
+  redirección y recuperación exacta del parcial. Falta medir la entrega
+  temprana con FourGeeks real y realizar la aceptación en el navegador.
+- El acceso externo QA aislado verificó tokens emitidos por Keycloak con
+  `tracking:read`, mediante WebSocket en el cliente de prueba ASGI, MCP local
+  y PostgreSQL desechable. B2B accede al cliente vinculado y B2C al despacho
+  exacto. La ruta de managers conserva su contrato.
+- El acceso directo operativo y la aceptación académica de unidades en
+  lugar de los tokens de prosa siguen pendientes. Se mantiene
+  `IMPLEMENTACION_PARCIAL_VALIDADA`.
+- El primer ensayo humano con FourGeeks publicó U1 y U2 y terminó en
+  `failed`. PostgreSQL confirmó el parcial exacto y el turno natural
+  posterior completado. Se corrigió el rechazo del último ID exacto sin
+  salto de línea tras un terminal SSE válido. Las 100 pruebas focalizadas
+  pasaron. Queda repetir el ensayo real con trazas de entrega y cierre.
+- La aceptación humana posterior confirmó tres unidades completas con
+  FourGeeks real e interrupción antes de la primera. Las trazas sitúan
+  el fan-out de U1 entre 76 y 122 ms antes del terminal SSE local.
+  La prueba con SSE controlado cubrió la interrupción con parcial.
+- Se acreditó también en el navegador autenticado con FourGeeks real.
+  PostgreSQL conservó U1 y U2 tras cancelar antes del terminal SSE
+  local, sin eventos tardíos de la generación interrumpida. El turno
+  redirigido completó por el flujo natural y ambos se recuperaron
+  al reconectar. El diseño de selección dinámica queda pendiente de
+  aprobación. Se mantiene `IMPLEMENTACION_PARCIAL_VALIDADA` por la
+  aceptación académica y el acceso directo operativo pendientes.
+
+### TrackFlow CX, Iteración 14
+
+- El catálogo versionado de conocimiento QA permite seleccionar por
+  consulta, evidencia RAG y cliente. Las unidades y sus referencias se
+  reautorizan al confirmar, emitir y recuperar el snapshot. Se sembraron
+  dos unidades sintéticas en la base desechable WS-07.
+- El flujo habitual conserva la generación natural. La modalidad I14
+  requiere activación explícita. El gate FourGeeks real 7/7 y la
+  aceptación humana acreditaron unidad determinista, compuesto SSE y
+  generación convencional terminal en WS-07.
+
+### TrackFlow CX, Iteración 15
+
+- El acceso externo aislado de WS-07 conecta sus vínculos B2B por
+  empresa y B2C por despacho al First-line CX Agent, MCP privado y
+  coordinador de chat. El permiso QA sigue limitado a `tracking:read`.
+- El gate real de Keycloak acreditó ambos perfiles con PostgreSQL,
+  MCP y WebSocket ASGI. La aceptación humana en navegador verificó
+  el envío permitido, la denegación y la recuperación por perfil.
+  Quedan pendientes la política empresarial de identidad y vinculación
+  y la decisión académica sobre unidades. Estado
+  `IMPLEMENTACION_PARCIAL_VALIDADA`.
+
+### TrackFlow CX, Iteración 16
+
+- La cobertura de unidades QA se calcula por temas solicitados,
+  evidencia primaria autorizada y unidades efectivamente confirmadas.
+  Los estados semánticos se guardan separados del terminal del turno.
+- Se verificaron el complemento determinista de una unidad requerida,
+  la reconexión parcial, la interrupción y la revocación. Pasaron el
+  gate controlado y las regresiones de I14 e I15. El usuario confirmó
+  10/10 en el gate FourGeeks real y validó los cuatro estados, el
+  turno convencional y la recuperación tras recargar. PostgreSQL
+  confirmó la proyección de cobertura del snapshot QA. Se mantiene
+  `IMPLEMENTACION_PARCIAL_VALIDADA`.

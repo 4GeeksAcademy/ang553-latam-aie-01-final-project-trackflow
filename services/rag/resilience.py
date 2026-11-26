@@ -393,6 +393,40 @@ class BudgetedGenerationProvider:
                 else 1
             )
 
+    async def generate_async(self, question: str, context: str) -> str:
+        assigned = self.deadline.operation_timeout(
+            self.timeout, reserve=self.response_reserve
+        )
+        initial_request_count = getattr(
+            self.provider, "generation_request_count", None
+        )
+        self.diagnostics = {
+            "external_calls": 0,
+            "timeout_ms": round(assigned * 1000),
+            "budget_remaining_ms": round(self.deadline.remaining() * 1000),
+            "transport": "sse",
+        }
+        generate_async = getattr(self.provider, "generate_async", None)
+        if not callable(generate_async):
+            raise RAGProviderError(
+                "Async generation provider is unavailable",
+                category="provider_error",
+            )
+        try:
+            return await generate_async(
+                question, context, timeout_seconds=assigned
+            )
+        finally:
+            current_request_count = getattr(
+                self.provider, "generation_request_count", None
+            )
+            self.diagnostics["external_calls"] = (
+                current_request_count - initial_request_count
+                if isinstance(initial_request_count, int)
+                and isinstance(current_request_count, int)
+                else 1
+            )
+
     def trace(self) -> Mapping[str, object]:
         return dict(self.diagnostics)
 

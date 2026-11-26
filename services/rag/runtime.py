@@ -21,7 +21,7 @@ from services.rag.service import RAGService
 
 @contextmanager
 def rag_service_context(
-    *, deadline: QueryDeadline | None = None
+    *, deadline: QueryDeadline | None = None, knowledge_coverage: bool = False,
 ) -> Iterator[RAGService]:
     """Build adapters lazily and optionally share an already-started deadline."""
     gateway: FourGeeksHTTPClient | None = None
@@ -37,7 +37,7 @@ def rag_service_context(
                 "RAG_VECTOR_SIZE is required for resilient query caching"
             )
         shared_deadline = deadline or QueryDeadline(settings.total_budget_seconds)
-        gateway = FourGeeksHTTPClient(settings)
+        gateway = FourGeeksHTTPClient(settings, knowledge_coverage=knowledge_coverage)
         qdrant = QdrantHTTPVectorStore(
             settings.qdrant_url,
             timeout=settings.request_timeout_seconds,
@@ -88,6 +88,7 @@ def rag_service_context(
             ),
             default_min_score=settings.min_score,
             expected_vector_size=settings.expected_vector_size,
+            knowledge_coverage=knowledge_coverage,
         )
     finally:
         if gateway is not None:

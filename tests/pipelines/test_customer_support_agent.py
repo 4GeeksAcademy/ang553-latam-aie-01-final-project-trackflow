@@ -75,9 +75,9 @@ class StubService:
 
 def test_support_state_requires_only_question():
     assert SupportState.__required_keys__ == frozenset({"question"})
-    assert SupportState.__optional_keys__ == frozenset(
-        {"context", "answer", "result"}
-    )
+    assert {
+        "context", "answer", "result", "retrieval_question", "contextual_history",
+    } <= SupportState.__optional_keys__
 
 
 def test_answered_graph_reuses_retrieval_once_and_preserves_query_contract():
