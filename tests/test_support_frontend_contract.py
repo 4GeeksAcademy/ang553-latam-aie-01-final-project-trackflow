@@ -164,6 +164,39 @@ def test_support_restores_conversation_and_recovers_pending_memory_after_oidc():
     assert "conversationStorageKey(userId)" in page
 
 
+def test_primary_chat_memory_is_bound_to_authenticated_client_conversation():
+    page = (BACKOFFICE / "app/backoffice/support/page.tsx").read_text(encoding="utf-8")
+    component = (BACKOFFICE / "app/backoffice/support/ChatMemoryConsent.tsx").read_text(encoding="utf-8")
+    transport = (BACKOFFICE / "lib/useSupportChat.ts").read_text(encoding="utf-8")
+    client = (BACKOFFICE / "lib/supportApi.ts").read_text(encoding="utf-8")
+    card = page[page.index("<ChatMemoryConsent"):page.index("{chat.generationActive && <p")]
+    assert 'chat.connection === "connected"' in page
+    assert "clients.length === 1" in page
+    assert "JSON.stringify([userId, clientId, chat.sessionId])" in card
+    assert "!chat.generationActive" in card
+    assert "pending.conversation_id !== conversationId" in component
+    assert "currentChatMemoryProposal(pending.proposal, conversationId, clientId)" in component
+    assert "currentAuthorizationOnly: true" in component
+    assert 'cache: "no-store"' in client
+    assert "memory_proposal" not in transport
+    assert "Herramientas avanzadas y memoria (HTTP secundario)" in page
+
+
+def test_primary_chat_memory_decisions_are_explicit_and_reload_authoritative_state():
+    source = (BACKOFFICE / "app/backoffice/support/ChatMemoryConsent.tsx").read_text(encoding="utf-8")
+    decide = source[source.index("const decide = async"):source.index("return (\n    <>")]
+    assert decide.index("decisionRef.current = request;") < decide.index("await decisionKey")
+    assert decide.index("settledRef.current !== revision", decide.index("await decisionKey")) < decide.index(
+        "await decideSupportMemory"
+    )
+    assert "idempotency_key: idempotency.key" in decide
+    assert "await reload();" in decide
+    assert "setView(null);" in decide
+    assert "result.proposal" not in decide
+    assert "setItem(" not in source
+    assert "La corrección crea otra propuesta y requerirá una nueva confirmación." in source
+
+
 def test_support_decision_redirect_persists_only_user_bound_minimal_intent():
     page = (BACKOFFICE / "app/backoffice/support/page.tsx").read_text(encoding="utf-8")
     start = page.index("interface StoredDecisionIntent")

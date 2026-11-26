@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from threading import Event
 from uuid import UUID, uuid4
 
 import pytest
@@ -431,6 +432,53 @@ def test_conversational_consent_resolves_without_running_support_graph(
     assert (session.execute(select(memory_entries)).first() is not None) is (
         action is ConsentAction.approve
     )
+
+
+def test_websocket_abort_during_consent_classification_does_not_apply_decision(session):
+    store = MemoryStore()
+    owner = identity("admin-a", Role.admin)
+    first = query(
+        session,
+        store,
+        SupportQueryRequest(question="Correction: SEUR coverage changed.", client_id=CLIENT_A),
+        owner,
+        ProposalAgent(store),
+    )
+
+    async def scenario():
+        started = asyncio.Event()
+        release = Event()
+        abort = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        class WaitingConsentAgent(ConversationalConsentAgent):
+            def classify_pending_consent(self, *args, **kwargs):
+                loop.call_soon_threadsafe(started.set)
+                assert release.wait(2)
+                return super().classify_pending_consent(*args, **kwargs)
+
+        chat_request = request()
+        chat_request.state.support_abort_event = abort
+        operation = asyncio.create_task(query_support(
+            SupportQueryRequest(
+                question="I confirm my decision.",
+                conversation_id=first.conversation_id,
+                client_id=CLIENT_A,
+            ),
+            chat_request, Response(), owner, session,
+            WaitingConsentAgent(ConsentAction.approve), MCPTools(), store,
+        ))
+        try:
+            await asyncio.wait_for(started.wait(), 2)
+            abort.set()
+        finally:
+            release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(operation, 2)
+
+    run(scenario())
+    assert session.execute(select(memory_decisions)).first() is None
+    assert session.execute(select(memory_entries)).first() is None
 
 
 def test_jailbreak_with_approval_word_discards_pending_without_activating_memory(
@@ -870,7 +918,10 @@ def test_pending_recovery_returns_only_owned_actionable_proposal(session: Sessio
     assert ambiguous_identifier.value.status_code == 422
 
 
-def test_pending_recovery_hides_expired_and_resolved_proposals(session: Session):
+@pytest.mark.parametrize("deadline_field", ["expires_at", "valid_until"])
+def test_pending_recovery_hides_expired_and_resolved_proposals(
+    session: Session, deadline_field: str,
+):
     store = MemoryStore()
     owner = identity("admin-a", Role.admin)
     expired = query(
@@ -888,7 +939,7 @@ def test_pending_recovery_hides_expired_and_resolved_proposals(session: Session)
         .where(memory_proposals.c.id == str(expired.memory_proposal.id))
         .values(
             created_at=datetime.now(UTC) - timedelta(days=2),
-            expires_at=datetime.now(UTC) - timedelta(seconds=1),
+            **{deadline_field: datetime.now(UTC) - timedelta(seconds=1)},
         )
     )
     session.commit()
@@ -924,6 +975,29 @@ def test_pending_recovery_hides_expired_and_resolved_proposals(session: Session)
         memory_store=store,
         conversation_id=active.conversation_id,
     ).proposal is None
+
+
+def test_pending_recovery_exposes_the_earlier_actionable_deadline(session: Session):
+    store = MemoryStore()
+    owner = identity("admin-a", Role.admin)
+    result = query(
+        session, store,
+        SupportQueryRequest(question="Correction: DHL coverage changed.", client_id=CLIENT_A),
+        owner, ProposalAgent(store),
+    )
+    valid_until = datetime.now(UTC) + timedelta(minutes=10)
+    session.execute(
+        update(memory_proposals)
+        .where(memory_proposals.c.id == str(result.memory_proposal.id))
+        .values(valid_until=valid_until)
+    )
+    session.commit()
+
+    pending = get_support_pending_memory(
+        identity=owner, session=session, memory_store=store,
+        proposal_id=result.memory_proposal.id,
+    )
+    assert pending.proposal.expires_at == valid_until
 
 
 def test_pending_recovery_rechecks_tenant_membership(session: Session):

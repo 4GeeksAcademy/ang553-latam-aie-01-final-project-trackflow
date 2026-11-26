@@ -28,6 +28,7 @@ SPECIAL = {
     ("DELETE", "/suppliers/{supplier_id}"),
     ("DELETE", "/api/suppliers/{supplier_id}"),
     ("GET", "/api/incidents/results/export"),
+    ("GET", "/rfps/notifications/stream"),
 }
 LEGACY_STRUCTURAL_JSON = {
     ("POST", "/telemetry/events"),
@@ -83,24 +84,38 @@ EXPECTED_ROUTES = {
         ("POST", "/rfps/{ticket_id}/response"),
         ("GET", "/rfps/{ticket_id}/response"),
         ("GET", "/rfps/{ticket_id}/response/{run_id}"),
+        ("GET", "/rfps/notifications/snapshot"),
+        ("GET", "/rfps/notifications/stream"),
+        ("GET", "/rfps/notifications/{ticket_id}"),
+        ("GET", "/rfps/approval/inbox"),
+        ("GET", "/rfps/{ticket_id}/approval/document-locator"),
+        ("GET", "/rfps/{ticket_id}/approval/{approval_run_id}/document"),
+        ("GET", "/rfps/{ticket_id}/approval/{approval_run_id}/departments/{department}/revisions/{revision_id}"),
+        ("GET", "/rfps/{ticket_id}/approval/{approval_run_id}/departments/{department}/revisions/{revision_id}/review"),
+        ("POST", "/rfps/{ticket_id}/approval"),
+        ("POST", "/rfps/{ticket_id}/approval/{approval_run_id}/assess-and-start"),
+        ("POST", "/rfps/{ticket_id}/approval/{approval_run_id}/business-inputs"),
+        ("POST", "/rfps/{ticket_id}/approval/{approval_run_id}/departments/start"),
+        ("POST", "/rfps/{ticket_id}/approval/{approval_run_id}/departments/{department}/revisions/{revision_id}/correct"),
+        ("POST", "/rfps/{ticket_id}/approval/{approval_run_id}/departments/{department}/revisions/{revision_id}/decision"),
+        ("POST", "/rfps/{ticket_id}/approval/{approval_run_id}/proposal/materialize-and-reconcile"),
+        ("POST", "/rfps/{ticket_id}/approval/{approval_run_id}/reconcile"),
+        ("POST", "/chat/sessions"),
+        ("GET", "/chat/sessions/{session_id}"),
     ]
 }
 
 
 def _routes() -> list[tuple[str, str, APIRoute]]:
-    result: list[tuple[str, str, APIRoute]] = []
-    for registered in app.routes:
-        if isinstance(registered, APIRoute):
-            result.extend((method, registered.path, registered) for method in registered.methods)
-        elif hasattr(registered, "original_router"):
-            prefix = registered.include_context.prefix
-            result.extend(
-                (method, prefix + route.path, route)
-                for route in registered.original_router.routes
-                if isinstance(route, APIRoute)
-                for method in route.methods
-            )
-    return result
+    def walk(routes, prefix=""):
+        for route in routes:
+            if isinstance(route, APIRoute):
+                for method in route.methods:
+                    yield method, prefix + route.path, route
+            elif hasattr(route, "original_router"):
+                yield from walk(route.original_router.routes, prefix + route.include_context.prefix)
+
+    return list(walk(app.routes))
 
 
 def _model_is_nominal(model: Any) -> bool:
@@ -126,11 +141,10 @@ def _exact_keys(response: httpx.Response, keys: set[str]) -> dict[str, Any]:
     return payload
 
 
-def test_runtime_manifest_has_exactly_61_registrations() -> None:
+def test_runtime_manifest_has_expected_unique_registrations() -> None:
     routes = _routes()
     found = {(method, path) for method, path, _ in routes}
-    assert len(routes) == 61
-    assert len(found) == 61
+    assert len(routes) == len(found), "duplicate method/path registrations"
     assert found == EXPECTED_ROUTES
 
 
@@ -145,7 +159,7 @@ def test_all_json_routes_have_nominal_pydantic_contracts() -> None:
 
 def test_special_http_contracts_and_openapi_are_explicit() -> None:
     routes = {(method, path): route for method, path, route in _routes()}
-    for key in SPECIAL - {("GET", "/api/incidents/results/export")}:
+    for key in (key for key in SPECIAL if key[0] == "DELETE"):
         route = routes[key]
         assert route.response_model is None
         assert route.status_code == 204
@@ -155,6 +169,8 @@ def test_special_http_contracts_and_openapi_are_explicit() -> None:
     csv_success = app.openapi()["paths"]["/api/incidents/results/export"]["get"]["responses"]["200"]
     assert csv_success["content"] == {"text/csv": {"schema": {"type": "string"}}}
     assert "Content-Disposition" in csv_success["headers"]
+    stream_success = app.openapi()["paths"]["/rfps/notifications/stream"]["get"]["responses"]["200"]
+    assert stream_success["content"] == {"text/event-stream": {"schema": {"type": "string"}}}
 
 
 def test_openapi_visible_success_responses_are_nominal_or_special() -> None:
@@ -164,7 +180,6 @@ def test_openapi_visible_success_responses_are_nominal_or_special() -> None:
         for method, path, route in _routes()
         if route.include_in_schema and not path.startswith("/api/suppliers")
     }
-    assert len(visible) == 55
     for method, path in visible:
         operation = openapi["paths"][path][method.lower()]
         success = next(
@@ -187,12 +202,12 @@ def test_application_decorators_explicitly_declare_response_models() -> None:
         *((ROOT / "services/reporting").glob("*.py")),
         ROOT / "services/incidents/router.py",
         ROOT / "services/task_queue/router.py",
+        ROOT / "services/api/chat/router.py",
     ]
     http_decorators = {"get", "post", "put", "patch", "delete", "options", "head"}
-    source_decorators: list[tuple[Path, str, set[str]]] = []
-    inferred_only: list[str] = []
+    inferred_only: set[tuple[str, str]] = set()
     for file in files:
-        tree = ast.parse(file.read_text())
+        tree = ast.parse(file.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -204,27 +219,19 @@ def test_application_decorators_explicitly_declare_response_models() -> None:
                 if owner not in {"router", "app"} or call.func.attr not in http_decorators:
                     continue
                 names = {keyword.arg for keyword in call.keywords if keyword.arg}
-                source_decorators.append((file, node.name, names))
                 if "response_model" not in names and not (
                     {"response_class", "responses"} <= names
                     or {"response_class", "status_code"} <= names
                 ):
-                    inferred_only.append(f"{file}:{node.name}")
-    unique_json = [item for item in source_decorators if "response_model" in item[2]]
-    unique_special = [
-        item for item in source_decorators if "response_model" not in item[2]
-    ]
-    assert len(source_decorators) == 55
-    assert len(unique_json) == 50
-    assert len(unique_special) == 5
-    assert len(inferred_only) == 2
-    assert all("services\\api\\routes\\telemetry.py" in item for item in inferred_only)
+                    inferred_only.add((file.relative_to(ROOT).as_posix(), node.name))
+    assert inferred_only == {
+        ("services/api/routes/telemetry.py", "get_telemetry_report"),
+        ("services/api/routes/telemetry.py", "receive_events"),
+    }
 
 
 def test_registration_accounting_distinguishes_source_and_runtime_layers() -> None:
     runtime = {(method, path) for method, path, _ in _routes()}
-    runtime_special = runtime & SPECIAL
-    runtime_json = runtime - SPECIAL
     openapi = app.openapi()
     visible = {
         (method.upper(), path)
@@ -232,10 +239,13 @@ def test_registration_accounting_distinguishes_source_and_runtime_layers() -> No
         for method in operation_set
         if method.upper() in {"GET", "POST", "PUT", "PATCH", "DELETE"}
     }
-    assert len(runtime) == 61
-    assert len(runtime_json) == 57
-    assert len(runtime_special) == 4
-    assert len(visible) == 55
+    hidden_supplier_aliases = {
+        (method, "/api" + path)
+        for method, path in EXPECTED_ROUTES
+        if path == "/suppliers" or path.startswith("/suppliers/")
+    }
+    assert runtime - visible == hidden_supplier_aliases
+    assert visible <= runtime
 
 
 def test_http_auth_profile_supplier_and_health_contracts(isolated_auth_db, monkeypatch) -> None:

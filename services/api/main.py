@@ -36,6 +36,7 @@ from services.api.routes.profiles import router as profiles_router
 from services.api.routes.suppliers import router as suppliers_router
 from services.api.routes.telemetry import router as telemetry_router
 from services.api.routes.users import router as users_router
+from services.api.chat.router import router as chat_router
 from services.reporting.router import router as reporting_router
 from services.task_queue.router import router as task_router
 from services.incidents.router import router as operational_incidents_router
@@ -218,6 +219,7 @@ app.include_router(rag_router)
 app.include_router(rfp_router)
 app.include_router(support_router)
 app.include_router(access_router)
+app.include_router(chat_router)
 
 
 # ── Health check ─────────────────────────────────────────────────────────────

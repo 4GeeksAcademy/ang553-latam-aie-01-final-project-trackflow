@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from services.rag.contracts import KnowledgeChunk, RAGConfigurationError
@@ -12,6 +13,12 @@ from services.rag.contracts import KnowledgeChunk, RAGConfigurationError
 
 DEFAULT_CORPUS_DIR = Path(__file__).resolve().parents[2] / "docs" / "company-knowledge-base"
 POINT_NAMESPACE = uuid.UUID("2c347582-9ac0-5cd7-8d6c-29dbb4515c9b")
+
+
+@lru_cache(maxsize=1)
+def canonical_chunks_by_id() -> dict[str, KnowledgeChunk]:
+    """Return the closed manifest used to verify retrieved evidence."""
+    return {chunk.point_id: chunk for chunk in load_knowledge_chunks()}
 
 
 @dataclass(frozen=True)

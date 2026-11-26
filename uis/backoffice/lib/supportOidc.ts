@@ -94,7 +94,8 @@ function clearPkce(): void {
   window.sessionStorage.removeItem(PKCE_STATE_KEY);
 }
 
-export function clearSupportAccessToken(): void {
+export function clearSupportAccessToken(expectedToken?: string): void {
+  if (expectedToken !== undefined && accessToken !== expectedToken) return;
   accessToken = null;
   accessTokenExpiresAt = 0;
 }
@@ -170,10 +171,13 @@ async function redirectForAuthorization(): Promise<never> {
   throw new SupportAuthorizationRedirect();
 }
 
+export function getCurrentSupportAccessToken(): string | null {
+  return Date.now() < accessTokenExpiresAt - 15_000 ? accessToken : null;
+}
+
 export async function getSupportAccessToken(): Promise<string> {
-  if (accessToken && Date.now() < accessTokenExpiresAt - 15_000) {
-    return accessToken;
-  }
+  const current = getCurrentSupportAccessToken();
+  if (current) return current;
   clearSupportAccessToken();
   if (await initializeSupportAuthorization()) {
     if (accessToken) return accessToken;

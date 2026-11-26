@@ -62,6 +62,16 @@ class SupportIdentity:
 
         return self._token
 
+    def revalidate(self) -> SupportIdentity:
+        """Recheck a retained identity without exposing its bearer."""
+
+        current = authenticate_support_identity(
+            HTTPAuthorizationCredentials(scheme="Bearer", credentials=self._token.get_secret_value())
+        )
+        if current.user.id != self.user.id or current.subject != self.subject:
+            raise _forbidden()
+        return current
+
 
 def _unauthorized() -> HTTPException:
     return HTTPException(

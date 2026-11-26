@@ -6,6 +6,13 @@ export type SupportComponentStatus =
   | "timeout"
   | "unavailable";
 
+export type KnowledgeCoverage = "complete" | "partial" | "insufficient";
+
+export interface KnowledgeProjection {
+  coverage?: KnowledgeCoverage;
+  sources: KnowledgeSource[];
+}
+
 export interface SupportTicketResult {
   status: SupportComponentStatus;
   incident_id: string | null;
@@ -28,6 +35,7 @@ export interface SupportKnowledgeResult {
   status: SupportComponentStatus;
   answer: string | null;
   insufficient_context: boolean;
+  coverage?: KnowledgeCoverage | null;
   sources: KnowledgeSource[];
 }
 

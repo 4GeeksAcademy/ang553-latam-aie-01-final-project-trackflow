@@ -22,6 +22,11 @@ from agents.customer_support.guardrail_contracts import (
 from services.api.agent_memory.contracts import MemoryScope, ProposalStatus
 from services.api.agent_memory.service import MemoryPolicyViolation, canonical_key_for
 from services.rag.chunking import DOCUMENT_PLANS
+from services.rag.knowledge_coverage import (
+    INSUFFICIENT_KNOWLEDGE,
+    INSUFFICIENT_KNOWLEDGE_EN,
+    is_canonical_covered_answer,
+)
 
 
 SAFE_OUTPUT_MESSAGE = (
@@ -146,6 +151,7 @@ def _text_is_safe(value: object, *, minimum: int = 0, maximum: int) -> bool:
         or _SECRET_VALUE.search(value)
         or _CONFIDENTIAL_COMMERCIAL_VALUE.search(value)
         or _PHYSICAL_SECURITY_VALUE.search(value)
+        or "insufficient_context" in value.casefold()
     )
 
 
@@ -278,6 +284,7 @@ def _validate_knowledge(
             return _structural_failure()
         empty_wrapper = (
             _field(knowledge, "answer") is None
+            and _field(knowledge, "coverage") is None
             and not bool(_field(knowledge, "insufficient_context", False))
             and _field(knowledge, "sources", []) == []
         )
@@ -287,6 +294,7 @@ def _validate_knowledge(
     answer = _field(knowledge, "answer")
     sources = _field(knowledge, "sources", ())
     insufficient = bool(_field(knowledge, "insufficient_context", False))
+    coverage = _field(knowledge, "coverage")
     if not _text_is_safe(answer, minimum=1, maximum=12000):
         return _security_failure()
     source_result = _validate_sources(sources)
@@ -296,6 +304,20 @@ def _validate_knowledge(
         return _structural_failure()
     if status == "not_found" and (not insufficient or len(sources) != 0):
         return _structural_failure()
+    if coverage == "insufficient":
+        if status != "not_found" or answer not in {INSUFFICIENT_KNOWLEDGE, INSUFFICIENT_KNOWLEDGE_EN}:
+            return _structural_failure()
+    elif coverage is not None:
+        if coverage not in ("complete", "partial") or status != "ok" or not any(
+            _field(source, "retrieval_kind") == "primary" for source in sources
+        ):
+            return _structural_failure()
+        if not is_canonical_covered_answer(
+            answer,
+            [(_field(source, "source_document"), _field(source, "section")) for source in sources],
+            partial=coverage == "partial",
+        ):
+            return _security_failure()
     return _safe()
 
 

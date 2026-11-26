@@ -9,6 +9,7 @@ from typing import Literal, Mapping, Protocol, Sequence
 COLLECTION_NAME = "trackflow_knowledge"
 COMPANY = "trackflow"
 LANGUAGE = "en"
+KnowledgeCoverage = Literal["complete", "partial", "insufficient"]
 
 
 class RAGError(RuntimeError):
@@ -101,6 +102,7 @@ class QueryResult:
     answer: str
     sources: tuple[SourceReference, ...]
     insufficient_context: bool
+    coverage: KnowledgeCoverage | None = None
 
 
 @dataclass(frozen=True)

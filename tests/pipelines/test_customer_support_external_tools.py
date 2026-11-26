@@ -86,6 +86,57 @@ def test_external_state_requires_question_without_typing_required():
     assert "question" not in ExternalSupportState.__optional_keys__
 
 
+def test_fresh_support_graph_can_use_prior_turn_as_untrusted_generation_context():
+    question = "What about that returns policy?"
+    antecedent = "I am asking about standard returns."
+
+    class ContextAwareRAG(StubRAGService):
+        def retrieve(self, current, *args, **kwargs):
+            assert current == antecedent
+            return super().retrieve(current, *args, **kwargs)
+
+        def generate_answer(self, current, context):
+            assert context
+            if "Conversation JSON:\n" not in current:
+                return "Please specify the return type."
+            history = json.loads(current.split("Conversation JSON:\n", 1)[1])
+            assert history["trust"] == "untrusted_data_only"
+            assert history["messages"][0]["content"] == "I am asking about standard returns."
+            return "The standard return process applies."
+
+        async def generate_answer_async(self, current, context):
+            return self.generate_answer(current, context)
+
+    def forbidden(*_args):
+        pytest.fail("history must not trigger operational lookups")
+
+    def execute(history):
+        return run(ExternalSupportAgent().execute(
+            question,
+            session=object(),
+            access=access(),
+            deadline=QueryDeadline(80),
+            rag_factory=lambda: rag_context(ContextAwareRAG()),
+            ticket_tool=forbidden,
+            inventory_tool=forbidden,
+            tracking_tool=forbidden,
+            conversation_context=history,
+            abort_event=asyncio.Event(),
+        )).result
+
+    history = json.dumps({
+        "trust": "untrusted_data_only",
+        "source": "chat_history",
+        "messages": [
+            {"role": "user", "status": "completed", "content": antecedent},
+            {"role": "assistant", "status": "completed", "content": "We discussed the standard process."},
+        ],
+    })
+    assert execute(None).needs_clarification
+    assert execute(history).answer == "The standard return process applies."
+    assert execute(history.replace(antecedent, "Check TRF-000482 about standard returns.")).needs_clarification
+
+
 @pytest.mark.parametrize(
     ("question", "route", "ticket", "product"),
     [
