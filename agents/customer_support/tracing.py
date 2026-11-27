@@ -43,14 +43,18 @@ class TraceRecorder:
         self,
         *,
         max_runs: int = 100,
+        max_active_runs: int = 100,
         retention_seconds: float = 3600,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if max_runs <= 0:
             raise ValueError("max_runs must be positive")
+        if max_active_runs <= 0:
+            raise ValueError("max_active_runs must be positive")
         if retention_seconds <= 0:
             raise ValueError("retention_seconds must be positive")
         self.max_runs = max_runs
+        self.max_active_runs = max_active_runs
         self.retention_seconds = retention_seconds
         self._clock = clock
         self._active: dict[str, dict[str, Any]] = {}
@@ -64,6 +68,8 @@ class TraceRecorder:
     def begin(self, run_id: str) -> None:
         with self._lock:
             self._cleanup_locked()
+            if len(self._active) >= self.max_active_runs:
+                return
             self._active[run_id] = {
                 "started": self._clock(),
                 "events": [],
@@ -82,7 +88,9 @@ class TraceRecorder:
         resilience: Mapping[str, object] | None = None,
     ) -> None:
         with self._lock:
-            active = self._active[run_id]
+            active = self._active.get(run_id)
+            if active is None:
+                return
             event: dict[str, object] = {
                 "sequence": len(active["events"]) + 1,
                 "node": node,
@@ -103,9 +111,11 @@ class TraceRecorder:
         *,
         outcome: str,
         error: BaseException | None = None,
-    ) -> dict[str, object]:
+    ) -> dict[str, object] | None:
         with self._lock:
-            active = self._active.pop(run_id)
+            active = self._active.pop(run_id, None)
+            if active is None:
+                return None
             finished = self._clock()
             trace: dict[str, Any] = {
                 "run_id": run_id,

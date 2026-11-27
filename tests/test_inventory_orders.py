@@ -22,7 +22,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 # Required by services.api.auth_settings and services.api.database
 # before any imports of those modules.
-os.environ.setdefault("JWT_SECRET_KEY", "test-jwt-secret-key")
+os.environ.setdefault("JWT_SECRET_KEY", "trackflow-isolated-synthetic-jwt-key-only-3b")
 os.environ.setdefault("DATABASE_URL", "sqlite://")
 
 from services.api.inventory_models import SKU, StockEntry, StockExit

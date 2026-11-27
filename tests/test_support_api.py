@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import datetime, timezone
+from threading import BoundedSemaphore
 
 import pytest
 from fastapi import HTTPException, Response
@@ -300,7 +301,7 @@ def test_final_output_guard_checks_nested_knowledge_answer_before_http():
     assert result.memory_evaluation.evaluator_called is False
 
 
-def test_conversation_binding_precedes_transaction_local_timeout(monkeypatch):
+def test_query_limits_precede_database_work_and_are_restored_after_binding(monkeypatch):
     events = []
 
     class OrderedStore(FakeMemoryStore):
@@ -317,7 +318,14 @@ def test_conversation_binding_precedes_transaction_local_timeout(monkeypatch):
         events.append("timeout")
         return 5000
 
+    build_access_context = support_route.build_access_context
+
+    def observe_access(_session, member):
+        events.append("access")
+        return build_access_context(_session, member)
+
     monkeypatch.setattr(support_route, "apply_statement_timeout", record_timeout)
+    monkeypatch.setattr(support_route, "build_access_context", observe_access)
     run(query_support(
         SupportQueryRequest(question="Check ticket 482"),
         request(),
@@ -328,7 +336,53 @@ def test_conversation_binding_precedes_transaction_local_timeout(monkeypatch):
         MCPTools(),
         OrderedStore(),
     ))
-    assert events == ["bind", "timeout", "agent"]
+    assert events == ["timeout", "access", "timeout", "bind", "timeout", "timeout", "agent", "timeout"]
+
+
+def test_support_admission_rejects_before_database_work_and_releases_cancelled_slot(monkeypatch):
+    monkeypatch.setattr(support_route, "_SUPPORT_QUERY_SLOTS", BoundedSemaphore(1))
+    connections = []
+
+    class Session(FakeSession):
+        def get_bind(self):
+            connections.append(self)
+            return super().get_bind()
+
+    async def verify():
+        entered = asyncio.Event()
+
+        class WaitingAgent:
+            async def execute(self, _question, **_kwargs):
+                entered.set()
+                await asyncio.Event().wait()
+
+        class WorkingAgent:
+            async def execute(self, _question, **kwargs):
+                return ExternalSupportExecution(kwargs["run_id"], ticket_result())
+
+        def start(session, agent):
+            return query_support(
+                SupportQueryRequest(question="Check ticket 482"),
+                request(), Response(), identity(Role.admin), session,
+                agent, MCPTools(), FakeMemoryStore(),
+            )
+
+        admitted, other = Session(), Session()
+        running = asyncio.create_task(start(admitted, WaitingAgent()))
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=2)
+            with pytest.raises(HTTPException) as error:
+                await start(other, WorkingAgent())
+            assert error.value.status_code == 503
+            assert other not in connections
+        finally:
+            running.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await running
+        assert (await start(other, WorkingAgent())).ticket.status == "ok"
+
+
+    run(verify())
 
 
 def test_support_handler_returns_sanitized_503_with_same_run_id():

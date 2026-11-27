@@ -33,6 +33,11 @@ from services.rag.resilience import QueryDeadline
 
 
 _TOOL_TIMEOUT_RESERVE_SECONDS = 3.0
+_SUPPORT_READ_TOOLS = frozenset({
+    "get_incident",
+    "get_inventory_product",
+    "get_authorized_tracking",
+})
 _LOGGER = logging.getLogger("agent.customer_support.mcp")
 
 
@@ -179,13 +184,9 @@ class SupportMCPTools:
         async with self._load_lock:
             if self._tools is None:
                 tools = await self._client.get_tools(server_name="trackflow")
-                indexed = {tool.name: tool for tool in tools}
-                required = {
-                    "get_incident",
-                    "get_inventory_product",
-                    "get_authorized_tracking",
-                }
-                if not required.issubset(indexed):
+                reads = [tool for tool in tools if tool.name in _SUPPORT_READ_TOOLS]
+                indexed = {tool.name: tool for tool in reads}
+                if indexed.keys() != _SUPPORT_READ_TOOLS or len(reads) != len(indexed):
                     raise RuntimeError("required MCP read tools are unavailable")
                 self._tools = indexed
         return self._tools
@@ -196,6 +197,8 @@ class SupportMCPTools:
         payload: dict[str, object],
         deadline: QueryDeadline,
     ) -> tuple[ToolStatus, dict[str, Any] | None]:
+        if name not in _SUPPORT_READ_TOOLS:
+            return ToolStatus.unavailable, None
         available = deadline.remaining() - _TOOL_TIMEOUT_RESERVE_SECONDS
         if available <= 0:
             return ToolStatus.timeout, None

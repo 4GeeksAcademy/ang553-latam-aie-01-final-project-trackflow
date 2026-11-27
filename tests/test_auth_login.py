@@ -10,7 +10,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 from fastapi.security import OAuth2PasswordRequestForm
-from jose import jwt
+import jwt
 
 from services.api.auth_models import UserCreate, UserUpdate
 from services.api.auth_security import get_current_user

@@ -121,12 +121,13 @@ class FakeConnection(AbstractContextManager):
         elif "CASE" in sql and "tags->>'movement_id'" in sql:
             keys = {
                 (parameters[f"event_type_{i}"], parameters[f"movement_id_{i}"])
-                for i in range(len(parameters) // 2)
+                for i in range(sum(key.startswith("event_type_") for key in parameters))
             }
             rows = [
                 row
                 for row in self.events
-                if (
+                if row["service"] == parameters["operational_service"]
+                and (
                     row["event_type"],
                     row["tags"].get(
                         "order_id" if row["event_type"] == OUTBOUND_ORDER_CREATED
@@ -140,7 +141,8 @@ class FakeConnection(AbstractContextManager):
             rows = [
                 row
                 for row in self.events
-                if row["event_type"] in event_types
+                if row["service"] == parameters["operational_service"]
+                and row["event_type"] in event_types
                 and parameters["week_start"] <= row["timestamp"] < parameters["next_week_start"]
             ]
         return FakeMappings(rows)
@@ -169,13 +171,47 @@ def test_query_selects_only_official_types_with_bound_week_parameters():
 
     assert len(result.events) == 4
     sql, parameters = connection.executed[0]
+    assert "service = :operational_service" in sql
     assert "event_type IN" in sql
     assert parameters == {
+        "operational_service": "api",
         "event_types": sorted(OFFICIAL_EVENT_TYPES),
         "week_start": START,
         "next_week_start": NEXT,
     }
     assert "inventory_stock_insufficient" not in sql
+
+
+def test_operational_source_is_bound_for_weekly_events_and_movement_evidence():
+    current = telemetry_row(1, INBOUND_ORDER_CREATED, START, "movement-qa")
+    previous = telemetry_row(
+        2, INBOUND_ORDER_CREATED, START - timedelta(days=7), "movement-qa"
+    )
+    browser_current = {**current, "id": UUID(int=3), "service": "backoffice"}
+    browser_history = {
+        **previous,
+        "id": UUID(int=4),
+        "timestamp": START - timedelta(days=14),
+        "service": "backoffice",
+    }
+    connection = FakeConnection(
+        events=[current, previous, browser_current, browser_history]
+    )
+
+    result = extract_weekly_inputs(FakeEngine(connection), WEEK)
+
+    assert [row["id"] for row in result.events] == [str(current["id"])]
+    assert {row.telemetry_id for row in result.movement_occurrences} == {
+        str(current["id"]),
+        str(previous["id"]),
+    }
+    assert result.movement_week_evidence[(INBOUND_ORDER_CREATED, "movement-qa")] == (
+        MovementWeekEvidence(frozenset({WEEK, WEEK - timedelta(days=7)}), True)
+    )
+    assert len(connection.executed) == 2
+    for sql, parameters in connection.executed:
+        assert "service = :operational_service" in sql
+        assert parameters["operational_service"] == "api"
 
 
 def test_week_boundaries_are_half_open_start_included_next_monday_excluded():

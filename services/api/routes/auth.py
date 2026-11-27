@@ -194,104 +194,43 @@ async def forgot_password(
     request: Request,
     payload: ForgotPasswordRequest,
 ) -> MessageResponse:
-    """Request a password-reset email.
-
-    Always returns HTTP 200 with a generic message regardless of whether the
-    email exists, to prevent user enumeration.
-
-    If the email exists:
-        - Generates a single-use password-reset JWT.
-        - Persists its ``jti`` hash in TinyDB.
-        - Sends the reset link via Resend.
-
-    If the email does not exist:
-        - Silently returns the generic message (no token, no email).
-        - This prevents leaking account existence.
-
-    If Resend fails for an existing user:
-        - Returns HTTP 500 — a genuine infrastructure error is not hidden.
-    """
-    generic_message = (
-        "If that email address is in our system, "
-        "you will receive a password reset link."
+    """Return a generic response and deliver a reset token when possible."""
+    response = MessageResponse(
+        message=(
+            "If that email address is in our system, "
+            "you will receive a password reset link."
+        )
     )
 
     user = get_user_in_db_by_email(payload.email)
-
     if user is None:
-        _capture_password_reset_requested(
-            request,
-            outcome_class="account_not_found",
-        )
-        return MessageResponse(message=generic_message)
+        _capture_password_reset_requested(request, outcome_class="account_not_found")
+        return response
 
-    # User exists — generate token, persist, and send email.
-    # If email delivery fails, invalidate the token so it cannot be used.
     try:
         token = issue_password_reset_token(user_id=user.id)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Could not send password reset email. Please try again later.",
-        ) from exc
+    except Exception:
+        logger.error("Password reset token issuance failed")
+        return response
 
     try:
         sent = send_password_reset_email(to_email=user.email, reset_token=token)
     except Exception:
-        # Email delivery failed — invalidate the just-issued token.
-        # If invalidation itself fails, treat it as an internal error too.
-        try:
-            invalidate_password_reset_token(token)
-        except Exception as inv_exc:
-            _capture_password_reset_requested(
-                request,
-                outcome_class="delivery_failed",
-                user=user,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Could not send password reset email. Please try again later.",
-            ) from inv_exc
-        _capture_password_reset_requested(
-            request,
-            outcome_class="delivery_failed",
-            user=user,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Could not send password reset email. Please try again later.",
-        )
+        sent = False
 
     if not sent:
-        # Email returned False — invalidate the just-issued token.
+        logger.warning("Password reset email delivery failed")
         try:
             invalidate_password_reset_token(token)
-        except Exception as inv_exc:
-            _capture_password_reset_requested(
-                request,
-                outcome_class="delivery_failed",
-                user=user,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Could not send password reset email. Please try again later.",
-            ) from inv_exc
-        _capture_password_reset_requested(
-            request,
-            outcome_class="delivery_failed",
-            user=user,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Could not send password reset email. Please try again later.",
-        )
+        except Exception:
+            logger.error("Password reset token invalidation failed")
 
     _capture_password_reset_requested(
         request,
-        outcome_class="reset_email_sent",
+        outcome_class="reset_email_sent" if sent else "delivery_failed",
         user=user,
     )
-    return MessageResponse(message=generic_message)
+    return response
 
 
 @router.post("/reset-password", response_model=MessageResponse)

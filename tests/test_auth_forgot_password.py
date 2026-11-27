@@ -7,12 +7,13 @@ import hashlib
 from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from tinydb import Query
 
 from services.api.auth_models import ForgotPasswordRequest, UserCreate
 from services.api.auth_security import decode_password_reset_token
-from services.api import auth_services
+from services.api import auth_services, email_service
 from services.api.auth_services import create_user, validate_password_reset_token
 from services.api.routes import auth as auth_route
 
@@ -121,16 +122,14 @@ def test_forgot_password_invalidates_issued_token_when_email_send_returns_false(
 
     monkeypatch.setattr(auth_route, "send_password_reset_email", fake_send_password_reset_email)
 
-    with pytest.raises(HTTPException) as exc_info:
-        _run(
-            auth_route.forgot_password(
-                _request("550e8400-e29b-41d4-a716-446655440023"),
-                ForgotPasswordRequest(email="forgot.fail.send@example.com")
-            )
+    response = _run(
+        auth_route.forgot_password(
+            _request("550e8400-e29b-41d4-a716-446655440023"),
+            ForgotPasswordRequest(email="forgot.fail.send@example.com")
         )
+    )
 
-    assert exc_info.value.status_code == 500
-    assert exc_info.value.detail == "Could not send password reset email. Please try again later."
+    assert response.message == GENERIC_FORGOT_PASSWORD_MESSAGE
     assert observed["to_email"] == "forgot.fail.send@example.com"
 
     token = observed["reset_token"]
@@ -167,16 +166,14 @@ def test_forgot_password_handles_token_issuance_failure_without_email_or_partial
 
     before_records = auth_services.password_reset_tokens.all()
 
-    with pytest.raises(HTTPException) as exc_info:
-        _run(
-            auth_route.forgot_password(
-                _request("550e8400-e29b-41d4-a716-446655440024"),
-                ForgotPasswordRequest(email="forgot.fail.issue@example.com")
-            )
+    response = _run(
+        auth_route.forgot_password(
+            _request("550e8400-e29b-41d4-a716-446655440024"),
+            ForgotPasswordRequest(email="forgot.fail.issue@example.com")
         )
+    )
 
-    assert exc_info.value.status_code == 500
-    assert exc_info.value.detail == "Could not send password reset email. Please try again later."
+    assert response.message == GENERIC_FORGOT_PASSWORD_MESSAGE
     assert send_invocations == 0
     assert auth_services.password_reset_tokens.all() == before_records
 
@@ -248,16 +245,14 @@ def test_forgot_password_captures_one_delivery_failed_event_for_false(monkeypatc
         lambda token: invalidated.append(token),
     )
 
-    with pytest.raises(HTTPException) as exc_info:
-        _run(
-            auth_route.forgot_password(
-                _request("550e8400-e29b-41d4-a716-446655440027"),
-                ForgotPasswordRequest(email="telemetry.false@example.com"),
-            )
+    response = _run(
+        auth_route.forgot_password(
+            _request("550e8400-e29b-41d4-a716-446655440027"),
+            ForgotPasswordRequest(email="telemetry.false@example.com"),
         )
+    )
 
-    assert exc_info.value.status_code == 500
-    assert exc_info.value.detail == "Could not send password reset email. Please try again later."
+    assert response.message == GENERIC_FORGOT_PASSWORD_MESSAGE
     assert len(invalidated) == 1
     assert len(captured) == 1
     assert captured[0].properties == {"request_outcome_class": "delivery_failed"}
@@ -282,15 +277,14 @@ def test_forgot_password_captures_one_delivery_failed_event_for_exception(monkey
         lambda token: invalidated.append(token),
     )
 
-    with pytest.raises(HTTPException) as exc_info:
-        _run(
-            auth_route.forgot_password(
-                _request("550e8400-e29b-41d4-a716-446655440028"),
-                ForgotPasswordRequest(email="telemetry.exception@example.com"),
-            )
+    response = _run(
+        auth_route.forgot_password(
+            _request("550e8400-e29b-41d4-a716-446655440028"),
+            ForgotPasswordRequest(email="telemetry.exception@example.com"),
         )
+    )
 
-    assert exc_info.value.status_code == 500
+    assert response.message == GENERIC_FORGOT_PASSWORD_MESSAGE
     assert len(invalidated) == 1
     assert len(captured) == 1
     assert captured[0].properties == {"request_outcome_class": "delivery_failed"}
@@ -313,15 +307,14 @@ def test_forgot_password_invalidation_failure_does_not_duplicate_event(monkeypat
         lambda token: (_ for _ in ()).throw(RuntimeError("invalidation failure")),
     )
 
-    with pytest.raises(HTTPException) as exc_info:
-        _run(
-            auth_route.forgot_password(
-                _request("550e8400-e29b-41d4-a716-446655440029"),
-                ForgotPasswordRequest(email="telemetry.invalidate@example.com"),
-            )
+    response = _run(
+        auth_route.forgot_password(
+            _request("550e8400-e29b-41d4-a716-446655440029"),
+            ForgotPasswordRequest(email="telemetry.invalidate@example.com"),
         )
+    )
 
-    assert exc_info.value.status_code == 500
+    assert response.message == GENERIC_FORGOT_PASSWORD_MESSAGE
     assert len(captured) == 1
     assert captured[0].properties == {"request_outcome_class": "delivery_failed"}
 
@@ -336,15 +329,14 @@ def test_forgot_password_token_issuance_failure_captures_no_event(monkeypatch) -
         lambda *, user_id: (_ for _ in ()).throw(RuntimeError("token failure")),
     )
 
-    with pytest.raises(HTTPException) as exc_info:
-        _run(
-            auth_route.forgot_password(
-                _request("550e8400-e29b-41d4-a716-446655440030"),
-                ForgotPasswordRequest(email="telemetry.issue@example.com"),
-            )
+    response = _run(
+        auth_route.forgot_password(
+            _request("550e8400-e29b-41d4-a716-446655440030"),
+            ForgotPasswordRequest(email="telemetry.issue@example.com"),
         )
+    )
 
-    assert exc_info.value.status_code == 500
+    assert response.message == GENERIC_FORGOT_PASSWORD_MESSAGE
     assert len(captured) == 0
 
 
@@ -363,3 +355,42 @@ def test_forgot_password_preserves_response_when_telemetry_capture_fails(monkeyp
     )
 
     assert response.message == GENERIC_FORGOT_PASSWORD_MESSAGE
+
+
+def test_forgot_password_public_http_response_and_provider_logs(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    registered_email = "forgot.http@example.com"
+    create_user(UserCreate(email=registered_email, password="StrongPass123"))
+    monkeypatch.setattr(email_service, "RESEND_API_KEY", "synthetic-resend-key")
+    monkeypatch.setattr(email_service, "FRONTEND_URL", "https://trackflow.example")
+    monkeypatch.setattr(email_service.resend, "api_key", None)
+    delivered: list[dict] = []
+
+    def send(payload: dict) -> dict[str, str]:
+        delivered.append(payload)
+        if len(delivered) == 2:
+            raise RuntimeError(f"provider diagnostic: {payload['to']} {payload['text']}")
+        return {"id": "synthetic-provider-message-id"}
+
+    monkeypatch.setattr(email_service.resend.Emails, "send", send)
+    app = FastAPI()
+    app.include_router(auth_route.router)
+    with TestClient(app) as client:
+        responses = [
+            client.post("/auth/forgot-password", json={"email": email})
+            for email in (registered_email, registered_email, "missing.http@example.com")
+        ]
+
+    assert len(delivered) == 2
+    for response in responses:
+        assert response.status_code == 200
+        assert response.json() == {"message": GENERIC_FORGOT_PASSWORD_MESSAGE}
+
+    accepted, failed = auth_services.password_reset_tokens.all()
+    assert accepted["used"] is False
+    assert failed["used"] is True
+    assert "Password reset email delivery failed" in caplog.text
+    assert "provider diagnostic" not in caplog.text
+    assert registered_email not in caplog.text
+    assert "reset-password?token=" not in caplog.text

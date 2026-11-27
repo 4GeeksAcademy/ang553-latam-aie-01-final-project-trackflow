@@ -23,6 +23,7 @@ from sqlmodel import Session
 from starlette.websockets import WebSocketDisconnect
 
 from pipelines.database_identity import sqlalchemy_postgresql_url
+from services.api import auth_security
 from services.api.access_control import AccessContext
 from services.api.auth_models import Role
 from services.api.chat.models import chat_messages
@@ -292,7 +293,7 @@ def test_ws_qa_units_commit_abort_reconnect_and_revalidate(chat_db, monkeypatch)
         monkeypatch.setattr(module, "authenticate_support_identity", verify)
     monkeypatch.setattr(router, "authentic_support_producer", producer_for)
     monkeypatch.setattr(router, "_PUBSUB", ObservedPubSub())
-    monkeypatch.setattr(router, "_find_user_by_id", lambda user_id: actor.user if user_id == USER else None)
+    monkeypatch.setattr(auth_security, "_find_user_by_id", lambda user_id: actor.user if user_id == USER else None)
     app = FastAPI()
     app.include_router(router.router)
     app.dependency_overrides[router.get_current_user] = lambda: actor.user
@@ -455,7 +456,7 @@ def test_websocket_knowledge_replays_only_to_current_authorized_owner(chat_db, m
     monkeypatch.setattr(coordinator, "open_db_session", open_session)
     monkeypatch.setattr(router, "open_db_session", open_session)
     monkeypatch.setattr(router, "_PUBSUB", SessionPubSub(queue_size=16))
-    monkeypatch.setattr(router, "_find_user_by_id", lambda user_id: identities[user_id].user)
+    monkeypatch.setattr(auth_security, "_find_user_by_id", lambda user_id: identities[user_id].user)
     monkeypatch.setattr(router, "authenticate_support_identity", verify_test_oidc)
     monkeypatch.setattr(router, "authentic_support_producer", fake_producer)
     app = FastAPI()
@@ -712,7 +713,7 @@ def test_websocket_agent_abort_and_reconnect_with_postgres_and_controlled_sse(
     for module in (coordinator, producer, router):
         monkeypatch.setattr(module, "open_db_session", open_session)
     monkeypatch.setattr(router, "_PUBSUB", SessionPubSub(queue_size=16))
-    monkeypatch.setattr(router, "_find_user_by_id", lambda user_id: user if user_id == user.id else None)
+    monkeypatch.setattr(auth_security, "_find_user_by_id", lambda user_id: user if user_id == user.id else None)
     monkeypatch.setattr(router, "authenticate_support_identity", verify_test_oidc)
     monkeypatch.setattr(producer, "get_external_support_agent", lambda: agent)
     monkeypatch.setattr(producer, "get_support_mcp_tools", lambda _identity: MCPTools())
@@ -1020,7 +1021,7 @@ def test_experimental_original_deltas_persist_before_fanout_and_survive_abort(
     monkeypatch.setattr(coordinator, "open_db_session", open_session)
     monkeypatch.setattr(router, "open_db_session", open_session)
     monkeypatch.setattr(router, "_PUBSUB", ObservePersistenceBeforeFanout())
-    monkeypatch.setattr(router, "_find_user_by_id", lambda user_id: identities[user_id].user)
+    monkeypatch.setattr(auth_security, "_find_user_by_id", lambda user_id: identities[user_id].user)
     monkeypatch.setattr(router, "authenticate_support_identity", lambda credentials: identities[credentials.credentials])
     monkeypatch.setattr(router, "authentic_support_producer", experimental_producer)
     app = FastAPI()

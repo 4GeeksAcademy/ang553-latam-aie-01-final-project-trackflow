@@ -30,7 +30,7 @@ if str(ROOT) not in sys.path:
 
 # The application requires this at import time.  This value is process-local,
 # deliberately fake, and is never printed or written to the repository.
-os.environ.setdefault("JWT_SECRET_KEY", "benchmark-only-secret")
+os.environ.setdefault("JWT_SECRET_KEY", "trackflow-isolated-synthetic-jwt-key-only-3b")
 
 from httpx import ASGITransport, AsyncClient
 from sqlmodel import Session, SQLModel, create_engine

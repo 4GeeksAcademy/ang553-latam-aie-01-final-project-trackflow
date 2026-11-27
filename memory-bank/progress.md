@@ -1,5 +1,18 @@
 # Progress: TrackFlow
 
+## OWASP 2021 · Bloque 2A · 2026-11-26
+
+- La lectura del reporte operativo de telemetría exige una cuenta activa con
+  rol `admin` o `manager`. Los cuatro agregados usan eventos internos
+  `service=api`. La ingestión del navegador conserva su contrato y etiqueta
+  sus señales como `backoffice`.
+- El análisis ad hoc de incidencias conserva, por proceso y con cupo acotado,
+  el último resultado exitoso de cada usuario autenticado. La descarga mantiene
+  su formato y nombre. En despliegues con múltiples procesos, el resultado
+  sigue dependiendo del proceso que lo analizó.
+- La primera pasada focalizada verificó 130 pruebas con fixtures aislados.
+  Aceptación humana y validación del entorno desplegado pendientes.
+
 ## TrackFlow MCP Server — implementation gates A–F
 
 - Gate A **PASS**: the root runtime pins `langchain-mcp-adapters==0.3.2` with
@@ -2829,3 +2842,39 @@ revisión y autorización arquitectónica.
   turno convencional y la recuperación tras recargar. PostgreSQL
   confirmó la proyección de cobertura del snapshot QA. Se mantiene
   `IMPLEMENTACION_PARCIAL_VALIDADA`.
+
+### OWASP Bloque 2C: acceso al catálogo de proveedores
+
+- Los dos alias del catálogo aplican la misma política. Admin conserva CRUD completo, manager conserva lectura completa, alta y cambios de tarifa y estado, y user recibe solo información básica y no puede mutar el catálogo.
+- Backoffice adapta los datos visibles y los controles al rol y reinicia el estado del catálogo al cambiar de identidad o rol.
+- QA aislado: 300 pruebas de backend aprobadas, incluidas 48 combinaciones de rol, operación y alias. El typecheck de Backoffice pasó. La aceptación humana en navegador queda pendiente.
+
+
+### OWASP Bloque 3B: autenticación local y runtime de API
+
+- La API estándar instala un lock propio con versiones y hashes verificados y fija Python y uv por digest. Conserva bcrypt y pasó registro, login y el E2E RFP con Redis y el worker de referencia.
+- HTTP, SSE y WebSocket aplican vencimiento y propósito consistentes a JWT local. La configuración valida la clave HMAC al iniciar. OIDC conserva su contrato independiente.
+- La recuperación unifica el estado y cuerpo públicos ante fallo de correo, invalida el enlace emitido cuando falla la entrega y registra diagnósticos sin datos del proveedor. La evidencia y los riesgos residuales figuran en el expediente privado.
+
+
+### OWASP Bloque 3C: aseguramiento de controles agénticos
+
+- CX conserva tres lecturas MCP y Knowledge valida la síntesis antes de publicarla. El catálogo general MCP conserva sus operaciones y scopes separados.
+- Support acota consultas y trazas activas por proceso y aplica timeout SQL durante la preparación y revalidación. Se verificaron cancelación, liberación de capacidad y las regresiones de transporte.
+- QA aislado comprobó el corpus canónico, memoria y tracking, y el HITL persistente de RFP. El expediente registra versiones, conteos y límites de la validación.
+
+
+### OWASP Bloque 3D: cierre de dependencias
+
+- JWT local usa PyJWT y conserva la política HMAC de 3B. Los locks de API y del runtime raíz retiran python-jose y sus transitivas obsoletas. Se actualizaron transitivas Python y npm de forma focal.
+- Worker, scheduler e interfaces fijan las bases por digest. Se actualizan el compilador Go del scheduler, Qdrant y nginx de QA.
+- El expediente privado recoge auditorías anteriores y posteriores, versiones efectivas, regresiones y condiciones de los avisos pendientes.
+
+
+### OWASP Bloque 4A: hardening de contenedores y checkpoint
+
+- El expediente privado conserva el checkpoint selectivo verificado antes de los cambios.
+- Interfaces ejecuta sin root y el perfil de despliegue monta solo cachés temporales para Next.js. Desarrollo conserva hot reload con UID/GID ajustable para el bind.
+- El overlay de despliegue restringe puertos y separa la red de datos. La API conserva estado TinyDB, artefactos de RFP y checkpoints HITL en volúmenes dedicados con código de solo lectura.
+- El scheduler conserva las rutas operativas escribibles y su crontab queda fuera del alcance de escritura del proceso.
+- Los builds exactos de worker y scheduler aprobaron en QA con el frontend externo de BuildKit. El expediente documenta las regresiones y las verificaciones que requieren infraestructura autorizada. El hardening del host y la aceptación humana quedan pendientes.

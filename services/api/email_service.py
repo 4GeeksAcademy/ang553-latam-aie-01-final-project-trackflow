@@ -54,7 +54,7 @@ def send_password_reset_email(
     reset_url = f"{base_url.rstrip('/')}/reset-password?token={reset_token}"
 
     try:
-        response = resend.Emails.send({
+        resend.Emails.send({
             "from": "TrackFlow <onboarding@resend.dev>",
             "to": [to_email],
             "subject": "Reset your TrackFlow password",
@@ -76,8 +76,7 @@ def send_password_reset_email(
                 f"<p>— TrackFlow Team</p>"
             ),
         })
-        _LOGGER.info("Password-reset email sent successfully (Resend id=%s)", response.get("id"))
+        _LOGGER.info("Password-reset email accepted by provider")
         return True
     except Exception:
-        _LOGGER.exception("Failed to send password-reset email")
         return False

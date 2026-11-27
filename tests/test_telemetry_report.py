@@ -9,6 +9,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from services.api.auth_models import Role, UserInDB
+from services.api.auth_security import create_access_token
 from services.api.cache import TTLCache
 from services.api.database import get_db
 from services.api.routes import telemetry
@@ -43,7 +45,9 @@ def make_report(session, start_date, end_date):
 
 
 @pytest.fixture
-def report_env(monkeypatch):
+def report_env(monkeypatch, isolated_auth_db):
+    manager = UserInDB(email="manager@example.test", hashed_password="test", role=Role.manager)
+    isolated_auth_db.users.insert(manager.model_dump(mode="json"))
     clock = Mock(return_value=0.0)
     cache = TTLCache[dict](ttl_seconds=60, clock=clock)
     build = Mock(side_effect=make_report)
@@ -57,7 +61,29 @@ def report_env(monkeypatch):
     assert get_db is telemetry.get_db
     app.dependency_overrides[get_db] = lambda: session
     with TestClient(app, raise_server_exceptions=False) as client:
+        client.headers["Authorization"] = f"Bearer {create_access_token(manager.id)}"
         yield client, session, build, dates, clock, cache
+
+
+def test_report_checks_current_role_on_cache_hits(report_env, isolated_auth_db):
+    client, _, build, _, _, _ = report_env
+    report = client.get("/telemetry/report")
+    assert report.status_code == 200
+    assert report.headers["cache-control"] == "private, no-store"
+
+    del client.headers["Authorization"]
+    assert client.get("/telemetry/report").status_code == 401
+
+    for role, expected_status in ((Role.user, 403), (Role.admin, 200)):
+        user = UserInDB(email=f"{role.value}@example.test", hashed_password="test", role=role)
+        isolated_auth_db.users.insert(user.model_dump(mode="json"))
+        response = client.get(
+            "/telemetry/report",
+            headers={"Authorization": f"Bearer {create_access_token(user.id)}"},
+        )
+        assert response.status_code == expected_status
+
+    build.assert_called_once()
 
 
 def test_production_cache_ttl():

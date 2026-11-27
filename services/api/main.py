@@ -12,8 +12,11 @@ import logging
 import os
 import tempfile
 import time
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from pathlib import Path
+from threading import Lock
+from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
@@ -24,6 +27,7 @@ from pydantic import BaseModel
 from scripts.incidents.analyzer import analyze_records, export_results_csv, load_csv
 from scripts.incidents import CsvLoadError
 from services.api.auth_database import AuthStoreUnavailable
+from services.api.auth_models import UserInDB
 from services.api.auth_security import get_current_user
 from services.api.database import create_db_and_tables
 from services.api.routes.auth import router as auth_router
@@ -154,14 +158,6 @@ async def _auth_store_unavailable(_request: Request, _error: AuthStoreUnavailabl
 
 _ALLOWED_EXTENSIONS = frozenset({".csv"})
 
-# ── In-memory storage for the last successful analysis ───────────────────────
-#
-# NOTE: This module-level variable is intentionally simple.
-# Limitations:
-#   - Lost on server restart.
-#   - Not shared across multiple workers/processes.
-#   - Suitable only for development and single‑worker deployments.
-# Future iterations may replace this with persistent storage (DB, Redis, etc.).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_DEV_ORIGINS,
@@ -200,7 +196,20 @@ async def log_request_timing(request: Request, call_next):
     )
     return response
 
-_last_result: dict | None = None
+# The ad hoc upload has no tenant or shared-resource identifier. Keep the
+# last result per active principal on this process with bounded retention.
+_MAX_INCIDENT_ANALYSES = 256
+_incident_results: OrderedDict[str, dict] = OrderedDict()
+_incident_results_lock = Lock()
+
+
+def _store_incident_result(user_id: str, result: dict) -> None:
+    with _incident_results_lock:
+        _incident_results[user_id] = result
+        _incident_results.move_to_end(user_id)
+        if len(_incident_results) > _MAX_INCIDENT_ANALYSES:
+            _incident_results.popitem(last=False)
+
 
 app.include_router(suppliers_router)
 app.include_router(
@@ -237,9 +246,9 @@ async def health() -> HealthResponse:
 @app.post(
     "/api/incidents/analyze",
     response_model=IncidentAnalysisResponse,
-    dependencies=[Depends(get_current_user)],
 )
 async def analyze_incidents(
+    user: Annotated[UserInDB, Depends(get_current_user)],
     file: UploadFile | None = File(None),
 ) -> IncidentAnalysisResponse:
     """
@@ -293,9 +302,8 @@ async def analyze_incidents(
         records = load_csv(tmp_path)
         result = analyze_records(records)
 
-        # Store the aggregate result for later export.  Only on success.
-        global _last_result  # noqa: PLW0603
-        _last_result = result
+        # Publish only successful aggregates. Treat published results as read-only.
+        _store_incident_result(user.id, result)
     except CsvLoadError as e:
         logger.warning("CSV load error: %s", e)
         raise HTTPException(
@@ -339,18 +347,18 @@ async def analyze_incidents(
             },
         }
     },
-    dependencies=[Depends(get_current_user)],
 )
-async def export_results() -> Response:
+async def export_results(user: Annotated[UserInDB, Depends(get_current_user)]) -> Response:
     """
     Download the last successful analysis as a CSV file.
 
     Returns ``section,metric,value`` rows with aggregate metrics only.
     No individual records, PII, or sensitive data are included.
     """
-    global _last_result  # noqa: PLW0603
+    with _incident_results_lock:
+        result = _incident_results.get(user.id)
 
-    if _last_result is None:
+    if result is None:
         raise HTTPException(
             status_code=404,
             detail="No analysis results available. "
@@ -364,7 +372,7 @@ async def export_results() -> Response:
         ) as tmp:
             tmp_path = tmp.name
 
-        export_results_csv(_last_result, tmp_path)
+        export_results_csv(result, tmp_path)
 
         with open(tmp_path, encoding="utf-8") as f:
             csv_content = f.read()
@@ -378,7 +386,8 @@ async def export_results() -> Response:
         content=csv_content,
         media_type="text/csv",
         headers={
-            "Content-Disposition": 'attachment; filename="results.csv"'
+            "Content-Disposition": 'attachment; filename="results.csv"',
+            "Cache-Control": "private, no-store",
         },
     )
 

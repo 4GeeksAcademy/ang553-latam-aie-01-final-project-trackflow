@@ -1,13 +1,13 @@
 # syntax=docker/dockerfile:1
 
 # Build the pinned scheduler binary with Go's module checksum verification.
-FROM golang:1.23-alpine AS supercronic-builder
+FROM golang:1.26.11-alpine@sha256:ecb67f987aa1a57794c91d19ade7ae0209f2f0f5496aaef9e6ae85ddf92d02ab AS supercronic-builder
 
 ARG SUPERCRONIC_VERSION=v0.2.33
 RUN CGO_ENABLED=0 GOBIN=/out go install github.com/aptible/supercronic@${SUPERCRONIC_VERSION}
 
 
-FROM python:3.12-slim AS runtime
+FROM python:3.12-slim@sha256:191083cdf6c7bda8c76158983163ead5d5cf7b77cf3033e805bb0f5296f51b4b AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -22,7 +22,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY --from=supercronic-builder /out/supercronic /usr/local/bin/supercronic
-COPY --from=ghcr.io/astral-sh/uv:0.12.5 /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.12.5@sha256:e85be844203885286c60ffad8a858d48afb6c5a5c237ca0e67f12e74b8f174b1 /uv /uvx /usr/local/bin/
 
 # Install the complete Python runtime declared by the project, including
 # Prefect, before dropping privileges. Only scheduler runtime sources follow.
@@ -41,9 +41,10 @@ RUN --mount=type=bind,source=services,target=/source-services,ro \
     && useradd --uid 10001 --gid trackflow --create-home --shell /usr/sbin/nologin trackflow \
     && mkdir -p /app/data/raw /app/infra/scheduler /app/services/api/data \
     && chown -R trackflow:trackflow \
-        /app/data/raw /app/infra/scheduler /app/services/api/data
+        /app/data/raw /app/services/api/data
 
-COPY --chown=trackflow:trackflow infra/scheduler/crontab /app/infra/scheduler/crontab
+# The runtime can read the schedule but cannot replace its jobs.
+COPY --chown=0:0 --chmod=0444 infra/scheduler/crontab /app/infra/scheduler/crontab
 
 USER 10001:10001
 

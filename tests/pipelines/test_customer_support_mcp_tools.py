@@ -100,7 +100,7 @@ def test_graph_has_no_legacy_operational_lookup_fallback() -> None:
     assert "graph.invoke(" not in source
 
 
-def test_support_adapter_projects_both_mcp_read_tools_and_reuses_discovery() -> None:
+def test_support_adapter_keeps_only_its_three_reads_and_reuses_discovery() -> None:
     now = datetime(2026, 11, 10, tzinfo=timezone.utc).isoformat()
     session = Session(
         {
@@ -142,6 +142,9 @@ def test_support_adapter_projects_both_mcp_read_tools_and_reuses_discovery() -> 
             converted(session, "get_incident"),
             converted(session, "get_inventory_product"),
             converted(session, "get_authorized_tracking"),
+            converted(session, "create_incident"),
+            converted(session, "update_incident_status"),
+            converted(session, "list_inventory_products"),
         ]
     )
     adapter = SupportMCPTools(
@@ -151,6 +154,9 @@ def test_support_adapter_projects_both_mcp_read_tools_and_reuses_discovery() -> 
     )
 
     async def scenario():
+        denied = await adapter._invoke("create_incident", {}, QueryDeadline(20))
+        assert denied == (ToolStatus.unavailable, None)
+        assert client.calls == 0
         ticket = await adapter.lookup_ticket(
             TicketLookupInput("TRF-000001"), QueryDeadline(20)
         )
@@ -167,12 +173,36 @@ def test_support_adapter_projects_both_mcp_read_tools_and_reuses_discovery() -> 
     assert product.status is ToolStatus.ok and product.current_stock == 4
     assert tracking.status is ToolStatus.ok
     assert tracking.dispatch_state is DispatchState.recorded_dispatch
+    assert adapter._tools is not None
+    assert adapter._tools.keys() == {
+        "get_incident", "get_inventory_product", "get_authorized_tracking",
+    }
     assert client.calls == 1
     assert session.calls == [
         ("get_incident", {"input": {"incident_id": "TRF-000001"}}),
         ("get_inventory_product", {"input": {"product_id": 17}}),
         ("get_authorized_tracking", {"input": {"tracking_number": "45821"}}),
     ]
+
+
+@pytest.mark.parametrize("replacement", [(), ("get_authorized_tracking", "get_incident")])
+def test_support_adapter_requires_one_definition_per_read(replacement) -> None:
+    session = Session({})
+    client = Client([
+        converted(session, name)
+        for name in ("get_incident", "get_inventory_product", *replacement)
+    ])
+    adapter = SupportMCPTools(
+        SecretStr("subject-token"),
+        SupportMCPSettings("http://127.0.0.1:18084/mcp", 2),
+        client=client,
+    )
+
+    result = asyncio.run(adapter.lookup_ticket(TicketLookupInput("TRF-000001"), QueryDeadline(20)))
+
+    assert result.status is ToolStatus.unavailable
+    assert not session.calls
+    assert adapter._tools is None
 
 
 def _adapter_for_structured_results(incident, product, tracking=None):

@@ -1,7 +1,7 @@
 """
 TrackFlow Auth security — password hashing and JWT utilities.
 
-Uses bcrypt via passlib for password operations and python-jose for JWT.
+Uses bcrypt via passlib for password operations and PyJWT for JWT.
 """
 
 from __future__ import annotations
@@ -11,9 +11,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
+import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
+from jwt.exceptions import InvalidTokenError
 from passlib.hash import bcrypt
 
 from services.api.auth_database import auth_storage_access, users as _users_db
@@ -121,6 +122,34 @@ def create_password_reset_token(sub: str) -> str:
     return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
 
+def _valid_expiration(value: object) -> bool:
+    return type(value) is int and _now_utc().timestamp() < value
+
+
+def _decode_local_token(token: str, purpose: str) -> dict:
+    try:
+        payload = jwt.decode(
+            token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM],
+            options={"verify_exp": False, "verify_iat": False},
+        )
+        # Local tokens use iat as optional metadata, not as a second nbf.
+        if "iat" in payload:
+            int(payload["iat"])
+    except (TypeError, ValueError, OverflowError):
+        raise InvalidTokenError("Token claims are invalid") from None
+    # These claims belong to other token contexts, even when empty.
+    if "aud" in payload or "at_hash" in payload:
+        raise InvalidTokenError("Token claims are invalid")
+    if not _valid_expiration(payload.get("exp")):
+        raise InvalidTokenError("Token expiration is invalid")
+    subject = payload.get("sub")
+    if not isinstance(subject, str) or not subject:
+        raise InvalidTokenError("Token subject is invalid")
+    if payload.get("type") != purpose:
+        raise InvalidTokenError("Token purpose is invalid")
+    return payload
+
+
 def decode_password_reset_token(token: str) -> dict[str, str]:
     """Decode and validate a password-reset JWT.
 
@@ -133,13 +162,12 @@ def decode_password_reset_token(token: str) -> dict[str, str]:
         The decoded payload dict with at least ``sub``, ``jti``, and ``type``.
 
     Raises:
-        JWTError: If the token is invalid, expired, or not a password-reset token.
+        InvalidTokenError: If the token is invalid, expired, or not a password-reset token.
     """
-    payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
-    if payload.get("type") != "password_reset":
-        raise JWTError("Token is not a password-reset token")
-    if "jti" not in payload:
-        raise JWTError("Token is missing required jti claim")
+    payload = _decode_local_token(token, "password_reset")
+    jti = payload.get("jti")
+    if not isinstance(jti, str) or not jti:
+        raise InvalidTokenError("Token is missing a valid jti claim")
     return payload
 
 
@@ -165,20 +193,12 @@ def _unauthorized() -> HTTPException:
         headers={"WWW-Authenticate": "Bearer"},
     )
 
+
 def _decode_access_token(token: str) -> dict:
     try:
-        payload = jwt.decode(
-            token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM]
-        )
-        sub = payload.get("sub")
-        if not isinstance(sub, str) or not sub:
-            raise _unauthorized()
-        token_type = payload.get("type")
-        if token_type not in (None, "access"):
-            raise _unauthorized()
-    except (JWTError, TypeError, ValueError):
+        return _decode_local_token(token, "access")
+    except InvalidTokenError:
         raise _unauthorized() from None
-    return payload
 
 
 def get_current_user(token: Annotated[str, Depends(_oauth2_scheme)]) -> UserInDB:
@@ -194,9 +214,12 @@ class ExpiringAccessSession:
     user_id: str
     expires_at: int
 
-    def current_user(self) -> UserInDB:
-        if datetime.now(timezone.utc).timestamp() >= self.expires_at:
+    def require_unexpired(self) -> None:
+        if not _valid_expiration(self.expires_at):
             raise _unauthorized()
+
+    def current_user(self) -> UserInDB:
+        self.require_unexpired()
         user = _find_user_by_id(self.user_id)
         if user is None or not user.is_active:
             raise _unauthorized()
@@ -208,7 +231,4 @@ def get_expiring_access_session(
 ) -> ExpiringAccessSession:
     """Verify a JWT whose explicit expiration bounds a long-lived response."""
     payload = _decode_access_token(token)
-    expiry = payload.get("exp")
-    if type(expiry) is not int:
-        raise _unauthorized()
-    return ExpiringAccessSession(user_id=payload["sub"], expires_at=expiry)
+    return ExpiringAccessSession(user_id=payload["sub"], expires_at=payload["exp"])

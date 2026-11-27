@@ -50,6 +50,7 @@ def test_valid_telemetry_batch_is_bulk_stored() -> None:
     assert response.json() == {"received": 2, "stored": 2, "rejected": 0}
     bulk_insert.assert_called_once()
     assert len(bulk_insert.call_args.args[1]) == 2
+    assert {row["service"] for row in bulk_insert.call_args.args[1]} == {"backoffice"}
 
 
 def test_mixed_telemetry_batch_stores_only_valid_events() -> None:

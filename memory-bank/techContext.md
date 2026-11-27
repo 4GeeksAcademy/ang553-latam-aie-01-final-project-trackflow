@@ -237,7 +237,7 @@
 - **FastAPI** como framework web, servido con **Uvicorn**.
 - **TinyDB** como base de datos embebida (documentos JSON).
 - **passlib (bcrypt)** para hashing de contraseñas.
-- **python-jose** para generacion y validacion de JWTs.
+- **PyJWT** para generar y validar JWT locales. La política OIDC sigue siendo independiente.
 
 ### Persistencia de autenticacion
 - Usuarios y perfiles almacenados en `services/api/data/auth.json`.
@@ -404,8 +404,9 @@
 - Los nuevos access tokens JWT deben incluir `type: "access"`.
 - Los tokens de recovery/reset deben incluir `type: "password_reset"`.
 - `get_current_user` valida el proposito del token antes de aceptar sesion.
-- Por compatibilidad temporal, access tokens legacy sin claim `type` se aceptan como sesion valida.
-- Tokens con otros `type` (por ejemplo `password_reset`) se rechazan para autenticacion de sesion.
+- HTTP, SSE y WebSocket requieren un access token firmado con propósito `access`, sujeto y expiración numérica entera vigente. El usuario conserva la posibilidad de iniciar sesión de nuevo si tenía un token legacy.
+- La configuración local acepta HS256, HS384 o HS512 con una clave simétrica aleatoria de al menos 32, 48 o 64 bytes respectivamente. El servicio rechaza valores vacíos, placeholders y patrones triviales. Generar una clave independiente para cada entorno. La política también se aplica a QA con claves sintéticas.
+- Verificar la configuración antes del despliegue. Una rotación o un cambio de algoritmo invalida sesiones locales y enlaces de recuperación firmados con la configuración anterior. OIDC usa su propio emisor y configuración.
 - Motivo: evitar reutilizacion cruzada de tokens (por ejemplo, usar tokens de recuperacion de password como credenciales de acceso).
 
 ## Testing automatizado (decision tecnica reutilizable)

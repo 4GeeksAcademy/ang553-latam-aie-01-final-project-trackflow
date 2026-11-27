@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
-from jose import jwt
+import jwt
 from tinydb import Query
 
 from services.api import auth_services

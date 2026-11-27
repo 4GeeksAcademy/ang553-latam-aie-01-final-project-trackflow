@@ -22,6 +22,7 @@ from agents.customer_support.guardrail_contracts import (
 from services.api.agent_memory.contracts import MemoryScope, ProposalStatus
 from services.api.agent_memory.service import MemoryPolicyViolation, canonical_key_for
 from services.rag.chunking import DOCUMENT_PLANS
+from services.rag.contracts import QueryResult
 from services.rag.knowledge_coverage import (
     INSUFFICIENT_KNOWLEDGE,
     INSUFFICIENT_KNOWLEDGE_EN,
@@ -319,6 +320,12 @@ def _validate_knowledge(
         ):
             return _security_failure()
     return _safe()
+
+
+def validate_knowledge_result(result: QueryResult) -> OutputValidationResult:
+    """Check standalone Knowledge output before publication."""
+    status = "not_found" if result.insufficient_context else "ok"
+    return _validate_knowledge(result, status, http=False)
 
 
 def validate_memory_proposal(

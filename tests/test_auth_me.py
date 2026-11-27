@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
-from jose import jwt
+import jwt
 
 from services.api.auth_models import AuthMeResponse, UserCreate, UserUpdate
 from services.api.auth_security import create_access_token, get_current_user

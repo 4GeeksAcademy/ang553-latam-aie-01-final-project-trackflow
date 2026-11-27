@@ -5,6 +5,7 @@ import { AuthGuard } from "@/components/layout/AuthGuard";
 import { BackofficeHeader } from "@/components/layout/BackofficeHeader";
 import { SupplierForm } from "@/components/suppliers/SupplierForm";
 import { SupplierList } from "@/components/suppliers/SupplierList";
+import { useAuth } from "@/lib/AuthContext";
 import {
   ApiError,
   createSupplier,
@@ -33,6 +34,21 @@ function getErrorMessage(error: unknown, fallback: string): string {
 }
 
 export default function SuppliersPage() {
+  const { user } = useAuth();
+
+  return (
+    <AuthGuard>
+      {user && (
+        <SupplierCatalog
+          key={JSON.stringify([user.id, user.role])}
+          canManage={user.role === "admin" || user.role === "manager"}
+        />
+      )}
+    </AuthGuard>
+  );
+}
+
+function SupplierCatalog({ canManage }: { canManage: boolean }) {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -69,6 +85,7 @@ export default function SuppliersPage() {
   }, [fetchSuppliers]);
 
   const handleCreate = async (payload: SupplierCreate): Promise<boolean> => {
+    if (!canManage) return false;
     setIsCreating(true);
     setCreateError(null);
 
@@ -85,6 +102,7 @@ export default function SuppliersPage() {
   };
 
   const handleUpdateRate = async (id: number, rate: number) => {
+    if (!canManage) return;
     setActiveRateMutationId(id);
     setRowErrorById((prev) => ({ ...prev, [id]: undefined }));
 
@@ -102,6 +120,7 @@ export default function SuppliersPage() {
   };
 
   const handleToggleStatus = async (supplier: Supplier) => {
+    if (!canManage) return;
     const nextStatus = supplier.status === "active" ? "suspended" : "active";
 
     setActiveStatusMutationId(supplier.id);
@@ -121,7 +140,6 @@ export default function SuppliersPage() {
   };
 
   return (
-    <AuthGuard>
     <div className="min-h-screen">
       <BackofficeHeader />
 
@@ -132,8 +150,9 @@ export default function SuppliersPage() {
           </p>
           <h2 className="mt-3 text-3xl font-bold text-white">Suppliers</h2>
           <p className="mt-3 max-w-3xl text-slate-300">
-            Manage operational suppliers for TrackFlow, including onboarding, filtering,
-            rate updates, and status changes.
+            {canManage
+              ? "Manage operational suppliers for TrackFlow, including onboarding, filtering, rate updates, and status changes."
+              : "Browse TrackFlow suppliers by country and category."}
           </p>
         </section>
 
@@ -171,9 +190,12 @@ export default function SuppliersPage() {
           </div>
         </section>
 
-        <SupplierForm onCreate={handleCreate} isSubmitting={isCreating} errorMessage={createError} />
+        {canManage && (
+          <SupplierForm onCreate={handleCreate} isSubmitting={isCreating} errorMessage={createError} />
+        )}
 
         <SupplierList
+          canManage={canManage}
           suppliers={suppliers}
           isLoading={isLoading}
           errorMessage={loadError}
@@ -185,6 +207,5 @@ export default function SuppliersPage() {
         />
       </main>
     </div>
-    </AuthGuard>
   );
 }

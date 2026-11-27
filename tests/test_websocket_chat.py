@@ -704,6 +704,7 @@ def test_authentic_producer_fails_closed_without_exact_client_scope(monkeypatch)
         yield object()
 
     monkeypatch.setattr(producer_module, "open_db_session", session)
+    monkeypatch.setattr(producer_module, "apply_statement_timeout", lambda *_: None)
     monkeypatch.setattr(producer_module, "build_access_context", lambda *_: access)
     monkeypatch.setattr(producer_module, "get_chat_session", lambda *_args: object())
     monkeypatch.setattr(
@@ -730,6 +731,7 @@ def test_authentic_producer_reuses_http_flow_and_publishes_only_validated_termin
     access = AccessContext("user-a", Role.manager, frozenset({"client-a"}), frozenset())
     identity = SimpleNamespace(user=SimpleNamespace(id="user-a", role=Role.manager))
     observed = {}
+    budgets = []
     answer = "Respuesta segura completa."
     knowledge = None
     if memory_used:
@@ -745,6 +747,7 @@ def test_authentic_producer_reuses_http_flow_and_publishes_only_validated_termin
     async def query(payload, request, _response, actual_identity, *_dependencies):
         observed["payload"] = payload
         observed["history"] = request.state.support_conversation_context
+        observed["deadline"] = request.state.support_query_deadline
         assert actual_identity is identity
         return SupportQueryResponse(
             answer=answer,
@@ -757,6 +760,9 @@ def test_authentic_producer_reuses_http_flow_and_publishes_only_validated_termin
         )
 
     monkeypatch.setattr(producer_module, "open_db_session", session)
+    monkeypatch.setattr(
+        producer_module, "apply_statement_timeout", lambda db, deadline: budgets.append((db, deadline)),
+    )
     monkeypatch.setattr(producer_module, "build_access_context", lambda *_: access)
     monkeypatch.setattr(producer_module, "get_chat_session", lambda *_args: object())
     monkeypatch.setattr(
@@ -782,6 +788,10 @@ def test_authentic_producer_reuses_http_flow_and_publishes_only_validated_termin
         ]
 
     assert asyncio.run(scenario()) == [answer]
+    assert len(budgets) == 3
+    assert all(deadline is observed["deadline"] for _, deadline in budgets)
+    assert budgets[0][0] is budgets[1][0]
+    assert budgets[2][0] is not budgets[0][0]
     assert str(observed["payload"].conversation_id) == conversation_id
     assert observed["payload"].client_id == "client-a"
     assert observed["history"] == '{"trust":"untrusted_data_only"}'
@@ -809,6 +819,7 @@ def test_authentic_producer_never_publishes_sensitive_pattern_split_by_provider(
         )
 
     monkeypatch.setattr(producer_module, "open_db_session", session)
+    monkeypatch.setattr(producer_module, "apply_statement_timeout", lambda *_: None)
     monkeypatch.setattr(producer_module, "build_access_context", lambda *_: access)
     monkeypatch.setattr(
         producer_module,
@@ -878,6 +889,7 @@ def test_authentic_producer_cancel_waits_for_query_cleanup_and_discards_answer(m
             await task
 
     monkeypatch.setattr(producer_module, "open_db_session", session)
+    monkeypatch.setattr(producer_module, "apply_statement_timeout", lambda *_: None)
     monkeypatch.setattr(producer_module, "build_access_context", lambda *_: access)
     monkeypatch.setattr(
         producer_module, "chat_support_context",

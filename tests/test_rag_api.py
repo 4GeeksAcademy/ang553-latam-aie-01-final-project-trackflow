@@ -180,6 +180,41 @@ def test_query_returns_answer_and_source_traceability_for_manager():
     assert len(service.generation_calls) == 1
 
 
+def test_query_preserves_spanish_synthesis_with_canonical_reference():
+    answer = "Durante el Black Friday, TrackFlow no garantiza el SLA."
+    service = FakeRAGService(
+        QueryResult(answer, (SourceReference("sla-delivery", "high-demand-periods"),), False)
+    )
+    response = ASGIClient(app_with(Role.manager, service)).post(
+        "/knowledge/query", json={"question": "¿Se garantiza el SLA durante Black Friday?"}
+    )
+    assert response.status_code == 200
+    assert response.json()["answer"] == answer
+    assert response.json()["sources"] == [
+        {
+            "source_document": "sla-delivery",
+            "section": "high-demand-periods",
+            "retrieval_kind": "primary",
+        }
+    ]
+
+
+def test_query_returns_safe_error_for_unrecognized_knowledge_source(caplog):
+    answer = "Synthetic response for a catalog mismatch."
+    service = FakeRAGService(
+        QueryResult(answer, (SourceReference("sla-delivery", "unrecognized-section"),), False)
+    )
+    response = ASGIClient(app_with(Role.admin, service)).post(
+        "/knowledge/query", json={"question": "Storage policy?"}
+    )
+    assert response.status_code == 503
+    assert response.json() == {"detail": "knowledge service unavailable"}
+    assert UUID(response.headers["X-TrackFlow-Run-ID"]).version == 4
+    assert "knowledge.output.http.v1" in caplog.text
+    assert answer not in caplog.text
+    assert "unrecognized-section" not in caplog.text
+
+
 def test_query_supports_controlled_abstention_for_admin():
     service = FakeRAGService(
         QueryResult("There is not enough information.", (), True)

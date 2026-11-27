@@ -1,6 +1,14 @@
 #!/bin/sh
 set -e
 
+if [ "$(id -u)" -eq 0 ]; then
+    echo ">>> start.sh: interfaces require a non-root runtime user." >&2
+    exit 1
+fi
+
+# Keep npm runtime logs out of the source tree and the read-only image.
+export npm_config_cache="${npm_config_cache:-/tmp/trackflow-npm}"
+
 # ------------------------------------------------------------------
 # start.sh — Arranca website (puerto 3000) y backoffice (puerto 3001)
 #            simultáneamente dentro del mismo contenedor.
@@ -23,7 +31,8 @@ trap cleanup TERM INT
 # ---- website ----
 cd /app/uis/website
 echo ">>> Starting website on 0.0.0.0:3000 ..."
-npm run dev -- --hostname 0.0.0.0 --port 3000 &
+website_command="${1:-dev}"
+npm run "$website_command" -- --hostname 0.0.0.0 --port 3000 &
 website_pid=$!
 
 # ---- backoffice ----
