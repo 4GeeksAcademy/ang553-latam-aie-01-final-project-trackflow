@@ -20,48 +20,49 @@ Required for email sending (will warn at import if missing):
 from __future__ import annotations
 
 import os
+import re
 
-# ── JWT_SECRET_KEY (required) ────────────────────────────────────────────────
-# Must be set in the environment.  No default — fail immediately if missing.
+_HMAC_KEY_BYTES = {"HS256": 32, "HS384": 48, "HS512": 64}
+_PLACEHOLDER_MARKERS = (
+    "changeme",
+    "replaceme",
+    "yoursecrethere",
+    "placeholder",
+    "defaultsecret",
+)
 
-_JWT_SECRET_KEY: str | None = os.getenv("JWT_SECRET_KEY")
 
-if not _JWT_SECRET_KEY:
-    raise RuntimeError(
-        "JWT_SECRET_KEY environment variable is required but was not set. "
-        "Export it before starting the server, e.g.:\n\n"
-        '    export JWT_SECRET_KEY="your-secret-here"\n'
-    )
+def _load_jwt_secret(secret: str | None, algorithm: str) -> str:
+    if algorithm not in _HMAC_KEY_BYTES:
+        raise RuntimeError("JWT_ALGORITHM must be HS256, HS384, or HS512 for local tokens.")
+    minimum = _HMAC_KEY_BYTES[algorithm]
+    if not secret or secret != secret.strip() or len(secret.encode("utf-8")) < minimum:
+        raise RuntimeError(f"JWT_SECRET_KEY must contain at least {minimum} bytes for {algorithm}.")
+    normalized = re.sub(r"[^a-z0-9]", "", secret.lower())
+    if (
+        any(marker in normalized for marker in _PLACEHOLDER_MARKERS)
+        or len(set(secret)) < 8
+        or secret in (secret + secret)[1:-1]
+    ):
+        raise RuntimeError("JWT_SECRET_KEY must be a generated secret, not a placeholder.")
+    return secret
 
-JWT_SECRET_KEY: str = _JWT_SECRET_KEY
 
-# ── JWT_ALGORITHM ────────────────────────────────────────────────────────────
+def _positive_minutes(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    try:
+        value = default if raw is None else int(raw)
+    except ValueError:
+        raise RuntimeError(f"{name} must be a positive integer.") from None
+    if value < 1:
+        raise RuntimeError(f"{name} must be a positive integer.")
+    return value
 
-JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
 
-# ── JWT_EXPIRE_MINUTES ───────────────────────────────────────────────────────
-
-_JWT_EXPIRE_DEFAULT = 60
-
-try:
-    JWT_EXPIRE_MINUTES: int = int(
-        os.getenv("JWT_EXPIRE_MINUTES", str(_JWT_EXPIRE_DEFAULT))
-    )
-except (TypeError, ValueError):
-    JWT_EXPIRE_MINUTES = _JWT_EXPIRE_DEFAULT
-
-# ── Password-reset token ─────────────────────────────────────────────────────
-# Duration in minutes.  The bootcamp requirement is 15–60 minutes.
-# 30 minutes is a balanced default.
-
-_RESET_TOKEN_EXPIRE_DEFAULT = 30
-
-try:
-    RESET_TOKEN_EXPIRE_MINUTES: int = int(
-        os.getenv("RESET_TOKEN_EXPIRE_MINUTES", str(_RESET_TOKEN_EXPIRE_DEFAULT))
-    )
-except (TypeError, ValueError):
-    RESET_TOKEN_EXPIRE_MINUTES = _RESET_TOKEN_EXPIRE_DEFAULT
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+JWT_SECRET_KEY = _load_jwt_secret(os.getenv("JWT_SECRET_KEY"), JWT_ALGORITHM)
+JWT_EXPIRE_MINUTES = _positive_minutes("JWT_EXPIRE_MINUTES", 60)
+RESET_TOKEN_EXPIRE_MINUTES = _positive_minutes("RESET_TOKEN_EXPIRE_MINUTES", 30)
 
 # ── Resend (email provider) ──────────────────────────────────────────────────
 # These are optional at import time — the app can start without them,

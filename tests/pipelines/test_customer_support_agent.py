@@ -304,3 +304,23 @@ def test_compiled_graph_is_observably_equivalent_to_rag_query_oracle(
     ).result
 
     assert migrated == oracle
+
+
+def test_active_trace_capacity_does_not_fail_an_unrecorded_run():
+    tracer = TraceRecorder(max_active_runs=1)
+    tracer.begin("active")
+    tracer.begin("overflow")
+    tracer.record_node(
+        "overflow",
+        node="lookup",
+        status="completed",
+        started=tracer.now(),
+        transition=None,
+        state={},
+    )
+    assert tracer.finish("overflow", outcome="answered") is None
+    assert tracer.finish("active", outcome="answered") is not None
+
+    tracer.begin("next")
+    assert tracer.finish("next", outcome="answered") is not None
+    assert {trace["run_id"] for trace in tracer.export()} == {"active", "next"}

@@ -20,6 +20,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+BROWSER_TELEMETRY_SERVICE = "backoffice"
+TRUSTED_TELEMETRY_SERVICE = "api"
+
 
 telemetry_metadata = MetaData()
 
@@ -109,7 +112,7 @@ def filter_tags(event_type: str, properties: dict[str, Any]) -> dict[str, Any]:
 def map_event_to_row(
     event: TelemetryEvent,
     *,
-    service: str = "backoffice",
+    service: str = BROWSER_TELEMETRY_SERVICE,
 ) -> dict[str, Any]:
     """Map a validated event envelope to the insertable telemetry columns."""
     return {
@@ -134,7 +137,7 @@ def map_outbox_event_to_row(
     return {
         "id": event_id,
         "timestamp": occurred_at,
-        "service": "api",
+        "service": TRUSTED_TELEMETRY_SERVICE,
         "event_type": event_type,
         "level": "info",
         "value": None,
@@ -166,7 +169,9 @@ def persist_backend_telemetry(
     if not events:
         return
 
-    rows = [map_event_to_row(event, service="api") for event in events]
+    rows = [
+        map_event_to_row(event, service=TRUSTED_TELEMETRY_SERVICE) for event in events
+    ]
     bulk_insert_telemetry(session, rows)
 
 

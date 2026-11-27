@@ -25,13 +25,13 @@ export interface Supplier {
   name: string;
   country: SupplierCountry;
   categories: SupplierCategory[];
-  rate_per_shipment: number;
-  currency: SupplierCurrency;
+  rate_per_shipment?: number | null;
+  currency?: SupplierCurrency | null;
   status: SupplierStatus;
   updated_at: string;
   service_zone: string | null;
-  contact_email: string | null;
-  notes: string | null;
+  contact_email?: string | null;
+  notes?: string | null;
 }
 
 export interface SupplierCreatedResponse {

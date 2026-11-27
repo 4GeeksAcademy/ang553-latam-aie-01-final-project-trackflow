@@ -52,7 +52,7 @@ services:
       com.trackflow.qa.owner: codespaces-mcp
 
   gateway:
-    image: nginx:1.27.5-alpine
+    image: nginx:1.30.8-alpine@sha256:8eb04fe3b385090e9aa02961f77398ad09b6bf33ab07f6669a5bb7acce22c0d3
     restart: "no"
     environment:
       QA_KEYCLOAK_REALM: ${QA_KEYCLOAK_REALM:?required}

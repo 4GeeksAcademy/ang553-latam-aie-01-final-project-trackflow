@@ -10,6 +10,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agents.customer_support import CustomerSupportAgent, get_customer_support_agent
+from agents.customer_support.guardrail_contracts import (
+    GuardrailEvent,
+    GuardrailEventAction,
+    OutputValidationStatus,
+)
+from agents.customer_support.guardrail_observability import record_guardrail_event
+from agents.customer_support.output_guardrails import validate_knowledge_result
 from services.api.auth_models import Role, UserInDB
 from services.api.auth_security import get_current_user
 from services.rag.contracts import RAGConfigurationError, RAGProviderError
@@ -95,6 +102,21 @@ def query_knowledge_base(
             request_id=getattr(request.state, "request_id", None),
             run_id=run_id,
         )
+        result = execution.result
+        validation = validate_knowledge_result(result)
+        if validation.status is OutputValidationStatus.blocked:
+            record_guardrail_event(
+                GuardrailEvent(
+                    guard_id="knowledge.output.http.v1",
+                    failure_category=validation.failure_category,
+                    action=GuardrailEventAction.blocked,
+                    reason_code=validation.reason_code,
+                    correlation_id=run_id,
+                )
+            )
+            raise RAGProviderError(
+                "Knowledge output did not pass validation", category="validation_error"
+            )
     except (RAGConfigurationError, RAGProviderError):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -103,7 +125,6 @@ def query_knowledge_base(
         ) from None
 
     response.headers["X-TrackFlow-Run-ID"] = run_id
-    result = execution.result
     return KnowledgeQueryResponse(
         answer=result.answer,
         insufficient_context=result.insufficient_context,

@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime, timezone
 
+from jwt.exceptions import InvalidTokenError
 from tinydb import Query
 
 from services.api.auth_database import auth_storage_access, password_reset_tokens, profiles, users
@@ -23,8 +24,6 @@ from services.api.auth_models import (
     UserResponse,
     UserUpdate,
 )
-from jose import JWTError
-
 from services.api.auth_security import (
     create_password_reset_token,
     decode_password_reset_token,
@@ -310,7 +309,7 @@ def validate_password_reset_token(token: str) -> str:
     """
     try:
         payload = decode_password_reset_token(token)
-    except JWTError as exc:
+    except InvalidTokenError as exc:
         raise ValueError(f"Invalid or expired token: {exc}") from exc
 
     jti = payload["jti"]
@@ -348,7 +347,7 @@ def invalidate_password_reset_token(token: str) -> None:
     """
     try:
         payload = decode_password_reset_token(token)
-    except JWTError as exc:
+    except InvalidTokenError as exc:
         raise ValueError(f"Invalid token: {exc}") from exc
 
     jti = payload["jti"]

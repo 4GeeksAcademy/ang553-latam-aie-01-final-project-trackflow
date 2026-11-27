@@ -89,12 +89,14 @@ class SupplierCreate(BaseModel):
 
 
 class SupplierResponse(BaseModel):
+    """Catalog projection. Commercial fields are supplied only to operators."""
+
     id: int
     name: str
     country: Country
     categories: list[str]
-    rate_per_shipment: float
-    currency: Literal["USD", "EUR"]
+    rate_per_shipment: float | None = None
+    currency: Literal["USD", "EUR"] | None = None
     status: SupplierStatus
     updated_at: datetime
     service_zone: str | None = None

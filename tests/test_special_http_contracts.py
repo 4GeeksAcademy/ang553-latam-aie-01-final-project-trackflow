@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 
 import pytest
 from fastapi import HTTPException
 from fastapi.responses import Response
 
 from services.api.auth_models import Role, UserInDB
-from services.api.main import export_results
+from services.api.main import _store_incident_result, export_results
 from services.api.routes import suppliers as suppliers_route
 from services.api.routes import users as users_route
 
@@ -79,8 +80,10 @@ def test_delete_supplier_preserves_not_found(monkeypatch) -> None:
 
 
 def test_export_results_returns_csv_attachment(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "services.api.main._last_result",
+    monkeypatch.setattr("services.api.main._incident_results", OrderedDict())
+    caller = UserInDB(id="csv-user", email="csv@example.com", hashed_password="hash")
+    _store_incident_result(
+        caller.id,
         {
             "total_records": 1,
             "valid_records": 1,
@@ -95,7 +98,7 @@ def test_export_results_returns_csv_attachment(monkeypatch) -> None:
         },
     )
 
-    response = _run(export_results())
+    response = _run(export_results(caller))
 
     assert response.media_type == "text/csv"
     assert response.headers["content-disposition"] == 'attachment; filename="results.csv"'
@@ -104,8 +107,9 @@ def test_export_results_returns_csv_attachment(monkeypatch) -> None:
 
 
 def test_export_results_preserves_not_found(monkeypatch) -> None:
-    monkeypatch.setattr("services.api.main._last_result", None)
+    monkeypatch.setattr("services.api.main._incident_results", OrderedDict())
+    caller = UserInDB(id="csv-user", email="csv@example.com", hashed_password="hash")
 
     with pytest.raises(HTTPException) as missing:
-        _run(export_results())
+        _run(export_results(caller))
     assert missing.value.status_code == 404

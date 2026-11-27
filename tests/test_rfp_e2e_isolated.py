@@ -265,7 +265,7 @@ def test_rfp_http_outbox_celery_graph_postgres_e2e() -> None:
             )
 
         _run_container(
-            names["redis"], names["network"], "redis:7.4.1-alpine",
+            names["redis"], names["network"], "redis:7.4.12-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe",
             environment={}, tmpfs=("/data:rw,noexec,nosuid,size=64m",),
             command=("redis-server", "--save", "", "--appendonly", "no"),
         )

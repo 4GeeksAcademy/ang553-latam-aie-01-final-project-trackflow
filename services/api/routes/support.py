@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from datetime import UTC, datetime
 import hashlib
 import json
 import logging
+from threading import BoundedSemaphore
 from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
@@ -85,8 +88,23 @@ from services.rag.runtime import rag_service_context
 
 router = APIRouter(prefix="/support", tags=["Customer Support"])
 SUPPORT_QUERY_BUDGET_SECONDS = 80.0
+# Leave PostgreSQL pool capacity for other endpoints in the same worker.
+_SUPPORT_QUERY_SLOTS = BoundedSemaphore(4)
 _CONSENT_LOGGER = logging.getLogger("agent.customer_support.consent")
 _SUPPORT_LOGGER = logging.getLogger("agent.customer_support.runtime")
+
+
+@contextmanager
+def support_query_budget() -> Iterator[QueryDeadline]:
+    if not _SUPPORT_QUERY_SLOTS.acquire(blocking=False):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="support service unavailable",
+        )
+    try:
+        yield QueryDeadline(SUPPORT_QUERY_BUDGET_SECONDS)
+    finally:
+        _SUPPORT_QUERY_SLOTS.release()
 
 
 class SupportQueryRequest(BaseModel):
@@ -265,7 +283,9 @@ def get_support_pending_memory(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="exactly one memory recovery identifier is required",
         )
+    deadline = QueryDeadline(SUPPORT_QUERY_BUDGET_SECONDS)
     try:
+        apply_statement_timeout(session, deadline)
         access = build_access_context(session, identity.user)
         if proposal_id is not None:
             proposal = memory_store.get_proposal(session, proposal_id, access)
@@ -634,27 +654,48 @@ async def query_support(
     mcp_tools: Annotated[SupportMCPTools, Depends(get_support_mcp_tools)],
     memory_store: Annotated[MemoryStore, Depends(get_memory_store)],
 ) -> SupportQueryResponse:
+    # The authentic WS producer forwards its budget through server-only state.
+    inherited = getattr(request.state, "support_query_deadline", None)
+    with (nullcontext(inherited) if inherited is not None else support_query_budget()) as deadline:
+        return await _run_support_query(
+            payload, request, response, identity, session, agent, mcp_tools,
+            memory_store, deadline,
+        )
+
+
+async def _run_support_query(
+    payload: SupportQueryRequest,
+    request: Request,
+    response: Response,
+    identity: SupportIdentity,
+    session: Session,
+    agent: ExternalSupportAgent,
+    mcp_tools: SupportMCPTools,
+    memory_store: MemoryStore,
+    deadline: QueryDeadline,
+) -> SupportQueryResponse:
     abort_event = getattr(request.state, "support_abort_event", None)
 
     def check_abort() -> None:
         if abort_event is not None and abort_event.is_set():
             raise asyncio.CancelledError
+        if deadline.remaining() <= 0:
+            raise TimeoutError("support query deadline exhausted")
 
-    check_abort()
-    deadline = QueryDeadline(SUPPORT_QUERY_BUDGET_SECONDS)
     try:
+        check_abort()
+        apply_statement_timeout(session, deadline)
         access = build_access_context(session, identity.user)
         conversation_id = payload.conversation_id or uuid4()
         _validate_query_memory_target(session, access, payload)
+        apply_statement_timeout(session, deadline)
         memory_store.bind_conversation(
             session,
             conversation_id,
             access,
             create=payload.conversation_id is None,
         )
-        # bind_conversation commits its content-free ownership row. SET LOCAL
-        # must be installed only after that commit so it remains effective for
-        # the support graph's database work.
+        # The ownership commit clears SET LOCAL for subsequent memory work.
         apply_statement_timeout(session, deadline)
     except (MemoryNotFound, MemoryConflict, MemoryForbidden, MemoryPolicyViolation) as exc:
         raise _memory_http_error(exc) from None
@@ -712,6 +753,7 @@ async def query_support(
                     ),
                 )
                 check_abort()
+                apply_statement_timeout(session, deadline)
                 consent_result = _resolve_query_consent(
                     session=session,
                     memory_store=memory_store,
@@ -721,6 +763,7 @@ async def query_support(
                     user_text=payload.question,
                     classification=forced_classification,
                 )
+            check_abort()
             response.headers["X-TrackFlow-Run-ID"] = run_id
             return _to_response(
                 _guardrail_only_result(input_decision),
@@ -741,12 +784,13 @@ async def query_support(
                         rag_factory=lambda: rag_service_context(deadline=deadline),
                     )
 
+                classification_task = asyncio.create_task(asyncio.to_thread(classify_pending))
                 try:
-                    classification = (
-                        classify_pending()
-                        if abort_event is None
-                        else await asyncio.to_thread(classify_pending)
-                    )
+                    classification = await asyncio.shield(classification_task)
+                except asyncio.CancelledError:
+                    # The provider closes its context before releasing admission.
+                    await asyncio.gather(classification_task, return_exceptions=True)
+                    raise
                 except Exception as exc:
                     _CONSENT_LOGGER.info(
                         "Support consent classification fallback | diagnostic=%s",
@@ -758,6 +802,7 @@ async def query_support(
                     payload.question, pending_before_query
                 )
             check_abort()
+            apply_statement_timeout(session, deadline)
             consent_result = _resolve_query_consent(
                 session=session,
                 memory_store=memory_store,
@@ -767,6 +812,7 @@ async def query_support(
                 user_text=payload.question,
                 classification=classification,
             )
+            check_abort()
             message = _consent_message(consent_result)
             if not consent_result.continue_support_question:
                 response.headers["X-TrackFlow-Run-ID"] = run_id
@@ -817,6 +863,7 @@ async def query_support(
 
     try:
         check_abort()
+        apply_statement_timeout(session, deadline)
         conversation_context = getattr(
             request.state, "support_conversation_context", None
         )
@@ -849,6 +896,7 @@ async def query_support(
             memory_scope=payload.memory_scope,
             **context_kwargs,
         )
+        check_abort()
     except KnowledgeProjectionSelected:
         if "knowledge_projection" not in context_kwargs:
             raise HTTPException(
@@ -877,14 +925,19 @@ async def query_support(
             headers={"X-TrackFlow-Run-ID": run_id},
         ) from None
     response.headers["X-TrackFlow-Run-ID"] = run_id
-    try:
-        pending = execution.result.memory_proposal or memory_store.get_pending(
-            session, conversation_id, access
+    pending = execution.result.memory_proposal
+    if pending is None:
+        try:
+            apply_statement_timeout(session, deadline)
+            pending = memory_store.get_pending(session, conversation_id, access)
+        except (MemoryNotFound, MemoryForbidden, MemoryPersistenceError, SQLAlchemyError, TimeoutError):
+            pass
+    if deadline.remaining() <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="support service unavailable",
+            headers={"X-TrackFlow-Run-ID": run_id},
         )
-    except (MemoryNotFound, MemoryForbidden):
-        pending = None
-    except (MemoryPersistenceError, SQLAlchemyError):
-        pending = execution.result.memory_proposal
     result = execution.result
     if consent_result is not None:
         result = replace(
@@ -912,7 +965,9 @@ def decide_support_memory(
     session: Annotated[Session, Depends(get_db)],
     memory_store: Annotated[MemoryStore, Depends(get_memory_store)],
 ) -> SupportMemoryDecisionResponse:
+    deadline = QueryDeadline(SUPPORT_QUERY_BUDGET_SECONDS)
     try:
+        apply_statement_timeout(session, deadline)
         access = build_access_context(session, identity.user)
         memory_store.bind_conversation(
             session,
@@ -920,6 +975,7 @@ def decide_support_memory(
             access,
             create=False,
         )
+        apply_statement_timeout(session, deadline)
         original = memory_store.get_proposal(session, payload.proposal_id, access)
         if original.conversation_id != payload.conversation_id:
             raise MemoryNotFound("proposal not found")
@@ -946,6 +1002,7 @@ def decide_support_memory(
                 canonical_key=canonical,
                 valid_until=original.valid_until,
             )
+        apply_statement_timeout(session, deadline)
         consent = ConsentCoordinator(memory_store).handle(
             session,
             ConsentRequest(

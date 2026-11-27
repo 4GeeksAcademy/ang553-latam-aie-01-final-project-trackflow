@@ -10,8 +10,8 @@ services:
   # ── Interfaces (Next.js: website + backoffice) ─────────────────────────────
   interfaces:
     build:
-      context: ./uis
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: uis/Dockerfile
     ports:
       - "3000:3000"   # website
       - "3001:3001"   # backoffice
@@ -19,7 +19,14 @@ services:
       - trackflow-dev
     depends_on:
       - api
+    # Match an editable Website bind owned by another non-root Linux host UID/GID.
+    user: "${TRACKFLOW_DEV_UID:-1000}:${TRACKFLOW_DEV_GID:-1000}"
+    group_add:
+      - "1000"
+    tmpfs:
+      - "/app/uis/website/.next:rw,nosuid,nodev,uid=${TRACKFLOW_DEV_UID:-1000},gid=${TRACKFLOW_DEV_GID:-1000},mode=0750"
     environment:
+      - HOME=/tmp
       # Server-side backend URL for Next.js rewrites (Docker DNS)
       - API_BACKEND_URL=${API_BACKEND_URL:-http://api:8000}
       # Public Authorization Code + PKCE configuration for Support only.
@@ -28,14 +35,12 @@ services:
       - NEXT_PUBLIC_SUPPORT_OIDC_TOKEN_ENDPOINT=${NEXT_PUBLIC_SUPPORT_OIDC_TOKEN_ENDPOINT:-}
       - NEXT_PUBLIC_SUPPORT_OIDC_CLIENT_ID=${NEXT_PUBLIC_SUPPORT_OIDC_CLIENT_ID:-}
     volumes:
-      # Bind mounts de código fuente (host → container)
+      # Website usa hot reload. Backoffice usa el build y las dependencias de la imagen.
       - ./uis/website:/app/uis/website
-      - ./uis/backoffice:/app/uis/backoffice
       # src/ compartido del monorepo (read-only)
       - ./src:/app/src:ro
-      # Volúmenes nombrados para preservar node_modules de la imagen
+      # Volumen nombrado para preservar node_modules de Website
       - website-node-modules:/app/uis/website/node_modules
-      - backoffice-node-modules:/app/uis/backoffice/node_modules
 
   # ── API (FastAPI) ──────────────────────────────────────────────────────────
   api:
@@ -104,7 +109,7 @@ services:
   redis:
     profiles:
       - async-tasks
-    image: redis:7.4.1-alpine
+    image: redis:7.4.12-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
     command:
       - redis-server
       - --appendonly
@@ -275,7 +280,7 @@ services:
   qdrant:
     profiles:
       - rag
-    image: qdrant/qdrant:v1.20.0
+    image: qdrant/qdrant:v1.20.2@sha256:d277592721d2e3b73f9b797b53cf05e6a5bb2134f6d13fdbda4ca51782afbcac
     ports:
       - "127.0.0.1:6333:6333"
     networks:
@@ -297,7 +302,6 @@ networks:
 
 volumes:
   website-node-modules:
-  backoffice-node-modules:
   telemetry-raw:
   celery-redis-data:
   qdrant-data:

@@ -13,7 +13,7 @@ from tinydb import TinyDB
 from tinydb.table import Table
 
 # Required by services.api.auth_settings during module import.
-os.environ.setdefault("JWT_SECRET_KEY", "test-jwt-secret-key")
+os.environ.setdefault("JWT_SECRET_KEY", "trackflow-isolated-synthetic-jwt-key-only-3b")
 
 # A developer or acceptance environment may deliberately point auth at a
 # persistent alternate store.  Pytest must never inherit that destination:

@@ -1,0 +1,29 @@
+# Allow only the inputs consumed by the interfaces Dockerfile.
+**
+!uis/website/
+!uis/backoffice/
+!uis/start.sh
+!src/
+
+# Keep local configuration and generated artifacts out of those source trees.
+**/.env
+**/.env.*
+**/.npmrc
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+**/*.db
+**/*.db-*
+**/*.sqlite
+**/*.sqlite3
+**/.git
+**/node_modules
+**/.next
+**/.turbo
+**/coverage
+**/logs
+**/*.log
+**/*.tsbuildinfo
+**/.DS_Store
+**/Thumbs.db

@@ -6,7 +6,10 @@ import ast
 import asyncio
 import csv
 import io
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 from typing import Any, get_args, get_origin
 
 import httpx
@@ -17,7 +20,8 @@ from tinydb import Query
 
 from services.api import main as api_main
 from services.api.access_control import assign_user_to_client, register_verified_client
-from services.api.auth_models import Role
+from services.api.auth_models import Role, UserInDB
+from services.api.auth_security import create_access_token
 from services.api.main import IncidentAnalysisResponse, app
 from services.api.inventory_clients import CLIENT_IDS_BY_NAME
 from services.api.models import SupplierResponse
@@ -272,11 +276,14 @@ def test_http_auth_profile_supplier_and_health_contracts(isolated_auth_db, monke
         _exact_keys(_request("GET", "/profiles/me", headers=headers), {"name", "phone", "address"})
 
         supplier_payload = {"name": "HTTP Supplier", "country": "USA", "categories": ["carrier_last_mile"], "rate_per_shipment": 2.5, "currency": "USD", "status": "active"}
-        created = _exact_keys(_request("POST", "/api/suppliers", json=supplier_payload, headers=headers), {"id"})
-        listed = _request("GET", "/api/suppliers", headers=headers)
+        manager = UserInDB(email="catalog-manager@example.test", hashed_password="test", role=Role.manager)
+        isolated_auth_db.users.insert(manager.model_dump(mode="json"))
+        catalog_headers = {"Authorization": f"Bearer {create_access_token(manager.id)}"}
+        created = _exact_keys(_request("POST", "/api/suppliers", json=supplier_payload, headers=catalog_headers), {"id"})
+        listed = _request("GET", "/api/suppliers", headers=catalog_headers)
         assert listed.status_code == 200
         assert set(listed.json()[0]) == set(SupplierResponse.model_fields)
-        alias = _request("GET", "/suppliers", headers=headers)
+        alias = _request("GET", "/suppliers", headers=catalog_headers)
         assert alias.status_code == 200 and alias.json()[0]["id"] == created["id"]
 
         assert _request("GET", "/health").json() == {"status": "ok"}
@@ -285,7 +292,7 @@ def test_http_auth_profile_supplier_and_health_contracts(isolated_auth_db, monke
 
 
 def test_http_incidents_analyze_then_export_uses_real_request(isolated_auth_db, monkeypatch) -> None:
-    monkeypatch.setattr(api_main, "_last_result", None)
+    monkeypatch.setattr(api_main, "_incident_results", OrderedDict())
     email = "incidents-http@example.com"
     registration = _request(
         "POST", "/users", json={"email": email, "password": "password-123"}
@@ -323,6 +330,70 @@ def test_http_incidents_analyze_then_export_uses_real_request(isolated_auth_db, 
     assert exported.headers["content-disposition"] == 'attachment; filename="results.csv"'
     assert not exported.text.startswith("{")
     assert next(csv.reader(io.StringIO(exported.text))) == ["section", "metric", "value"]
+
+
+def test_concurrent_incident_analyses_export_only_each_callers_result(isolated_auth_db, monkeypatch):
+    monkeypatch.setattr(api_main, "_incident_results", OrderedDict())
+    columns = (
+        "incident_id,date,country,customer_type,tracking_number,carrier,"
+        "category,description,status,customer_email,satisfaction_score\n"
+    )
+    records = [
+        f"TRF-{i:06d},2024-01-15,US,B2B,TRACK{i:04d},UPS,LOST_PARCEL,"
+        "Synthetic incident,CLOSED,customer@example.test,5\n"
+        for i in (1, 2)
+    ]
+    headers = []
+    for label in ("first", "second", "without-result"):
+        user = UserInDB(email=f"{label}@example.test", hashed_password="test")
+        isolated_auth_db.users.insert(user.model_dump(mode="json"))
+        headers.append({"Authorization": f"Bearer {create_access_token(user.id)}"})
+
+    def analyze(owner_headers, count):
+        return _request(
+            "POST", "/api/incidents/analyze", headers=owner_headers,
+            files={"file": ("incidents.csv", columns + "".join(records[:count]), "text/csv")},
+        )
+
+    rendezvous = Barrier(2, timeout=10)
+    analyze_records = api_main.analyze_records
+
+    def synchronized_analysis(records):
+        rendezvous.wait()
+        return analyze_records(records)
+
+    with monkeypatch.context() as analysis:
+        analysis.setattr(api_main, "analyze_records", synchronized_analysis)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(analyze, headers[0], 1)
+            second = pool.submit(analyze, headers[1], 2)
+            for result, count in ((first.result(), 1), (second.result(), 2)):
+                assert result.status_code == 200
+                assert result.json()["total_records"] == count
+
+    for owner_headers, count in zip(headers[:2], (1, 2)):
+        result = _request("GET", "/api/incidents/results/export", headers=owner_headers)
+        assert result.status_code == 200
+        assert result.headers["content-disposition"] == 'attachment; filename="results.csv"'
+        assert result.headers["cache-control"] == "private, no-store"
+        assert result.headers["content-type"].startswith("text/csv")
+        rows = list(csv.reader(io.StringIO(result.text)))
+        assert rows[0] == ["section", "metric", "value"]
+        assert ["general", "total_records", str(count)] in rows
+
+    assert _request("GET", "/api/incidents/results/export", headers=headers[2]).status_code == 404
+
+    assert analyze(headers[0], 2).status_code == 200
+    failed = _request(
+        "POST",
+        "/api/incidents/analyze",
+        headers=headers[0],
+        files={"file": ("incidents.csv", "", "text/csv")},
+    )
+    assert failed.status_code == 400
+    current = _request("GET", "/api/incidents/results/export", headers=headers[0])
+    assert current.status_code == 200
+    assert ["general", "total_records", "2"] in list(csv.reader(io.StringIO(current.text)))
 
 
 def test_http_inventory_contracts_use_isolated_sqlite(isolated_auth_db, monkeypatch) -> None:

@@ -12,6 +12,7 @@ from fastapi import HTTPException, Response
 from agents.customer_support.external_graph import AnchorRetrieval, KnowledgeProjectionSelected, get_external_support_agent
 from agents.customer_support.guardrail_contracts import OutputValidationStatus
 from agents.customer_support.output_guardrails import validate_http_response
+from agents.customer_support.tools import apply_statement_timeout
 from services.api.access_control import build_access_context
 from services.api.agent_memory.contracts import MemoryScope
 from services.api.chat.contracts import ChatKnowledge
@@ -29,6 +30,7 @@ from services.api.routes.support import (
     get_memory_store,
     get_support_mcp_tools,
     query_support,
+    support_query_budget,
 )
 from services.api.support_oidc import SupportIdentity
 from services.rag.contracts import RetrievalResult
@@ -65,14 +67,21 @@ def authentic_support_producer(identity: SupportIdentity):
         unit_scope = requested_qa_unit_scope(identity, text)
         if unit_scope is not None:
             def can_try_qa_units() -> bool:
-                with open_db_session() as db:
+                with support_query_budget() as deadline, open_db_session() as db:
+                    apply_statement_timeout(db, deadline)
                     access = build_access_context(db, identity.user)
                     if not unit_scope.allows(access):
                         raise ProducerUnavailable("QA unit scope changed")
                     get_chat_session(db, access, session_id)
                     return get_memory_store().get_pending(db, conversation_id, access) is None
 
-            if await asyncio.to_thread(can_try_qa_units):
+            try:
+                can_publish_qa = await asyncio.to_thread(can_try_qa_units)
+            except ProducerUnavailable:
+                raise
+            except Exception as exc:
+                raise ProducerUnavailable("support precheck unavailable") from exc
+            if can_publish_qa:
                 async with aclosing(publish_qa_units(identity, unit_scope, session_id)) as units:
                     async for unit in units:
                         yield unit
@@ -98,64 +107,101 @@ def authentic_support_producer(identity: SupportIdentity):
             return selected_plan is not None
 
         async def execute_support_query():
-            with open_db_session() as db:
-                access = build_access_context(db, identity.user)
-                context = chat_support_context(db, access, session_id)
-                # The existing MCP bearer is not client-bound. Until the MCP
-                # surface can enforce the chat client itself, permit authentic
-                # WS execution only for a manager whose live membership is
-                # exactly this one client. Admin/global and multi-client
-                # identities fail closed to prevent cross-client persistence.
-                if access.global_access or access.allowed_client_ids != frozenset(
-                    {context.client_id}
-                ):
-                    raise ProducerUnavailable(
-                        "support client scope cannot be guaranteed"
+            with support_query_budget() as deadline:
+                with open_db_session() as db:
+                    apply_statement_timeout(db, deadline)
+                    access = build_access_context(db, identity.user)
+                    context = chat_support_context(db, access, session_id)
+                    # The existing MCP bearer is not client-bound. Until the MCP
+                    # surface can enforce the chat client itself, permit authentic
+                    # WS execution only for a manager whose live membership is
+                    # exactly this one client. Admin/global and multi-client
+                    # identities fail closed to prevent cross-client persistence.
+                    if access.global_access or access.allowed_client_ids != frozenset(
+                        {context.client_id}
+                    ):
+                        raise ProducerUnavailable(
+                            "support client scope cannot be guaranteed"
+                        )
+                    memory_store = get_memory_store()
+                    # New UUID sessions are bound atomically at creation. Legacy
+                    # ``chat_<hex>`` sessions predate that binding; create/verify
+                    # the same 128-bit UUID only after chat ownership succeeds.
+                    apply_statement_timeout(db, deadline)
+                    memory_store.bind_conversation(
+                        db, conversation_id, access, create=True
                     )
-                memory_store = get_memory_store()
-                # New UUID sessions are bound atomically at creation. Legacy
-                # ``chat_<hex>`` sessions predate that binding; create/verify
-                # the same 128-bit UUID only after chat ownership succeeds.
-                memory_store.bind_conversation(
-                    db, conversation_id, access, create=True
-                )
-                request = SimpleNamespace(
-                    state=SimpleNamespace(
-                        request_id=str(uuid4()),
-                        support_conversation_context=context.history_json,
-                        support_abort_event=abort_event,
-                        support_progress=report,
-                        support_knowledge_projection=(
-                            select_projection
-                            if dynamic_scope is not None
-                            and dynamic_scope.client_id == context.client_id
-                            and dynamic_scope.allows(access)
-                            else None
+                    request = SimpleNamespace(
+                        state=SimpleNamespace(
+                            request_id=str(uuid4()),
+                            support_conversation_context=context.history_json,
+                            support_abort_event=abort_event,
+                            support_query_deadline=deadline,
+                            support_progress=report,
+                            support_knowledge_projection=(
+                                select_projection
+                                if dynamic_scope is not None
+                                and dynamic_scope.client_id == context.client_id
+                                and dynamic_scope.allows(access)
+                                else None
+                            ),
+                        )
+                    )
+                    result = await query_support(
+                        SupportQueryRequest(
+                            question=text,
+                            conversation_id=conversation_id,
+                            client_id=context.client_id,
+                            memory_scope=MemoryScope.client,
                         ),
+                        request,
+                        Response(),
+                        identity,
+                        db,
+                        get_external_support_agent(),
+                        get_support_mcp_tools(identity),
+                        memory_store,
                     )
-                )
-                result = await query_support(
-                    SupportQueryRequest(
-                        question=text,
-                        conversation_id=conversation_id,
-                        client_id=context.client_id,
-                        memory_scope=MemoryScope.client,
-                    ),
-                    request,
-                    Response(),
-                    identity,
-                    db,
-                    get_external_support_agent(),
-                    get_support_mcp_tools(identity),
-                    memory_store,
-                )
-                return result, context.client_id
+                if abort_event.is_set():
+                    raise asyncio.CancelledError
+                # ``query_support`` returns only after graph assembly, consent handling,
+                # output guardrails and complete HTTP projection validation. Publishing
+                # one chunk here is authentic terminal delivery, not simulated streaming.
+                if report is not None:
+                    await report("validating_response")
+                if validate_http_response(result).status is OutputValidationStatus.blocked:
+                    raise ProducerUnavailable("support response failed final validation")
+                # Membership may be revoked while the synchronous graph/provider is in
+                # flight. Re-read it before making the answer available to the chat
+                # coordinator for durable append/publication.
+                try:
+                    with open_db_session() as db:
+                        apply_statement_timeout(db, deadline)
+                        refreshed_access = build_access_context(db, identity.user)
+                        get_chat_session(db, refreshed_access, session_id)
+                        if (
+                            refreshed_access.global_access
+                            or refreshed_access.allowed_client_ids
+                            != frozenset({context.client_id})
+                        ):
+                            raise ProducerUnavailable(
+                                "support client scope cannot be guaranteed"
+                            )
+                except ProducerUnavailable:
+                    raise
+                except Exception as exc:
+                    raise ProducerUnavailable("support membership could not be refreshed") from exc
+                if abort_event.is_set():
+                    raise asyncio.CancelledError
+                if deadline.remaining() <= 0:
+                    raise ProducerUnavailable("support publication deadline exhausted")
+                return result
 
         if report is not None:
             await report("processing")
         task = asyncio.create_task(execute_support_query())
         try:
-            result, client_id = await asyncio.shield(task)
+            result = await asyncio.shield(task)
         except asyncio.CancelledError:
             # Signal the asynchronous provider while allowing synchronous work
             # to unwind before closing its SQL session.
@@ -177,32 +223,6 @@ def authentic_support_producer(identity: SupportIdentity):
             raise
         except Exception as exc:
             raise ProducerUnavailable("authenticated support query unavailable") from exc
-        # ``query_support`` returns only after graph assembly, consent handling,
-        # output guardrails and complete HTTP projection validation. Publishing
-        # one chunk here is authentic terminal delivery, not simulated streaming.
-        if report is not None:
-            await report("validating_response")
-        if validate_http_response(result).status is OutputValidationStatus.blocked:
-            raise ProducerUnavailable("support response failed final validation")
-        # Membership may be revoked while the synchronous graph/provider is in
-        # flight. Re-read it before making the answer available to the chat
-        # coordinator for durable append/publication.
-        try:
-            with open_db_session() as db:
-                refreshed_access = build_access_context(db, identity.user)
-                get_chat_session(db, refreshed_access, session_id)
-                if (
-                    refreshed_access.global_access
-                    or refreshed_access.allowed_client_ids
-                    != frozenset({client_id})
-                ):
-                    raise ProducerUnavailable(
-                        "support client scope cannot be guaranteed"
-                    )
-        except ProducerUnavailable:
-            raise
-        except Exception as exc:
-            raise ProducerUnavailable("support membership could not be refreshed") from exc
         insufficient_context = (
             result.route == "knowledge"
             and result.memory_read_status != "used"

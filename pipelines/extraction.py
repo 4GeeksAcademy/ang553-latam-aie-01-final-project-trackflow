@@ -18,6 +18,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from pipelines.database_identity import ensure_distinct_postgresql_databases
 
 from pipelines.weekly_performance import (
+    EXPECTED_OPERATIONAL_SERVICE,
     INBOUND_ORDER_CREATED,
     INVENTORY_DISCREPANCY_DETECTED,
     OFFICIAL_EVENT_TYPES,
@@ -34,7 +35,8 @@ _EVENTS_SQL = text(
     """
     SELECT id, timestamp, service, event_type, tags
     FROM telemetry_events
-    WHERE event_type IN :event_types
+    WHERE service = :operational_service
+      AND event_type IN :event_types
       AND timestamp >= :week_start
       AND timestamp < :next_week_start
     ORDER BY timestamp, id
@@ -44,7 +46,8 @@ _EVENTS_SQL = text(
 _MOVEMENT_LOOKUP_SQL_TEMPLATE = """
     SELECT id, timestamp, event_type, tags
     FROM telemetry_events
-    WHERE (event_type, CASE
+    WHERE service = :operational_service
+      AND (event_type, CASE
         WHEN event_type = 'outbound_order_created' THEN tags->>'order_id'
         WHEN event_type = 'inventory_discrepancy_detected' THEN tags->>'count_id'
         ELSE tags->>'movement_id'
@@ -178,7 +181,7 @@ def _movement_lookup_statement(
     keys: tuple[tuple[str, str], ...],
 ) -> tuple[Any, dict[str, str]]:
     """Build bound predicates; only generated placeholder names enter SQL text."""
-    parameters: dict[str, str] = {}
+    parameters: dict[str, str] = {"operational_service": EXPECTED_OPERATIONAL_SERVICE}
     pairs: list[str] = []
     for index, (event_type, movement_id) in enumerate(keys):
         event_name = f"event_type_{index}"
@@ -224,8 +227,8 @@ def extract_weekly_inputs(
 ) -> WeeklyExtractionResult:
     """Extract one ISO UTC week and complete auxiliary evidence in one snapshot.
 
-    ``bind`` supplies telemetry and movement-occurrence evidence.  An optional
-    ``inventory_bind`` supplies authoritative commercial-order/dispatch evidence from the
+    ``bind`` supplies trusted operational telemetry and movement-occurrence evidence.
+    An optional ``inventory_bind`` supplies authoritative commercial-order/dispatch evidence from the
     operational database.  Omitting it preserves the historical single-engine
     snapshot. PostgreSQL errors are raised as :class:`WeeklyExtractionError`.
     """
@@ -266,6 +269,7 @@ def extract_weekly_inputs(
                         connection,
                         _EVENTS_SQL,
                         {
+                            "operational_service": EXPECTED_OPERATIONAL_SERVICE,
                             "event_types": sorted(OFFICIAL_EVENT_TYPES),
                             "week_start": start,
                             "next_week_start": next_start,

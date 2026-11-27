@@ -5,15 +5,21 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import ValidationError
 from sqlmodel import Session
 
+from services.api.auth_models import Role, UserInDB
+from services.api.auth_security import get_current_user
 from services.api.cache import TTLCache
 from services.api.database import get_db
 from services.api.telemetry_schemas import TelemetryEventsRequest
 from services.api.telemetry_schemas import TelemetryEvent
-from services.api.telemetry_storage import bulk_insert_telemetry, map_event_to_row
+from services.api.telemetry_storage import (
+    BROWSER_TELEMETRY_SERVICE,
+    bulk_insert_telemetry,
+    map_event_to_row,
+)
 from services.telemetry.analysis import build_telemetry_report
 
 router = APIRouter(prefix="/telemetry", tags=["Telemetry"])
@@ -25,8 +31,14 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-@router.get("/report")
+def require_telemetry_reader(user: UserInDB = Depends(get_current_user)) -> None:
+    if user.role not in {Role.admin, Role.manager}:
+        raise HTTPException(status_code=403, detail="admin or manager role required")
+
+
+@router.get("/report", dependencies=[Depends(require_telemetry_reader)])
 def get_telemetry_report(
+    response: Response,
     start_date: datetime | None = None,
     end_date: datetime | None = None,
     session: Session = Depends(get_db),
@@ -61,6 +73,7 @@ def get_telemetry_report(
     else:
         cache_key = "telemetry_report:v1:default"
 
+    response.headers["Cache-Control"] = "private, no-store"
     cached = report_cache.get(cache_key)
     if cached is not None:
         return cached
@@ -79,7 +92,7 @@ async def receive_events(
     request: TelemetryEventsRequest,
     session: Session = Depends(get_db),
 ) -> dict[str, int]:
-    """Validate events individually and persist valid rows in one bulk call."""
+    """Collect browser signals, including pre-login and page-exit events."""
     received = len(request.events)
     rejected = 0
     valid_rows = []
@@ -91,7 +104,7 @@ async def receive_events(
             rejected += 1
             continue
 
-        valid_rows.append(map_event_to_row(event))
+        valid_rows.append(map_event_to_row(event, service=BROWSER_TELEMETRY_SERVICE))
 
     if valid_rows:
         bulk_insert_telemetry(session, valid_rows)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -31,7 +32,7 @@ def test_scheduler_image_contains_the_complete_independent_python_runtime():
     normalized = " ".join(dockerfile.split())
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
-    assert "FROM python:3.12-slim AS runtime" in dockerfile
+    assert re.search(r"(?m)^FROM python:3\.12-slim@sha256:[0-9a-f]{64} AS runtime\s*$", dockerfile)
     assert "WORKDIR /app" in dockerfile
     assert "COPY pyproject.toml /app/pyproject.toml" in dockerfile
     assert "COPY uv.lock /app/uv.lock" in dockerfile
@@ -62,7 +63,14 @@ def test_scheduler_runs_non_root_with_writable_export_directory():
     assert "mkdir -p /app/data/raw /app/infra/scheduler /app/services/api/data" in dockerfile
     assert "/app/services/api/data" in dockerfile.split("chown -R trackflow:trackflow", 1)[1]
     assert "USER 10001:10001" in dockerfile
-    assert "COPY --chown=trackflow:trackflow infra/scheduler/crontab" in dockerfile
+
+
+def test_scheduler_crontab_is_read_only_for_the_runtime_user():
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    chown_section = dockerfile.split("chown -R trackflow:trackflow", 1)[1].split("COPY", 1)[0]
+
+    assert "/app/infra/scheduler" not in chown_section
+    assert "COPY --chown=0:0 --chmod=0444 infra/scheduler/crontab" in dockerfile
 
 
 def test_scheduler_cmd_only_starts_supercronic_and_has_no_healthcheck_job():

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
 from weakref import WeakValueDictionary
@@ -12,14 +11,17 @@ from weakref import WeakValueDictionary
 from anyio import CancelScope
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.security import HTTPAuthorizationCredentials
-from jose import JWTError
 from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session
 
 from services.api.access_control import AccessContext, build_access_context
 from services.api.auth_models import Role, UserInDB
-from services.api.auth_security import _decode_access_token, _find_user_by_id, get_current_user
+from services.api.auth_security import (
+    ExpiringAccessSession,
+    get_current_user,
+    get_expiring_access_session,
+)
 from services.api.chat.contracts import (
     AuthenticateEvent,
     CLIENT_EVENT_ADAPTER,
@@ -65,20 +67,16 @@ _COORDINATORS_LOCK = asyncio.Lock()
 
 @dataclass(frozen=True)
 class _LocalSocketIdentity:
-    user_id: str
-    expires_at: int
+    session: ExpiringAccessSession
     access: AccessContext
 
+    @property
+    def user_id(self) -> str:
+        return self.session.user_id
+
     def revalidate(self, session_id: str) -> AccessContext:
-        if datetime.now(timezone.utc).timestamp() >= self.expires_at:
-            raise HTTPException(status_code=401)
-        user = _find_user_by_id(self.user_id)
-        if (
-            user is None
-            or not user.is_active
-            or user.role is not self.access.role
-            or user.role not in {Role.admin, Role.manager}
-        ):
+        user = self.session.current_user()
+        if user.role is not self.access.role:
             raise HTTPException(status_code=401)
         with open_db_session() as db:
             refreshed = build_access_context(db, user)
@@ -87,18 +85,13 @@ class _LocalSocketIdentity:
 
 
 def _local_identity(token: str) -> _LocalSocketIdentity:
-    payload = _decode_access_token(token)
-    expiry = payload.get("exp")
-    if type(expiry) is not int:
-        raise HTTPException(status_code=401)
-    user = _find_user_by_id(payload["sub"])
-    if user is None or not user.is_active:
-        raise HTTPException(status_code=401)
+    session = get_expiring_access_session(token)
+    user = session.current_user()
     if user.role not in {Role.admin, Role.manager}:
         raise HTTPException(status_code=403)
     with open_db_session() as db:
         access = build_access_context(db, user)
-    return _LocalSocketIdentity(user.id, expiry, access)
+    return _LocalSocketIdentity(session, access)
 
 
 def _support_identity(token: str, local_user_id: str) -> SupportIdentity:
@@ -259,7 +252,7 @@ async def chat_websocket(websocket: WebSocket) -> None:
         try:
             raw_auth = await asyncio.wait_for(websocket.receive_json(), timeout=10)
             auth = AuthenticateEvent.model_validate(raw_auth)
-        except (asyncio.TimeoutError, ValidationError, ValueError, TypeError, JWTError):
+        except (asyncio.TimeoutError, ValidationError, ValueError, TypeError):
             await websocket.close(code=4401, reason="authentication required")
             return
         try:

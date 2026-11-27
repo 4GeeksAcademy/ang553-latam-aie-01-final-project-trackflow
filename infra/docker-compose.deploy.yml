@@ -1,0 +1,119 @@
+# Opt-in deployment on a single Docker host. Use after the development file.
+name: trackflow-deploy
+
+x-unprivileged: &unprivileged
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+
+x-deployment-python: &deployment-python
+  <<: *unprivileged
+  env_file: !override
+    - "${TRACKFLOW_DEPLOY_ENV_FILE:?provide the explicit path to the deployment environment file}"
+
+services:
+  interfaces:
+    <<: *unprivileged
+    user: "1000:1000"
+    group_add: !reset []
+    build:
+      target: production
+      args:
+        API_BACKEND_URL: ${API_BACKEND_URL:-http://api:8000}
+        NEXT_PUBLIC_TELEMETRY_ENDPOINT: ${NEXT_PUBLIC_TELEMETRY_ENDPOINT:-/telemetry/events}
+        NEXT_PUBLIC_CHAT_WS_URL: ${NEXT_PUBLIC_CHAT_WS_URL:-}
+        NEXT_PUBLIC_SUPPORT_OIDC_AUTHORIZATION_ENDPOINT: ${NEXT_PUBLIC_SUPPORT_OIDC_AUTHORIZATION_ENDPOINT:-}
+        NEXT_PUBLIC_SUPPORT_OIDC_TOKEN_ENDPOINT: ${NEXT_PUBLIC_SUPPORT_OIDC_TOKEN_ENDPOINT:-}
+        NEXT_PUBLIC_SUPPORT_OIDC_CLIENT_ID: ${NEXT_PUBLIC_SUPPORT_OIDC_CLIENT_ID:-}
+    ports: !override
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:3001:3001"
+    volumes: !reset []
+    read_only: true
+    tmpfs: !override
+      - /tmp:rw,nosuid,nodev,noexec,mode=1777
+      - /app/uis/website/.next/cache:rw,nosuid,nodev,noexec,uid=1000,gid=1000,mode=0700
+      - /app/uis/backoffice/.next/cache:rw,nosuid,nodev,noexec,uid=1000,gid=1000,mode=0700
+
+  api:
+    <<: *deployment-python
+    environment:
+      - PREFECT_HOME=/tmp/trackflow-prefect
+    # TinyDB is process-local. The restrictive umask applies to newly created files.
+    command:
+      - /bin/sh
+      - -ec
+      - umask 077; exec uvicorn services.api.main:app --host 0.0.0.0 --port 8000 --workers 1
+    ports: !override
+      - "127.0.0.1:8000:8000"
+    networks:
+      - trackflow-dev
+      - trackflow-data
+    volumes: !override
+      - api-data:/app/services/api/data
+      - rfp-approval-runtime:/var/lib/trackflow/rfp-approval
+      - rfp-raw:/app/data/raw/rfp_intake
+      - ./docs/company-knowledge-base:/app/docs/company-knowledge-base:ro
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,mode=1777
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=2).close()
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  scheduler:
+    <<: *deployment-python
+
+  celery-worker:
+    <<: *deployment-python
+    networks:
+      - trackflow-dev
+      - trackflow-data
+
+  task-relay:
+    <<: *deployment-python
+    networks:
+      - trackflow-dev
+      - trackflow-data
+
+  rfp-task-relay:
+    <<: *deployment-python
+    networks:
+      - trackflow-dev
+      - trackflow-data
+
+  redis:
+    # The vendor entrypoint needs to change ownership and drop to the redis user.
+    security_opt:
+      - no-new-privileges:true
+    ports: !reset []
+    networks: !override
+      - trackflow-data
+
+  qdrant:
+    <<: *unprivileged
+    ports: !reset []
+    networks: !override
+      - trackflow-data
+
+  flower:
+    <<: *unprivileged
+    ports: !reset []
+    networks: !override
+      - trackflow-data
+
+networks:
+  trackflow-data:
+    internal: true
+
+volumes:
+  api-data:
+  rfp-approval-runtime:

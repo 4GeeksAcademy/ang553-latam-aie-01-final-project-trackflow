@@ -145,9 +145,12 @@ demostrar idempotencia.
 
 ## Identidad, tenant y datos prohibidos
 
-Solo `admin` y `manager` usan Support memory. El manager ve únicamente clientes
-activos de sus memberships; global es exclusivo de admin. Una conversación es
-propiedad de una identidad, y una identidad distinta recibe el mismo 404
+Solo `admin` y `manager` usan Support memory. Para memoria específica de cliente,
+el manager puede leer entradas vigentes de los clientes activos de sus memberships.
+Ambos roles pueden recuperar entradas globales activas, aprobadas y pertinentes
+mediante `MemoryStore.list_active`. La creación y resolución de propuestas
+globales exige admin con acceso global (`_authorize_scope`, `_authorize_row_scope`).
+Una conversación pertenece a una identidad. Otra identidad recibe el mismo 404
 sanitizado que un recurso inexistente.
 
 No se persisten transcripciones, prompts o respuestas crudas. También se rechazan

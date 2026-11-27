@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import type { Supplier } from "@/types/suppliers";
 
 interface Props {
+  canManage: boolean;
   suppliers: Supplier[];
   isLoading: boolean;
   errorMessage: string | null;
@@ -27,6 +28,7 @@ function formatDate(value: string): string {
 }
 
 export function SupplierList({
+  canManage,
   suppliers,
   isLoading,
   errorMessage,
@@ -45,6 +47,7 @@ export function SupplierList({
   const items = useMemo(() => suppliers, [suppliers]);
 
   const startEditRate = (supplier: Supplier) => {
+    if (!canManage || typeof supplier.rate_per_shipment !== "number") return;
     setEditingRateId(supplier.id);
     setRateInput(formatAmount(supplier.rate_per_shipment));
     setLocalRowError(null);
@@ -105,7 +108,9 @@ export function SupplierList({
 
       <div className="mt-5 space-y-4">
         {items.map((supplier) => {
-          const isEditingRate = editingRateId === supplier.id;
+          const rate = supplier.rate_per_shipment;
+          const hasRate = typeof rate === "number" && supplier.currency != null;
+          const isEditingRate = canManage && hasRate && editingRateId === supplier.id;
           const rowError = localRowError && isEditingRate ? localRowError : rowErrorById[supplier.id];
           const isRateLoading = activeRateMutationId === supplier.id;
           const isStatusLoading = activeStatusMutationId === supplier.id;
@@ -148,7 +153,7 @@ export function SupplierList({
               </div>
 
               <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <div>
+                {canManage && hasRate && <div>
                   <p className="text-xs uppercase tracking-wide text-slate-500">Rate per shipment</p>
                   {isEditingRate ? (
                     <div className="mt-1 flex items-center gap-2">
@@ -180,29 +185,29 @@ export function SupplierList({
                     </div>
                   ) : (
                     <p className="mt-1 text-sm font-semibold text-white">
-                      {formatAmount(supplier.rate_per_shipment)} {supplier.currency}
+                      {formatAmount(rate)} {supplier.currency}
                     </p>
                   )}
-                </div>
+                </div>}
 
                 <div>
                   <p className="text-xs uppercase tracking-wide text-slate-500">Service zone</p>
                   <p className="mt-1 text-sm text-slate-300">{supplier.service_zone ?? "-"}</p>
                 </div>
 
-                <div>
+                {canManage && "contact_email" in supplier && <div>
                   <p className="text-xs uppercase tracking-wide text-slate-500">Contact</p>
                   <p className="mt-1 text-sm text-slate-300">{supplier.contact_email ?? "-"}</p>
-                </div>
+                </div>}
 
-                <div>
+                {canManage && "notes" in supplier && <div>
                   <p className="text-xs uppercase tracking-wide text-slate-500">Notes</p>
                   <p className="mt-1 line-clamp-2 text-sm text-slate-300">{supplier.notes ?? "-"}</p>
-                </div>
+                </div>}
               </div>
 
-              <div className="mt-4 flex flex-wrap items-center gap-2">
-                {!isEditingRate && (
+              {canManage && <div className="mt-4 flex flex-wrap items-center gap-2">
+                {hasRate && !isEditingRate && (
                   <button
                     type="button"
                     onClick={() => startEditRate(supplier)}
@@ -221,9 +226,9 @@ export function SupplierList({
                 >
                   {isStatusLoading ? "Updating..." : nextStatus === "suspended" ? "Suspend" : "Reactivate"}
                 </button>
-              </div>
+              </div>}
 
-              {rowError && (
+              {canManage && rowError && (
                 <p className="mt-3 rounded-md border border-rose-800/30 bg-rose-950/30 px-2.5 py-2 text-xs text-rose-300">
                   {rowError}
                 </p>

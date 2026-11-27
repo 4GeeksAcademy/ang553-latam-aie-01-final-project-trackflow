@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
-from jose import jwt
+import jwt
 
 from services.api.auth_models import UserCreate
 from services.api.auth_security import decode_password_reset_token, get_current_user
@@ -36,8 +36,7 @@ def test_password_reset_token_is_rejected_by_get_current_user() -> None:
     assert exc_info.value.detail == "Could not validate credentials"
 
 
-def test_legacy_access_token_without_type_is_accepted_by_get_current_user() -> None:
-    """Legacy compatibility: access token without type claim should still authenticate."""
+def test_legacy_access_token_without_type_is_rejected() -> None:
     created = create_user(
         UserCreate(email="token.legacy@example.com", password="StrongPass123")
     )
@@ -53,5 +52,6 @@ def test_legacy_access_token_without_type_is_accepted_by_get_current_user() -> N
         algorithm=JWT_ALGORITHM,
     )
 
-    current_user = get_current_user(legacy_access_token)
-    assert current_user.id == created.id
+    with pytest.raises(HTTPException) as exc_info:
+        get_current_user(legacy_access_token)
+    assert exc_info.value.status_code == 401

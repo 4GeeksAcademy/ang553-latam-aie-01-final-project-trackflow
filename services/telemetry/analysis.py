@@ -12,7 +12,7 @@ from typing import Any
 import pandas as pd
 from sqlalchemy import select
 
-from services.api.telemetry_storage import telemetry_events
+from services.api.telemetry_storage import TRUSTED_TELEMETRY_SERVICE, telemetry_events
 
 
 # ── Event-type allowlist for operational-failure metrics ─────────────────────
@@ -32,7 +32,7 @@ def event_volume_by_day_and_type(
     start_date: datetime,
     end_date: datetime,
 ) -> list[dict[str, Any]]:
-    """How many events of each type were observed per day?
+    """How many trusted API events of each type were observed per day?
 
     Returns
     -------
@@ -46,6 +46,7 @@ def event_volume_by_day_and_type(
         )
         .where(telemetry_events.c.timestamp >= start_date)
         .where(telemetry_events.c.timestamp < end_date)
+        .where(telemetry_events.c.service == TRUSTED_TELEMETRY_SERVICE)
     )
     rows = session.execute(stmt).mappings().all()
     if not rows:
@@ -74,7 +75,7 @@ def operational_failures_by_type_and_day(
 ) -> list[dict[str, Any]]:
     """How many operational/technical failures of each type occurred per day?
 
-    Only event types matching ``OPERATIONAL_FAILURE_ALLOWLIST`` are included.
+    Only trusted API events matching ``OPERATIONAL_FAILURE_ALLOWLIST`` are included.
     """
     stmt = (
         select(
@@ -83,6 +84,7 @@ def operational_failures_by_type_and_day(
         )
         .where(telemetry_events.c.timestamp >= start_date)
         .where(telemetry_events.c.timestamp < end_date)
+        .where(telemetry_events.c.service == TRUSTED_TELEMETRY_SERVICE)
         .where(telemetry_events.c.event_type.in_(OPERATIONAL_FAILURE_ALLOWLIST))
     )
     rows = session.execute(stmt).mappings().all()
@@ -125,6 +127,7 @@ def stock_insufficiency_by_day_warehouse_category(
         )
         .where(telemetry_events.c.timestamp >= start_date)
         .where(telemetry_events.c.timestamp < end_date)
+        .where(telemetry_events.c.service == TRUSTED_TELEMETRY_SERVICE)
         .where(telemetry_events.c.event_type == "inventory_stock_insufficient")
     )
     rows = session.execute(stmt).mappings().all()
@@ -168,7 +171,7 @@ def auth_failure_rate_by_day(
 ) -> list[dict[str, Any]]:
     """What proportion of login attempts observed ended in failure, per day?
 
-    Loads both ``auth_login_failed`` and ``auth_login_succeeded`` events in a
+    Loads both ``auth_login_failed`` and ``auth_login_succeeded`` API events in a
     single SQL query, then computes the failure rate per UTC day.
 
     Parameters
@@ -193,6 +196,7 @@ def auth_failure_rate_by_day(
         )
         .where(telemetry_events.c.timestamp >= start_date)
         .where(telemetry_events.c.timestamp < end_date)
+        .where(telemetry_events.c.service == TRUSTED_TELEMETRY_SERVICE)
         .where(
             telemetry_events.c.event_type.in_(
                 ["auth_login_failed", "auth_login_succeeded"],
@@ -245,7 +249,7 @@ def build_telemetry_report(
     start_date: datetime,
     end_date: datetime,
 ) -> dict[str, Any]:
-    """Build a full telemetry analysis report for the given time window.
+    """Build an operational report from server-produced events for the window.
 
     Parameters
     ----------

@@ -12,6 +12,8 @@ from unittest.mock import MagicMock, PropertyMock, create_autospec
 
 import pandas as pd
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 # sqlalchemy types used indirectly via the analysis module
 
 from services.telemetry.analysis import (
@@ -58,6 +60,44 @@ def _mock_session_with_captured_stmt(
 
     session.execute.side_effect = side_effect
     return session, captured
+
+
+def test_report_excludes_browser_rows_from_operational_metrics():
+    engine = create_engine("sqlite://")
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "CREATE TABLE telemetry_events "
+                "(timestamp DATETIME, event_type TEXT, service TEXT, tags TEXT)"
+            )
+            timestamp = "2026-10-20 08:00:00.000000"
+            tags = json.dumps({"warehouse": "QA", "product_category": "test"})
+            rows = [
+                (timestamp, event_type, source, tags)
+                for source in ("api", "backoffice")
+                for event_type in ("auth_login_failed", "inventory_stock_insufficient")
+            ]
+            rows.append((timestamp, "auth_login_succeeded", "backoffice", tags))
+            connection.exec_driver_sql(
+                "INSERT INTO telemetry_events VALUES (?, ?, ?, ?)", rows
+            )
+        with Session(engine) as session:
+            report = build_telemetry_report(session, T0, T1)
+    finally:
+        engine.dispose()
+
+    metrics = report["metrics"]
+    assert metrics["event_volume_by_day_and_type"] == [
+        {"day": "2026-10-20", "event_type": event_type, "count": 1}
+        for event_type in ("auth_login_failed", "inventory_stock_insufficient")
+    ]
+    assert metrics["operational_failures_by_type_and_day"] == metrics["event_volume_by_day_and_type"]
+    assert metrics["stock_insufficiency_by_day_warehouse_category"] == [
+        {"day": "2026-10-20", "warehouse": "QA", "product_category": "test", "count": 1}
+    ]
+    assert metrics["auth_failure_rate"] == [
+        {"day": "2026-10-20", "failed": 1, "succeeded": 0, "total": 1, "failure_rate": 1.0}
+    ]
 
 
 # Shared test constants
