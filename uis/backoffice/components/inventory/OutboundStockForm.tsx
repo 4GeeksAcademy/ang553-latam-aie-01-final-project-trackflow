@@ -25,7 +25,8 @@
 "use client";
 
 import { useState, useCallback, useRef } from "react";
-import { ApiError, createStockExit, getInventoryProduct } from "@/lib/inventoryApi";
+import { ApiError, createStockExit, getInventoryProduct, reviewStockExit } from "@/lib/inventoryApi";
+import type { DispatchReviewResponse } from "@/lib/inventoryApi";
 import type { SKUResponse, ExitType, StockExitCreate } from "@/types/inventory";
 import { useInventoryWorkflowLifecycle } from "@/components/telemetry/InventoryWorkflowLifecycle";
 
@@ -177,7 +178,16 @@ export function OutboundStockForm({
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
   const [refreshWarning, setRefreshWarning] = useState<string | null>(null);
   const [refreshedProduct, setRefreshedProduct] = useState<SKUResponse | null>(null);
+  const [pendingReview, setPendingReview] = useState<{
+    payload: StockExitCreate;
+    fingerprint: string;
+    idempotencyKey: string;
+    review: DispatchReviewResponse;
+  } | null>(null);
   const submitInFlightRef = useRef(false);
+  // Retained across edits for this mounted form. A full reload/unmount loses
+  // these client-side retry keys; the backend remains the source of truth.
+  const ambiguousDispatchKeysRef = useRef(new Map<string, string>());
 
   /* Effective SKU declarative, no effect */
   const initialSkuIsValid =
@@ -226,6 +236,7 @@ export function OutboundStockForm({
     setSubmitSuccess(null);
     setSubmitError(null);
     setRefreshWarning(null);
+    setPendingReview(null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -237,13 +248,6 @@ export function OutboundStockForm({
     const validationErrors = runValidation();
     setErrors(validationErrors);
     if (Object.keys(validationErrors).length > 0) {
-      markValidationError();
-      return;
-    }
-
-    const stockWarning = getStockWarning(quantity, currentStock);
-    if (stockWarning) {
-      setErrors((prev) => ({ ...prev, quantity: stockWarning }));
       markValidationError();
       return;
     }
@@ -260,13 +264,40 @@ export function OutboundStockForm({
       tracking_number: exitType === "dispatch" ? trackingNumber.trim() : null,
       warehouse: selectedProduct.warehouse,
     };
+    const payloadFingerprint = JSON.stringify(payload);
+    const retainedIdempotencyKey = payload.exit_type === "dispatch"
+      ? ambiguousDispatchKeysRef.current.get(payloadFingerprint)
+      : undefined;
+    const stockWarning = getStockWarning(quantity, currentStock);
+    if (stockWarning && retainedIdempotencyKey === undefined) {
+      setErrors((prev) => ({ ...prev, quantity: stockWarning }));
+      markValidationError();
+      return;
+    }
 
     setIsSubmitting(true);
     submitInFlightRef.current = true;
 
     try {
+      let idempotencyKey = retainedIdempotencyKey;
+      if (payload.exit_type === "dispatch" && idempotencyKey === undefined) {
+        idempotencyKey = crypto.randomUUID();
+        ambiguousDispatchKeysRef.current.set(payloadFingerprint, idempotencyKey);
+      }
+      if (payload.exit_type === "dispatch") {
+        const review = await reviewStockExit(payload, idempotencyKey as string);
+        setPendingReview({
+          payload,
+          fingerprint: payloadFingerprint,
+          idempotencyKey: idempotencyKey as string,
+          review,
+        });
+        setSubmitSuccess("Review ready. Verify the summary and confirm the dispatch.");
+        return;
+      }
       markCreateAttempt();
       await createStockExit(payload);
+      ambiguousDispatchKeysRef.current.delete(payloadFingerprint);
       markCompletedSuccessfully();
 
       setSubmitSuccess(
@@ -283,6 +314,8 @@ export function OutboundStockForm({
         );
       }
     } catch (error: unknown) {
+      // Keep the key until a successful response is parsed. A timeout, proxy
+      // error, auth response, or malformed success body can follow a commit.
       setSubmitError(getSubmitErrorMessage(error));
 
       if (error instanceof ApiError && error.statusCode === 400) {
@@ -291,6 +324,61 @@ export function OutboundStockForm({
           setRefreshWarning("Current stock could not be refreshed.");
         }
       }
+    } finally {
+      setIsSubmitting(false);
+      submitInFlightRef.current = false;
+    }
+  };
+
+  const handleConfirmDispatch = async () => {
+    if (pendingReview === null || submitInFlightRef.current) return;
+    setIsSubmitting(true);
+    submitInFlightRef.current = true;
+    setSubmitError(null);
+    try {
+      if (Date.parse(pendingReview.review.expires_at) <= Date.now()) {
+        const refreshedReview = await reviewStockExit(
+          pendingReview.payload,
+          pendingReview.idempotencyKey,
+        );
+        setPendingReview({ ...pendingReview, review: refreshedReview });
+        setSubmitSuccess("Review refreshed. Verify it and confirm again.");
+        return;
+      }
+      markCreateAttempt();
+      await createStockExit(
+        pendingReview.payload,
+        pendingReview.idempotencyKey,
+        pendingReview.review.review_proof,
+      );
+      ambiguousDispatchKeysRef.current.delete(pendingReview.fingerprint);
+      markCompletedSuccessfully();
+      setSubmitSuccess(
+        `Outbound dispatch recorded: ${pendingReview.payload.quantity} units of ${selectedProduct?.name ?? "the selected product"} from ${pendingReview.payload.warehouse}.`,
+      );
+      setPendingReview(null);
+      setQuantity("");
+      setTrackingNumber("");
+      setErrors({});
+      if (!await refreshSelectedProduct(pendingReview.payload.sku_id)) {
+        setRefreshWarning("Outbound was recorded, but current stock could not be refreshed.");
+      }
+    } catch (error: unknown) {
+      if (error instanceof ApiError && error.statusCode === 428) {
+        try {
+          const refreshedReview = await reviewStockExit(
+            pendingReview.payload,
+            pendingReview.idempotencyKey,
+          );
+          setPendingReview({ ...pendingReview, review: refreshedReview });
+          setSubmitSuccess("Review refreshed. Verify it and confirm again.");
+          return;
+        } catch (refreshError: unknown) {
+          setSubmitError(getSubmitErrorMessage(refreshError));
+          return;
+        }
+      }
+      setSubmitError(getSubmitErrorMessage(error));
     } finally {
       setIsSubmitting(false);
       submitInFlightRef.current = false;
@@ -567,6 +655,33 @@ export function OutboundStockForm({
       </div>
 
       {/* Submit / operation result */}
+      {pendingReview && (
+        <section className="mt-6 rounded-lg border border-cyan-500/40 bg-cyan-950/30 p-4">
+          <h4 className="text-sm font-semibold text-cyan-100">Review dispatch</h4>
+          <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
+            <dt className="text-slate-400">Product</dt>
+            <dd className="text-right text-white">{selectedProduct?.name ?? pendingReview.payload.sku_id}</dd>
+            <dt className="text-slate-400">Quantity</dt>
+            <dd className="text-right text-white">{pendingReview.review.summary.total_quantity}</dd>
+            <dt className="text-slate-400">Warehouse</dt>
+            <dd className="text-right text-white">{pendingReview.review.summary.warehouse}</dd>
+            <dt className="text-slate-400">Tracking</dt>
+            <dd className="text-right text-white">{pendingReview.payload.tracking_number}</dd>
+          </dl>
+          <p className="mt-3 text-xs text-slate-400">
+            Confirming records the stock exit. This is your confirmation as the authorized operator, not an independent approval.
+          </p>
+          <button
+            type="button"
+            onClick={handleConfirmDispatch}
+            disabled={isSubmitting}
+            className="mt-4 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-500 disabled:opacity-50"
+          >
+            {isSubmitting ? "Confirming…" : "Confirm dispatch"}
+          </button>
+        </section>
+      )}
+
       <div className="mt-8 flex items-center justify-between gap-4 border-t border-white/10 pt-6">
         <div className="flex flex-col gap-1">
           {submitSuccess && (
@@ -589,7 +704,11 @@ export function OutboundStockForm({
               : "bg-cyan-600 hover:bg-cyan-500"
           }`}
         >
-          {isSubmitting ? "Registering…" : "Register outbound"}
+          {isSubmitting
+            ? "Preparing…"
+            : exitType === "dispatch"
+              ? "Review dispatch"
+              : "Register outbound"}
         </button>
       </div>
     </form>

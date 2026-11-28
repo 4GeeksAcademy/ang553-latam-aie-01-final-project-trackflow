@@ -6,9 +6,9 @@ import type {
   SupportQueryResponse,
 } from "@/types/support";
 import {
-  clearSupportAccessToken,
   getCurrentSupportAccessToken,
   getSupportAccessToken,
+  requireSupportReauthorization,
   SupportAuthorizationError,
   SupportAuthorizationRedirect,
 } from "@/lib/supportOidc";
@@ -116,15 +116,16 @@ export async function askSupport(
   options: SupportQueryOptions = {},
 ): Promise<SupportQueryResponse> {
   let response: Response;
+  let requestToken: string;
   const startedAt =
     typeof performance === "undefined" ? Date.now() : performance.now();
   try {
-    const token = await getSupportAccessToken();
+    requestToken = await getSupportAccessToken();
     const requestId = globalThis.crypto?.randomUUID?.();
     const headers = new Headers({
       Accept: "application/json",
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${requestToken}`,
     });
     if (requestId) headers.set("X-Request-ID", requestId);
     response = await fetch(`${BASE_URL}/support/query`, {
@@ -147,7 +148,7 @@ export async function askSupport(
     throw new SupportApiError("No se pudo conectar con el asistente de soporte.");
   }
 
-  if (response.status === 401) clearSupportAccessToken();
+  if (response.status === 401) requireSupportReauthorization(requestToken);
 
   if (response.status >= 500 && response.status <= 599) {
     const finishedAt =
@@ -220,7 +221,7 @@ export async function decideSupportMemory(
     throw new SupportApiError("No se pudo registrar la decisión de memoria.");
   }
   options.signal?.throwIfAborted();
-  if (response.status === 401) clearSupportAccessToken(requestToken);
+  if (response.status === 401) requireSupportReauthorization(requestToken);
   if (!response.ok) {
     throw new SupportApiError(messageForStatus(response.status), response.status);
   }
@@ -264,7 +265,7 @@ export async function getPendingSupportMemory(
     throw new SupportApiError("No se pudo recuperar la propuesta pendiente.");
   }
   options.signal?.throwIfAborted();
-  if (response.status === 401) clearSupportAccessToken(requestToken);
+  if (response.status === 401) requireSupportReauthorization(requestToken);
   if (!response.ok) {
     throw new SupportApiError(messageForStatus(response.status), response.status);
   }

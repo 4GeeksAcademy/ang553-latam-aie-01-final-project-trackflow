@@ -3,7 +3,15 @@
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { authFetch } from "@/lib/authFetch";
 import { getToken } from "@/lib/auth";
-import { clearSupportAccessToken, getSupportAccessToken, SupportAuthorizationRedirect } from "@/lib/supportOidc";
+import {
+  getSupportAccessToken,
+  getSupportAccessTokenExpiresAt,
+  reauthorizeSupport,
+  requireSupportReauthorization,
+  resetSupportAuthorization,
+  SupportAuthorizationError,
+  SupportAuthorizationRedirect,
+} from "@/lib/supportOidc";
 import {
   chatErrorMessage,
   chatRetryDelay,
@@ -66,6 +74,7 @@ export function useSupportChat(options: {
   const [creatingSession, setCreatingSession] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
+  const [authorizationRequired, setAuthorizationRequired] = useState(false);
   const [selected, setSelected] = useState<{ scope: string; sessionId: string } | null>(null);
   const sessionId = scope === selected?.scope ? selected?.sessionId ?? null : null;
   const state = sessionId && scopedState.sessionId === sessionId ? scopedState.chat : emptyChatState;
@@ -75,10 +84,26 @@ export function useSupportChat(options: {
   const generationLockedRef = useRef(false);
   const interruptingRef = useRef(false);
   const creatingSessionRef = useRef(false);
+  const authorizedUserRef = useRef(userId);
+  const identityObservedRef = useRef(userId !== undefined);
 
   useLayoutEffect(() => {
     scopeRef.current = scope;
   }, [scope]);
+
+  useLayoutEffect(() => {
+    if (!identityObservedRef.current) {
+      if (userId !== undefined) {
+        identityObservedRef.current = true;
+        authorizedUserRef.current = userId;
+      }
+      return;
+    }
+    if (authorizedUserRef.current !== userId) {
+      resetSupportAuthorization();
+      authorizedUserRef.current = userId;
+    }
+  }, [userId]);
 
   useEffect(() => {
     if (!enabled || !userId || !clientId) {
@@ -93,9 +118,23 @@ export function useSupportChat(options: {
     }
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let authorizationTimer: ReturnType<typeof setTimeout> | null = null;
     let attempt = 0;
 
+    const requestSupportReauthorization = (socket?: WebSocket) => {
+      requireSupportReauthorization();
+      generationLockedRef.current = false;
+      interruptingRef.current = false;
+      setInterrupting(false);
+      setAuthorizationRequired(true);
+      setTransportError("La autorización OIDC del chat expiró. Vuelve a autorizar soporte.");
+      setConnection("idle");
+      socket?.close(1000, "support authorization expired");
+    };
+
     const connect = async () => {
+      if (authorizationTimer) clearTimeout(authorizationTimer);
+      authorizationTimer = null;
       setConnection(attempt === 0 ? "connecting" : "reconnecting");
       setTransportError(null);
       try {
@@ -112,8 +151,19 @@ export function useSupportChat(options: {
         if (!accessToken) throw new Error("authentication");
         const supportToken = await getSupportAccessToken();
         if (stopped) return;
+        setAuthorizationRequired(false);
+        const reauthorizeAfter = Math.max(
+          0,
+          getSupportAccessTokenExpiresAt() - Date.now(),
+        );
         const socket = new WebSocket(socketUrl());
         socketRef.current = socket;
+        authorizationTimer = setTimeout(() => {
+          if (!stopped && socketRef.current === socket) {
+            socketRef.current = null;
+            requestSupportReauthorization(socket);
+          }
+        }, reauthorizeAfter);
         socket.onopen = () => {
           if (stopped || socketRef.current !== socket) return;
           socket.send(JSON.stringify({
@@ -155,6 +205,12 @@ export function useSupportChat(options: {
               if (["generation_unavailable", "support_authorization_required", "session_unavailable"].includes(event.data.code)) {
                 generationLockedRef.current = false;
               }
+              if (event.data.code === "support_authorization_required") {
+                if (authorizationTimer) clearTimeout(authorizationTimer);
+                authorizationTimer = null;
+                socketRef.current = null;
+                requestSupportReauthorization(socket);
+              }
             }
           } catch {
             setTransportError("El chat recibió un evento inválido.");
@@ -166,6 +222,8 @@ export function useSupportChat(options: {
           }
         };
         socket.onclose = (event) => {
+          if (authorizationTimer) clearTimeout(authorizationTimer);
+          authorizationTimer = null;
           if (socketRef.current === socket) socketRef.current = null;
           if (stopped || event.code === 1000) return;
           if (event.code === 4404) {
@@ -179,8 +237,9 @@ export function useSupportChat(options: {
             generationLockedRef.current = false;
             interruptingRef.current = false;
             setInterrupting(false);
-            clearSupportAccessToken();
-            setTransportError("La autenticación del chat expiró. Vuelve a autorizar soporte.");
+            setTransportError(event.code === 4401
+              ? "La sesión local expiró. Inicia sesión de nuevo."
+              : "El servidor denegó el acceso al chat de soporte.");
             setConnection("idle");
             return;
           }
@@ -190,6 +249,12 @@ export function useSupportChat(options: {
         };
       } catch (error) {
         if (error instanceof SupportAuthorizationRedirect || stopped) return;
+        if (error instanceof SupportAuthorizationError) {
+          setAuthorizationRequired(true);
+          setTransportError(error.message);
+          setConnection("idle");
+          return;
+        }
         const message = error instanceof Error && error.message === "forbidden"
           ? "No tienes acceso a ese cliente."
           : "No se pudo iniciar el chat en tiempo real.";
@@ -201,6 +266,7 @@ export function useSupportChat(options: {
     return () => {
       stopped = true;
       if (timer) clearTimeout(timer);
+      if (authorizationTimer) clearTimeout(authorizationTimer);
       const socket = socketRef.current;
       socketRef.current = null;
       socket?.close(1000, "component disposed");
@@ -275,6 +341,21 @@ export function useSupportChat(options: {
     }
   }, [clientId, scope, state.generationActive]);
 
+  const reauthorize = useCallback(async (): Promise<void> => {
+    if (!authorizationRequired) return;
+    setTransportError(null);
+    try {
+      await reauthorizeSupport();
+    } catch (error) {
+      if (error instanceof SupportAuthorizationRedirect) return;
+      setTransportError(
+        error instanceof SupportAuthorizationError
+          ? error.message
+          : "No se pudo iniciar la autorización OIDC de soporte.",
+      );
+    }
+  }, [authorizationRequired]);
+
   return {
     ...state,
     connection: sessionId ? connection : scope && connection !== "idle" ? "connecting" : "idle",
@@ -285,6 +366,8 @@ export function useSupportChat(options: {
     startNewSession,
     creatingSession,
     interrupting,
+    authorizationRequired,
+    reauthorize,
     retry: () => setRetryNonce((value) => value + 1),
   };
 }

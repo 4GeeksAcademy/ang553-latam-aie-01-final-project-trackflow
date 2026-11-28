@@ -36,7 +36,9 @@ from services.api.chat.models import chat_events, chat_generations
 from services.api.chat.pubsub import SessionPubSub, SlowSubscriber
 from services.api.chat.store import ChatNotFound, GenerationRecord, _authorize_row
 from services.api.chat.store import ChatSupportContext
+from services.api.rate_limit import FixedWindowRateLimiter
 from services.api.routes.support import SupportKnowledgeResponse, SupportQueryResponse
+import services.api.routes.support as support_route
 from agents.customer_support import graph as support_graph
 
 
@@ -635,6 +637,156 @@ def test_websocket_reports_malformed_json_after_authentication(monkeypatch):
         }
 
 
+def test_websocket_admission_is_visible_to_real_http_support_boundary(
+    monkeypatch,
+):
+    access = AccessContext(
+        "user-a", Role.manager, frozenset({"client-a"}), frozenset()
+    )
+    identity = SimpleNamespace(user=SimpleNamespace(id="user-a", role=Role.manager))
+    local = SimpleNamespace(
+        user_id="user-a",
+        access=access,
+        revalidate=lambda _session_id: access,
+    )
+    limiter = FixedWindowRateLimiter(
+        requests=1, window_seconds=60, max_identities=10, clock=lambda: 10.0,
+    )
+    monkeypatch.setattr(support_route, "_SUPPORT_RATE_LIMITER", limiter)
+    starts = []
+    admitted = Event()
+
+    @contextmanager
+    def session():
+        yield object()
+
+    class Coordinator:
+        async def reconcile_after_restart(self, _session_id):
+            return False
+
+        async def start(self, *_args):
+            starts.append(_args)
+            admitted.set()
+            return True
+
+    async def coordinator(*_args):
+        return Coordinator()
+
+    monkeypatch.setattr(chat_router_module, "_local_identity", lambda _token: local)
+    monkeypatch.setattr(chat_router_module, "_support_identity", lambda *_args: identity)
+    monkeypatch.setattr(chat_router_module, "open_db_session", session)
+    monkeypatch.setattr(chat_router_module, "_coordinator", coordinator)
+    monkeypatch.setattr(
+        chat_router_module,
+        "chat_snapshot",
+        lambda *_args, **_kwargs: SessionSnapshotData(
+            session_id="chat_1", messages=[], cursor=0
+        ),
+    )
+
+    app = _auth_only_app()
+    app.include_router(support_route.router)
+    app.dependency_overrides[support_route.require_support_reader] = lambda: identity
+    app.dependency_overrides[support_route.get_db] = lambda: SimpleNamespace()
+    app.dependency_overrides[support_route.get_external_support_agent] = lambda: object()
+    app.dependency_overrides[support_route.get_support_mcp_tools] = lambda: object()
+    app.dependency_overrides[support_route.get_memory_store] = lambda: object()
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/chat/ws") as socket:
+            socket.send_json({
+                "event": "authenticate",
+                "data": {
+                    "session_id": "chat_1",
+                    "access_token": "controlled",
+                    "support_token": "controlled-support",
+                },
+            })
+            assert socket.receive_json()["event"] == "session_snapshot"
+            socket.send_json({
+                "event": "user_message",
+                "data": {"session_id": "chat_1", "text": "consulta ordinaria"},
+            })
+            assert admitted.wait(timeout=2)
+
+        response = client.post(
+            "/support/query", json={"question": "consulta ordinaria"}
+        )
+
+    assert len(starts) == 1
+    assert response.status_code == 429
+    assert response.json() == {"detail": "support rate limit exceeded"}
+    assert response.headers["Retry-After"] == "60"
+
+
+def test_rate_limited_redirect_still_interrupts_without_replacement_persistence(
+    monkeypatch,
+):
+    access = AccessContext(
+        "user-a", Role.manager, frozenset({"client-a"}), frozenset()
+    )
+    identity = SimpleNamespace(user=SimpleNamespace(id="user-a", role=Role.manager))
+    local = SimpleNamespace(
+        user_id="user-a", access=access, revalidate=lambda _session_id: access,
+    )
+    limiter = FixedWindowRateLimiter(
+        requests=1, window_seconds=60, max_identities=10, clock=lambda: 30.0,
+    )
+    monkeypatch.setattr(support_route, "_SUPPORT_RATE_LIMITER", limiter)
+    support_route.admit_support_operation(identity)
+    interrupts = []
+
+    @contextmanager
+    def session():
+        yield object()
+
+    class Coordinator:
+        async def reconcile_after_restart(self, _session_id):
+            return False
+
+        async def interrupt(self, session_id, new_input, _producer):
+            interrupts.append((session_id, new_input))
+            return True
+
+    coordinator_instance = Coordinator()
+
+    async def coordinator(*_args):
+        return coordinator_instance
+
+    monkeypatch.setattr(chat_router_module, "_local_identity", lambda _token: local)
+    monkeypatch.setattr(chat_router_module, "_support_identity", lambda *_args: identity)
+    monkeypatch.setattr(chat_router_module, "open_db_session", session)
+    monkeypatch.setattr(chat_router_module, "_coordinator", coordinator)
+    monkeypatch.setattr(
+        chat_router_module,
+        "chat_snapshot",
+        lambda *_args, **_kwargs: SessionSnapshotData(
+            session_id="chat_1", messages=[], cursor=0
+        ),
+    )
+
+    with TestClient(_auth_only_app()).websocket_connect("/chat/ws") as socket:
+        socket.send_json({
+            "event": "authenticate",
+            "data": {
+                "session_id": "chat_1",
+                "access_token": "controlled",
+                "support_token": "controlled-support",
+            },
+        })
+        assert socket.receive_json()["event"] == "session_snapshot"
+        socket.send_json({
+            "event": "interrupt_requested",
+            "data": {"session_id": "chat_1", "new_input": "consulta nueva"},
+        })
+        assert socket.receive_json() == {
+            "event": "error",
+            "data": {"session_id": "chat_1", "code": "generation_unavailable"},
+        }
+
+    assert interrupts == [("chat_1", None)]
+
+
 def test_snapshot_contract_orders_messages_and_carries_watermark():
     snapshot = SessionSnapshotData(
         session_id="chat_1",
@@ -721,6 +873,51 @@ def test_authentic_producer_fails_closed_without_exact_client_scope(monkeypatch)
                 pass
 
     asyncio.run(scenario())
+
+
+def test_requested_qa_units_cannot_bypass_shared_support_quota(monkeypatch):
+    conversation_id = "04ec5b84-5019-4b93-a1d3-57a9fe6c1250"
+    access = AccessContext(
+        "user-a", Role.manager, frozenset({"client-a"}), frozenset()
+    )
+    identity = SimpleNamespace(user=SimpleNamespace(id="user-a", role=Role.manager))
+    scope = SimpleNamespace(allows=lambda _access: True)
+    limiter = FixedWindowRateLimiter(
+        requests=1, window_seconds=60, max_identities=10, clock=lambda: 20.0,
+    )
+    monkeypatch.setattr(support_route, "_SUPPORT_RATE_LIMITER", limiter)
+    support_route.admit_support_operation(identity)
+    provider_calls = []
+
+    @contextmanager
+    def session():
+        yield object()
+
+    async def publish(*_args, **_kwargs):
+        provider_calls.append("publish")
+        yield "must not publish"
+
+    monkeypatch.setattr(producer_module, "requested_qa_unit_scope", lambda *_: scope)
+    monkeypatch.setattr(producer_module, "open_db_session", session)
+    monkeypatch.setattr(producer_module, "apply_statement_timeout", lambda *_: None)
+    monkeypatch.setattr(producer_module, "build_access_context", lambda *_: access)
+    monkeypatch.setattr(producer_module, "get_chat_session", lambda *_args: object())
+    monkeypatch.setattr(
+        producer_module,
+        "get_memory_store",
+        lambda: SimpleNamespace(get_pending=lambda *_args, **_kwargs: None),
+    )
+    monkeypatch.setattr(producer_module, "publish_qa_units", publish)
+
+    async def scenario():
+        with pytest.raises(coordinator_module.ProducerUnavailable):
+            async for _chunk in producer_module.authentic_support_producer(identity)(
+                conversation_id, "consulta QA autorizada"
+            ):
+                pass
+
+    asyncio.run(scenario())
+    assert provider_calls == []
 
 
 @pytest.mark.parametrize("memory_used", [False, True])

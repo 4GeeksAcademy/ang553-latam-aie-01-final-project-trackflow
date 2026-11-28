@@ -164,12 +164,74 @@ def test_authenticated_inventory_gets_preserve_contract(
         headers=headers,
         json={
             "sku_id": product_id,
-            "quantity": 1,
+            "quantity": 3,
             "reference": "AUTH-REF",
             "warehouse": "LA",
         },
     )
     assert inbound.status_code == 201
+    dispatch_headers = {
+        **headers,
+        "Idempotency-Key": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    }
+    dispatch_payload = {
+        "sku_id": product_id,
+        "quantity": 1,
+        "exit_type": "dispatch",
+        "tracking_number": "AUTH-IDEMPOTENT",
+        "warehouse": "LA",
+    }
+    unconfirmed = _request(
+        "POST", "/inventory/orders/outbound",
+        headers=dispatch_headers, json=dispatch_payload,
+    )
+    assert unconfirmed.status_code == 428
+    assert unconfirmed.json() == {
+        "detail": "A valid dispatch review proof is required."
+    }
+    loss_payload = {
+        "sku_id": product_id,
+        "quantity": 1,
+        "exit_type": "loss",
+        "tracking_number": None,
+        "warehouse": "LA",
+    }
+    keyed_loss = _request(
+        "POST", "/inventory/orders/outbound",
+        headers=dispatch_headers, json=loss_payload,
+    )
+    assert keyed_loss.status_code == 422
+    loss = _request(
+        "POST", "/inventory/orders/outbound",
+        headers=headers, json=loss_payload,
+    )
+    assert loss.status_code == 201
+    assert set(loss.json()) == {"id"}
+    review = _request(
+        "POST", "/inventory/dispatch-reviews/outbound",
+        headers=dispatch_headers, json=dispatch_payload,
+    )
+    assert review.status_code == 200
+    assert review.headers["Cache-Control"] == "no-store"
+    dispatch_headers["X-TrackFlow-Dispatch-Review"] = review.json()["review_proof"]
+    missing_key = _request(
+        "POST", "/inventory/orders/outbound",
+        headers={**headers, "X-TrackFlow-Dispatch-Review": review.json()["review_proof"]},
+        json=dispatch_payload,
+    )
+    assert missing_key.status_code == 428
+    assert missing_key.json() == unconfirmed.json()
+    dispatch = _request(
+        "POST", "/inventory/orders/outbound",
+        headers=dispatch_headers, json=dispatch_payload,
+    )
+    dispatch_retry = _request(
+        "POST", "/inventory/orders/outbound",
+        headers=dispatch_headers, json=dispatch_payload,
+    )
+    assert dispatch.status_code == 201
+    assert dispatch_retry.status_code == 201
+    assert dispatch_retry.json() == dispatch.json()
     authenticated_orders = _request("GET", "/inventory/orders", headers=headers)
     assert authenticated_orders.status_code == 200
     item = next(

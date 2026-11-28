@@ -81,7 +81,6 @@ const SUPPORT_CONVERSATION_KEY_PREFIX = "trackflow_support_conversation_id";
 const SUPPORT_DECISION_KEY_PREFIX = "trackflow_support_decision";
 const SUPPORT_DECISION_INTENT_KEY_PREFIX = "trackflow_support_decision_intent";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-let supportAuthorizationInitialization: Promise<boolean> | null = null;
 
 interface StoredDecisionIntent {
   user_id: string;
@@ -94,11 +93,6 @@ interface StoredDecisionIntent {
 interface LegacyDecisionReference {
   proposal_id: string;
   action: "approve" | "reject";
-}
-
-function initializeSupportAuthorizationOnce(): Promise<boolean> {
-  supportAuthorizationInitialization ??= initializeSupportAuthorization();
-  return supportAuthorizationInitialization;
 }
 
 function clearPendingSupportQuestion(): void {
@@ -403,7 +397,7 @@ export default function SupportPage() {
       setClientId("");
       setMemoryScope("client");
     });
-    initializeSupportAuthorizationOnce()
+    initializeSupportAuthorization()
       .then(async (completed) => {
         if (!active) return;
         if (completed) {
@@ -705,7 +699,7 @@ export default function SupportPage() {
                 decisionKey={(currentProposal, action, text) => decisionIdempotency(userId, currentProposal, action, text)}
               />}
               {chat.generationActive && <p role="status" aria-live="polite" className="mt-2 text-sm text-cyan-200">{chat.interrupting ? "Solicitando la interrupción…" : progressLabel ?? "Generando respuesta…"}</p>}
-              {chat.error && <div role="alert" className="mt-3 text-sm text-rose-300"><p>{chat.error}</p>{chat.connection === "idle" && <button type="button" onClick={chat.retry} className="mt-2 rounded-lg border border-rose-400/40 px-3 py-1.5 text-xs">Reintentar conexión</button>}</div>}
+              {chat.error && <div role="alert" className="mt-3 text-sm text-rose-300"><p>{chat.error}</p>{chat.authorizationRequired ? <button type="button" onClick={() => void chat.reauthorize()} className="mt-2 rounded-lg border border-rose-400/40 px-3 py-1.5 text-xs">Volver a autorizar soporte</button> : chat.connection === "idle" && <button type="button" onClick={chat.retry} className="mt-2 rounded-lg border border-rose-400/40 px-3 py-1.5 text-xs">Reintentar conexión</button>}</div>}
               <form onSubmit={submitChat} className="mt-3 rounded-xl border border-white/10 bg-slate-950 p-3 transition focus-within:border-cyan-400/60 focus-within:ring-2 focus-within:ring-cyan-400/20">
                 <label htmlFor="chat-message" className="sr-only">{chat.generationActive ? "Nueva consulta para redirigir" : "Mensaje"}</label>
                 <textarea ref={chatComposerRef} id="chat-message" rows={2} maxLength={2000} value={chatDraft} onChange={(event) => setChatDrafts((drafts) => ({ ...drafts, [chatDraftKey]: event.target.value }))} onKeyDown={handleChatKeyDown} disabled={chat.connection !== "connected" || chat.interrupting} placeholder={chat.generationActive ? "Escribe otra consulta para redirigir…" : "Escribe una consulta…"} className="w-full resize-none bg-transparent px-1 py-1 text-sm text-white outline-none placeholder:text-slate-400 disabled:opacity-60" />

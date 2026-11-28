@@ -11,9 +11,10 @@ Uses an isolated SQLite in-memory database and direct handler calls
 from __future__ import annotations
 
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from pydantic import ValidationError
 from sqlalchemy import insert
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -37,7 +38,8 @@ from services.api.inventory_service import (
 from services.api.inventory_outbox import inventory_outbox_metadata
 from services.api.routes.inventory import (
     create_inbound_order,
-    create_outbound_order,
+    create_outbound_order as _create_outbound_order_handler,
+    review_outbound_order,
     list_orders_endpoint as _list_orders_endpoint_handler,
 )
 from services.incidents.models import clients, operational_security_metadata
@@ -74,6 +76,20 @@ def list_orders_endpoint(*, session: Session):
 
 def _request(request_id: str = "550e8400-e29b-41d4-a716-446655440099"):
     return SimpleNamespace(state=SimpleNamespace(request_id=request_id))
+
+
+def create_outbound_order(*, request, payload, session, current_user, idempotency_key=None):
+    if payload.exit_type is ExitType.LOSS:
+        return _create_outbound_order_handler(
+            request, payload, session, current_user, idempotency_key, None
+        )
+    key = idempotency_key or uuid4()
+    reviewed = review_outbound_order(
+        Response(), payload, session, current_user, key
+    )
+    return _create_outbound_order_handler(
+        request, payload, session, current_user, key, reviewed.review_proof
+    )
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -899,6 +915,39 @@ class TestCreateOutboundOrder:
         assert persisted.exit_type == "dispatch"
         assert persisted.tracking_number == "TRACK-001"
         assert persisted.warehouse == "LA"
+
+    def test_confirmed_dispatch_requires_stable_key_and_replays_same_response(
+        self, db_session: Session, auth_user: UserInDB
+    ) -> None:
+        sku = _create_sku(db_session, sku_code="OUT-SKU-IDEMPOTENT")
+        create_stock_entry(
+            session=db_session,
+            data=StockEntryCreate(
+                sku_id=sku.id, quantity=5, reference="INIT-IDEMPOTENT", warehouse="LA"
+            ),
+            user_uuid="seed-user",
+        )
+        payload = StockExitCreate(
+            sku_id=sku.id,
+            quantity=2,
+            exit_type=ExitType.DISPATCH,
+            tracking_number="TRACK-IDEMPOTENT",
+            warehouse=Warehouse.LA,
+        )
+        key = uuid4()
+
+        first = create_outbound_order(
+            request=_request(), payload=payload, session=db_session,
+            current_user=auth_user, idempotency_key=key,
+        )
+        second = create_outbound_order(
+            request=_request(), payload=payload, session=db_session,
+            current_user=auth_user, idempotency_key=key,
+        )
+
+        assert second == first
+        assert len(db_session.exec(select(StockExit)).all()) == 1
+        assert get_current_stock(db_session, sku.id, "LA") == 3
 
     # ── 23. Valid loss with tracking None works ─────────────────────────
 

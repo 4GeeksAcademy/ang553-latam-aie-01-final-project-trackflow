@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import insert
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import services.api.inventory_service as inventory_service
@@ -120,6 +121,148 @@ def _entry(session: Session, sku: SKU, quantity: int):
         ),
         user_uuid="user",
     )
+
+
+def test_standalone_dispatch_retry_is_opt_in_and_replays_before_stock_check(
+    session,
+):
+    sku = _sku(session, "STANDALONE-IDEMPOTENCY")
+    _entry(session, sku, 10)
+    payload = StockExitCreate(
+        sku_id=sku.id,
+        quantity=2,
+        exit_type="dispatch",
+        tracking_number="SYNTHETIC-RETRY",
+        warehouse="LA",
+    )
+
+    first_ordinary = inventory_service.create_stock_exit(
+        session, payload, user_uuid="operator-a"
+    )
+    second_ordinary = inventory_service.create_stock_exit(
+        session, payload, user_uuid="operator-a"
+    )
+    assert first_ordinary.id != second_ordinary.id
+    assert inventory_service.get_current_stock(session, sku.id, "LA") == 6
+
+    key = uuid4()
+    keyed_payload = payload.model_copy(update={"quantity": 6})
+    first_keyed = inventory_service.create_stock_exit(
+        session,
+        keyed_payload,
+        user_uuid="operator-a",
+        idempotency_key=key,
+    )
+    assert inventory_service.get_current_stock(session, sku.id, "LA") == 0
+
+    replay = inventory_service.create_stock_exit(
+        session,
+        keyed_payload,
+        user_uuid="operator-a",
+        idempotency_key=key,
+    )
+    assert replay.id == first_keyed.id
+    assert inventory_service.get_current_stock(session, sku.id, "LA") == 0
+    assert len(session.exec(select(StockExit)).all()) == 3
+
+
+def test_standalone_dispatch_key_binds_actor_scope_content_and_command_kind(
+    session,
+):
+    sku = _sku(session, "STANDALONE-KEY-SCOPE")
+    _entry(session, sku, 5)
+    key = uuid4()
+    payload = StockExitCreate(
+        sku_id=sku.id,
+        quantity=1,
+        exit_type="dispatch",
+        tracking_number="SYNTHETIC-SCOPE",
+        warehouse="LA",
+    )
+    inventory_service.create_stock_exit(
+        session, payload, user_uuid="operator-a", idempotency_key=key
+    )
+
+    with pytest.raises(HTTPException) as actor_conflict:
+        inventory_service.create_stock_exit(
+            session, payload, user_uuid="operator-b", idempotency_key=key
+        )
+    assert actor_conflict.value.status_code == 409
+
+    with pytest.raises(HTTPException) as content_conflict:
+        inventory_service.create_stock_exit(
+            session,
+            payload.model_copy(update={"quantity": 2}),
+            user_uuid="operator-a",
+            idempotency_key=key,
+        )
+    assert content_conflict.value.status_code == 409
+
+    other_client_id = "99999999-9999-4999-8999-999999999999"
+    session.execute(insert(clients).values(
+        client_id=other_client_id,
+        display_name="Synthetic other client",
+        is_active=True,
+        created_by_user_id="producer-test-admin",
+    ))
+    session.commit()
+    foreign_scope = AccessContext(
+        user_id="operator-a",
+        role=Role.manager,
+        allowed_client_ids=frozenset({other_client_id}),
+        sensitive_client_ids=frozenset(),
+    )
+    with pytest.raises(HTTPException) as scope_rejection:
+        _ORIGINAL_SERVICE_WRITES["create_stock_exit"](
+            session,
+            payload,
+            user_uuid="operator-a",
+            access=foreign_scope,
+            idempotency_key=key,
+        )
+    assert scope_rejection.value.status_code == 404
+
+    with pytest.raises(HTTPException) as loss_rejection:
+        inventory_service.create_stock_exit(
+            session,
+            StockExitCreate(
+                sku_id=sku.id,
+                quantity=1,
+                exit_type="loss",
+                tracking_number=None,
+                warehouse="LA",
+            ),
+            user_uuid="operator-a",
+            idempotency_key=uuid4(),
+        )
+    assert loss_rejection.value.status_code == 422
+
+    order = CommercialOrder(
+        order_id=uuid4(), client_id=CLIENT_ID, warehouse="LA"
+    )
+    session.add(order)
+    session.commit()
+    session.refresh(order)
+    commercial_key = uuid4()
+    session.add(StockExit(
+        sku_id=sku.id,
+        quantity=1,
+        exit_type="dispatch",
+        tracking_number="COMMERCIAL-SYNTHETIC",
+        warehouse="LA",
+        user_uuid="operator-a",
+        commercial_order_id=order.id,
+        dispatch_id=commercial_key,
+    ))
+    session.commit()
+    with pytest.raises(HTTPException) as commercial_conflict:
+        inventory_service.create_stock_exit(
+            session,
+            payload.model_copy(update={"tracking_number": "COMMERCIAL-SYNTHETIC"}),
+            user_uuid="operator-a",
+            idempotency_key=commercial_key,
+        )
+    assert commercial_conflict.value.status_code == 409
 
 
 def test_threshold_crosses_once_rearms_and_configuration_emits_nothing(
@@ -373,15 +516,21 @@ def test_order_retry_conflict_and_partial_append_are_exact_once(session, monkeyp
     assert conflict.value.status_code == 409
 
     new_dispatch_id = uuid4()
+    sibling_dispatch_id = uuid4()
     append = CommercialOrderDispatchAppend(
         order_id=payload.order_id,
         dispatches=[
-            payload.dispatches[0],
             {
                 "dispatch_id": new_dispatch_id,
                 "sku_id": sku.id,
-                "quantity": 3,
+                "quantity": 2,
                 "tracking_number": "ORDER-2",
+            },
+            {
+                "dispatch_id": sibling_dispatch_id,
+                "sku_id": sku.id,
+                "quantity": 1,
+                "tracking_number": "ORDER-3",
             },
         ],
     )
@@ -398,20 +547,78 @@ def test_order_retry_conflict_and_partial_append_are_exact_once(session, monkeyp
     assert {item.dispatch_id for item in appended} == {
         payload.dispatches[0].dispatch_id,
         new_dispatch_id,
+        sibling_dispatch_id,
     }
-    assert len(retried) == 2
+    assert len(retried) == 3
     assert len(_outbox(session, "outbound_order_created")) == 1
 
-    with pytest.raises(HTTPException) as subset_conflict:
+    replayed_order, original_response = inventory_service.create_commercial_order(
+        session, payload, user_uuid="user"
+    )
+    assert replayed_order.id == order.id
+    assert [item.dispatch_id for item in original_response] == [
+        payload.dispatches[0].dispatch_id
+    ]
+
+    with pytest.raises(HTTPException) as create_with_append:
         inventory_service.create_commercial_order(
-            session, payload, user_uuid="user"
+            session,
+            payload.model_copy(update={"dispatches": [append.dispatches[0]]}),
+            user_uuid="user",
         )
-    assert subset_conflict.value.status_code == 409
+    assert create_with_append.value.status_code == 409
+
+    with pytest.raises(HTTPException) as append_with_create_ids:
+        inventory_service.append_commercial_order_dispatches(
+            session,
+            CommercialOrderDispatchAppend(
+                order_id=payload.order_id,
+                dispatches=payload.dispatches,
+            ),
+            user_uuid="user",
+        )
+    assert append_with_create_ids.value.status_code == 409
+
+    with pytest.raises(HTTPException) as subset_retry:
+        inventory_service.append_commercial_order_dispatches(
+            session,
+            append.model_copy(update={"dispatches": [append.dispatches[0]]}),
+            user_uuid="user",
+        )
+    assert subset_retry.value.status_code == 409
+
+    later = CommercialOrderDispatchAppend(
+        order_id=payload.order_id,
+        dispatches=[{
+            "dispatch_id": uuid4(),
+            "sku_id": sku.id,
+            "quantity": 1,
+            "tracking_number": "ORDER-LATER",
+        }],
+    )
+    inventory_service.append_commercial_order_dispatches(
+        session, later, user_uuid="user"
+    )
+    _order, replay_after_later = inventory_service.append_commercial_order_dispatches(
+        session, append, user_uuid="user"
+    )
+    assert [item.dispatch_id for item in replay_after_later] == [
+        item.dispatch_id for item in retried
+    ]
+    with pytest.raises(HTTPException) as mixed_batches:
+        inventory_service.append_commercial_order_dispatches(
+            session,
+            append.model_copy(update={
+                "dispatches": [append.dispatches[0], later.dispatches[0]]
+            }),
+            user_uuid="user",
+        )
+    assert mixed_batches.value.status_code == 409
 
     bad_append = append.model_copy(
         update={
             "dispatches": [
-                append.dispatches[1].model_copy(update={"quantity": 4})
+                append.dispatches[0].model_copy(update={"quantity": 4})
             ]
         }
     )
@@ -456,6 +663,94 @@ def test_order_and_dispatches_roll_back_when_outbox_fails(session, monkeypatch):
     assert session.exec(
         select(CommercialOrder).where(CommercialOrder.order_id == payload.order_id)
     ).first() is None
+    assert session.exec(
+        select(StockExit).where(
+            StockExit.dispatch_id == payload.dispatches[0].dispatch_id
+        )
+    ).first() is None
+
+
+def test_global_order_uuid_collision_is_opaque_and_rolls_back(session):
+    first_sku = _sku(session, "ORDER-GLOBAL-FIRST")
+    _entry(session, first_sku, 10)
+    shared_order_id = uuid4()
+    first = _order_payload(first_sku, order_id=shared_order_id)
+    inventory_service.create_commercial_order(session, first, user_uuid="first-user")
+
+    second_client_id = "99999999-9999-4999-8999-999999999999"
+    session.execute(insert(clients).values(
+        client_id=second_client_id,
+        display_name="Synthetic Second Client",
+        is_active=True,
+        created_by_user_id="producer-test-admin",
+    ))
+    second_sku = SKU(
+        name="ORDER-GLOBAL-SECOND",
+        sku="ORDER-GLOBAL-SECOND",
+        client_id=second_client_id,
+        client_name="Synthetic Second Client",
+        category="fashion",
+        warehouse="LA",
+    )
+    session.add(second_sku)
+    session.commit()
+    session.refresh(second_sku)
+    inventory_service.create_stock_entry(
+        session,
+        StockEntryCreate(
+            sku_id=second_sku.id,
+            quantity=10,
+            reference=f"IN-{uuid4()}",
+            warehouse="LA",
+        ),
+        user_uuid="second-user",
+    )
+    second_dispatch_id = uuid4()
+    second = CommercialOrderCreate(
+        order_id=shared_order_id,
+        client_id=second_client_id,
+        warehouse="LA",
+        dispatches=[{
+            "dispatch_id": second_dispatch_id,
+            "sku_id": second_sku.id,
+            "quantity": 3,
+            "tracking_number": "ORDER-SECOND",
+        }],
+    )
+
+    with pytest.raises(HTTPException) as collision:
+        inventory_service.create_commercial_order(
+            session, second, user_uuid="second-user"
+        )
+    assert collision.value.status_code == 409
+    assert collision.value.detail == "Commercial order command conflicts."
+    assert session.exec(
+        select(StockExit).where(StockExit.dispatch_id == second_dispatch_id)
+    ).first() is None
+    assert inventory_service.get_current_stock(session, second_sku.id, "LA") == 10
+    assert len(session.exec(select(CommercialOrder)).all()) == 1
+    assert len(_outbox(session, "outbound_order_created")) == 1
+
+
+def test_unrelated_parent_flush_integrity_error_is_not_mapped(session, monkeypatch):
+    sku = _sku(session, "ORDER-UNRELATED-INTEGRITY")
+    _entry(session, sku, 10)
+    payload = _order_payload(sku)
+    original_flush = session.flush
+
+    def unrelated_flush(*_args, **_kwargs):
+        raise IntegrityError(
+            "INSERT synthetic",
+            {},
+            Exception("UNIQUE constraint failed: unrelated.value"),
+        )
+
+    monkeypatch.setattr(session, "flush", unrelated_flush)
+    with pytest.raises(IntegrityError):
+        inventory_service.create_commercial_order(
+            session, payload, user_uuid="user"
+        )
+    monkeypatch.setattr(session, "flush", original_flush)
     assert session.exec(
         select(StockExit).where(
             StockExit.dispatch_id == payload.dispatches[0].dispatch_id

@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from sqlalchemy import insert
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine
@@ -39,6 +39,9 @@ from services.api.routes.inventory import (
     create_outbound_order,
     create_product,
     get_authorized_tracking,
+    review_order_dispatch_append,
+    review_order_with_dispatches,
+    review_outbound_order,
     router as inventory_router,
 )
 import services.api.inventory_service as inventory_service
@@ -156,9 +159,28 @@ def test_manager_can_mutate_only_assigned_inventory_and_user_cannot(secured_inve
     create_inbound_order(_request(), payload["inbound"], session, manager)
     configure_product_threshold(sku_id, payload["threshold"], session, manager)
     confirm_physical_count(_request(), payload["count"], session, manager)
-    create_outbound_order(_request(), payload["outbound"], session, manager)
-    order = create_order_with_dispatches(_request(), payload["order"], session, manager)
-    append_order_dispatches(order.order_id, _request(), payload["append"], session, manager)
+    outbound_key = uuid4()
+    outbound_review = review_outbound_order(
+        Response(), payload["outbound"], session, manager, outbound_key
+    )
+    create_outbound_order(
+        _request(), payload["outbound"], session, manager,
+        outbound_key, outbound_review.review_proof,
+    )
+    order_review = review_order_with_dispatches(
+        Response(), payload["order"], session, manager
+    )
+    order = create_order_with_dispatches(
+        _request(), payload["order"], session, manager,
+        order_review.review_proof,
+    )
+    append_review = review_order_dispatch_append(
+        order.order_id, Response(), payload["append"], session, manager
+    )
+    append_order_dispatches(
+        order.order_id, _request(), payload["append"], session, manager,
+        append_review.review_proof,
+    )
 
     denied_calls = (
         lambda: create_product(_request(), SKUCreate(name="Denied", sku="DENIED", client_id=CLIENT_A, client_name="Verified A", category="electronics", warehouse="LA"), session, user),

@@ -21,8 +21,8 @@ def test_support_client_uses_authenticated_proxy_and_sanitized_telemetry_path():
     assert '`${BASE_URL}/support/query`' in client
     assert 'path_template: "/support/query"' in client
     assert "getSupportAccessToken" in client
-    assert "clearSupportAccessToken" in client
-    assert 'Authorization: `Bearer ${token}`' in client
+    assert "requireSupportReauthorization" in client
+    assert 'Authorization: `Bearer ${requestToken}`' in client
     assert "authFetch" not in client
     assert 'source: "/support/:path*"' in config
     assert 'destination: `${backendUrl}/support/:path*`' in config
@@ -42,7 +42,7 @@ def test_support_oidc_uses_pkce_and_never_persists_access_tokens():
     assert "accessToken = payload.access_token" in oidc
     assert oidc.index("clearPkce();") < oidc.index("if (providerError")
     client = (BACKOFFICE / "lib/supportApi.ts").read_text(encoding="utf-8")
-    assert "if (response.status === 401) clearSupportAccessToken();" in client
+    assert "if (response.status === 401) requireSupportReauthorization(requestToken);" in client
 
 
 def test_keycloak_qa_registers_exact_backoffice_callbacks_and_origins():
@@ -94,7 +94,7 @@ def test_support_ui_replays_one_pending_question_after_pkce_callback():
     assert "window.sessionStorage.setItem(PENDING_SUPPORT_QUESTION_KEY, normalized)" in page
     assert "caught instanceof SupportAuthorizationRedirect" in page
     assert "if (!retainAcrossRedirect) clearPendingSupportQuestion();" in page
-    assert "initializeSupportAuthorizationOnce()" in page
+    assert "initializeSupportAuthorization()" in page
     assert "const pending = consumePendingSupportQuestion();" in page
     assert "void executeQuestionRef.current(pending, false);" in page
     assert page.index("const pending = consumePendingSupportQuestion();") < page.index(
@@ -110,8 +110,28 @@ def test_support_pending_question_is_consumed_before_callback_replay():
     clear = page.index("clearPendingSupportQuestion();", consume)
     normalize = page.index("pending?.trim()", consume)
     assert clear < normalize
-    assert "supportAuthorizationInitialization ??=" in page
+    oidc = (BACKOFFICE / "lib/supportOidc.ts").read_text(encoding="utf-8")
+    assert "if (callbackInitialization) return callbackInitialization;" in oidc
     assert "normalized.length <= 2000" in page
+
+
+def test_support_chat_reauthorization_is_explicit_and_preserves_the_session():
+    oidc = (BACKOFFICE / "lib/supportOidc.ts").read_text(encoding="utf-8")
+    chat = (BACKOFFICE / "lib/useSupportChat.ts").read_text(encoding="utf-8")
+    page = (BACKOFFICE / "app/backoffice/support/page.tsx").read_text(encoding="utf-8")
+    assert "tokenAcquisition" in oidc
+    assert "callbackInitialization" in oidc
+    assert "requireSupportReauthorization" in chat
+    assert "identityObservedRef" in chat
+    assert "if (userId !== undefined)" in chat
+    assert 'event.data.code === "support_authorization_required"' in chat
+    assert 'event.code === 4401' in chat
+    assert "La sesión local expiró" in chat
+    assert "getSupportAccessTokenExpiresAt() - Date.now()" in chat
+    assert 'socket?.close(1000, "support authorization expired")' in chat
+    assert "removeItem(key)" not in chat[chat.index('event.code === 4401'):]
+    assert "Volver a autorizar soporte" in page
+    assert "chat.reauthorize()" in page
 
 
 def test_support_memory_contract_is_additive_validated_and_session_scoped():
@@ -150,7 +170,7 @@ def test_support_restores_conversation_and_recovers_pending_memory_after_oidc():
     client = (BACKOFFICE / "lib/supportApi.ts").read_text(encoding="utf-8")
     types = (BACKOFFICE / "types/support.ts").read_text(encoding="utf-8")
     restore = page.index("const stored = storedConversationId(userId);")
-    initialize = page.index("initializeSupportAuthorizationOnce()", restore)
+    initialize = page.index("initializeSupportAuthorization()", restore)
     assert restore < initialize
     assert "getPendingSupportMemory(recoveryIdentifier)" in page
     assert "findLegacyDecisionReference()" in page

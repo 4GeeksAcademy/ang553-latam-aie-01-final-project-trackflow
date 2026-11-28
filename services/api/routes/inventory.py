@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request, Response, status
 from sqlmodel import Session, select
 
 from services.api.auth_models import UserInDB
@@ -39,6 +39,8 @@ from services.api.inventory_schemas import (
     CommercialOrderCreate,
     CommercialOrderDispatchAppend,
     CommercialOrderMutationResponse,
+    DispatchReviewResponse,
+    DispatchReviewSummary,
     InventoryPhysicalCountCreate,
     InventoryPhysicalCountResponse,
     SKUCreate,
@@ -62,7 +64,16 @@ from services.api.inventory_service import (
     lookup_authorized_tracking,
     read_inventory_product,
     require_active_inventory_client,
+    review_commercial_order,
+    review_commercial_order_append,
+    review_standalone_dispatch,
     update_sku_threshold,
+)
+from services.api.inventory_dispatch_review import (
+    PROOF_HEADER,
+    audit_confirmation,
+    issue_review_proof,
+    verify_review_proof,
 )
 from services.api.telemetry_capture import capture_telemetry_events
 from services.api.telemetry_schemas import TelemetryEvent
@@ -70,6 +81,108 @@ from services.api.telemetry_utils import canonical_telemetry_warehouse
 
 router = APIRouter(prefix="/inventory", tags=["Inventory"])
 logger = logging.getLogger(__name__)
+
+_OP_STANDALONE = "standalone_dispatch"
+_OP_ORDER_CREATE = "commercial_order_create"
+_OP_ORDER_APPEND = "commercial_order_append"
+_PATH_STANDALONE = "/inventory/orders/outbound"
+_PATH_ORDER_CREATE = "/inventory/commercial-orders"
+_REVIEW_REQUIRED_DETAIL = "A valid dispatch review proof is required."
+_COMMERCIAL_ORDER_CONFLICT_RESPONSE = {
+    "description": (
+        "The commercial order command conflicts with an existing command. "
+        "The response does not disclose another tenant's data."
+    ),
+    "content": {
+        "application/json": {
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["detail"],
+                "properties": {"detail": {"type": "string"}},
+            },
+            "example": {"detail": "Commercial order command conflicts."},
+        }
+    },
+}
+_REVIEW_PROOF_PARAMETER = {
+    "name": PROOF_HEADER,
+    "in": "header",
+    "required": True,
+    "description": (
+        "Short-lived proof returned by the matching dispatch review endpoint."
+    ),
+    "schema": {"type": "string", "minLength": 1},
+}
+_REVIEW_REQUIRED_RESPONSE = {
+    "description": "Dispatch review proof is missing, invalid, expired, or mismatched.",
+    "content": {
+        "application/json": {
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["detail"],
+                "properties": {
+                    "detail": {
+                        "type": "string",
+                        "enum": [_REVIEW_REQUIRED_DETAIL],
+                    }
+                },
+            },
+            "example": {"detail": _REVIEW_REQUIRED_DETAIL},
+        }
+    },
+}
+_NO_STORE_RESPONSE = {
+    "description": "Review proof and non-sensitive command summary.",
+    "headers": {
+        "Cache-Control": {
+            "description": "Review proofs must not be cached.",
+            "schema": {"type": "string", "enum": ["no-store"]},
+        }
+    },
+}
+
+
+def _review_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_428_PRECONDITION_REQUIRED,
+        detail=_REVIEW_REQUIRED_DETAIL,
+    )
+
+
+def _verify_review(token: str | None, **kwargs) -> dict:
+    try:
+        return verify_review_proof(token, **kwargs)
+    except ValueError:
+        audit_confirmation(kwargs["actor_id"], kwargs["operation"], "rejected")
+        raise _review_error() from None
+
+
+def _review_response(
+    *, actor_id: str, access, tenant_id: str, operation: str,
+    endpoint: str, payload, warehouse, sku_ids: list[int],
+    total_quantity: int, dispatch_count: int, command_id: UUID | None,
+    idempotency_key: UUID | None = None,
+) -> DispatchReviewResponse:
+    proof, expires_at = issue_review_proof(
+        actor_id=actor_id, access=access, tenant_id=tenant_id,
+        operation=operation, endpoint=endpoint, payload=payload,
+        idempotency_key=idempotency_key,
+    )
+    return DispatchReviewResponse(
+        review_proof=proof,
+        expires_at=expires_at,
+        summary=DispatchReviewSummary(
+            operation=operation,
+            tenant_id=tenant_id,
+            warehouse=warehouse,
+            sku_ids=sorted(sku_ids),
+            total_quantity=total_quantity,
+            dispatch_count=dispatch_count,
+            command_id=command_id,
+        ),
+    )
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -307,22 +420,99 @@ def _order_mutation_response(order, dispatches) -> CommercialOrderMutationRespon
 
 
 @router.post(
+    "/dispatch-reviews/commercial-orders",
+    response_model=DispatchReviewResponse,
+    responses={200: _NO_STORE_RESPONSE},
+)
+def review_order_with_dispatches(
+    response: Response,
+    payload: CommercialOrderCreate,
+    session: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[UserInDB, Depends(get_operational_user)],
+) -> DispatchReviewResponse:
+    access = build_access_context(session, current_user)
+    review_commercial_order(session, payload, access)
+    response.headers["Cache-Control"] = "no-store"
+    return _review_response(
+        actor_id=current_user.id, access=access, tenant_id=payload.client_id,
+        operation=_OP_ORDER_CREATE, endpoint=_PATH_ORDER_CREATE,
+        payload=payload, warehouse=payload.warehouse,
+        sku_ids=[item.sku_id for item in payload.dispatches],
+        total_quantity=sum(item.quantity for item in payload.dispatches),
+        dispatch_count=len(payload.dispatches),
+        command_id=payload.order_id,
+    )
+
+
+@router.post(
+    "/dispatch-reviews/commercial-orders/{order_id}/dispatches",
+    response_model=DispatchReviewResponse,
+    responses={200: _NO_STORE_RESPONSE},
+)
+def review_order_dispatch_append(
+    order_id: UUID,
+    response: Response,
+    payload: CommercialOrderDispatchAppend,
+    session: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[UserInDB, Depends(get_operational_user)],
+) -> DispatchReviewResponse:
+    if order_id != payload.order_id:
+        raise HTTPException(status_code=409, detail="order_id path and payload mismatch")
+    access = build_access_context(session, current_user)
+    order, _skus = review_commercial_order_append(session, payload, access)
+    response.headers["Cache-Control"] = "no-store"
+    endpoint = f"/inventory/commercial-orders/{order_id}/dispatches"
+    return _review_response(
+        actor_id=current_user.id, access=access, tenant_id=order.client_id,
+        operation=_OP_ORDER_APPEND, endpoint=endpoint,
+        payload=payload, warehouse=order.warehouse,
+        sku_ids=[item.sku_id for item in payload.dispatches],
+        total_quantity=sum(item.quantity for item in payload.dispatches),
+        dispatch_count=len(payload.dispatches),
+        command_id=payload.order_id,
+    )
+
+
+@router.post(
     "/commercial-orders",
     response_model=CommercialOrderMutationResponse,
     status_code=status.HTTP_201_CREATED,
+    responses={409: _COMMERCIAL_ORDER_CONFLICT_RESPONSE, 428: _REVIEW_REQUIRED_RESPONSE},
+    openapi_extra={"parameters": [_REVIEW_PROOF_PARAMETER]},
 )
 def create_order_with_dispatches(
     request: Request,
     payload: CommercialOrderCreate,
     session: Annotated[Session, Depends(get_db)],
     current_user: Annotated[UserInDB, Depends(get_operational_user)],
+    review_proof: Annotated[
+        str | None, Header(alias=PROOF_HEADER, include_in_schema=False)
+    ] = None,
 ) -> CommercialOrderMutationResponse:
-    order, dispatches = create_commercial_order(
-        session,
-        payload,
-        user_uuid=current_user.id,
-        access=build_access_context(session, current_user),
-        request_id=getattr(request.state, "request_id", None),
+    access = build_access_context(session, current_user)
+    review_commercial_order(session, payload, access)
+    review_claims = _verify_review(
+        review_proof, actor_id=current_user.id, access=access,
+        tenant_id=payload.client_id, operation=_OP_ORDER_CREATE,
+        endpoint=_PATH_ORDER_CREATE, payload=payload,
+    )
+    try:
+        order, dispatches = create_commercial_order(
+            session,
+            payload,
+            user_uuid=current_user.id,
+            access=access,
+            request_id=getattr(request.state, "request_id", None),
+        )
+    except Exception:
+        audit_confirmation(
+            current_user.id, _OP_ORDER_CREATE, "failed",
+            confirmation_id=review_claims["jti"],
+        )
+        raise
+    audit_confirmation(
+        current_user.id, _OP_ORDER_CREATE, "confirmed",
+        confirmation_id=review_claims["jti"],
     )
     return _order_mutation_response(order, dispatches)
 
@@ -331,6 +521,8 @@ def create_order_with_dispatches(
     "/commercial-orders/{order_id}/dispatches",
     response_model=CommercialOrderMutationResponse,
     status_code=status.HTTP_201_CREATED,
+    responses={428: _REVIEW_REQUIRED_RESPONSE},
+    openapi_extra={"parameters": [_REVIEW_PROOF_PARAMETER]},
 )
 def append_order_dispatches(
     order_id: UUID,
@@ -338,15 +530,38 @@ def append_order_dispatches(
     payload: CommercialOrderDispatchAppend,
     session: Annotated[Session, Depends(get_db)],
     current_user: Annotated[UserInDB, Depends(get_operational_user)],
+    review_proof: Annotated[
+        str | None, Header(alias=PROOF_HEADER, include_in_schema=False)
+    ] = None,
 ) -> CommercialOrderMutationResponse:
     if order_id != payload.order_id:
         raise HTTPException(status_code=409, detail="order_id path and payload mismatch")
-    order, dispatches = append_commercial_order_dispatches(
-        session,
-        payload,
-        user_uuid=current_user.id,
-        access=build_access_context(session, current_user),
-        request_id=getattr(request.state, "request_id", None),
+    access = build_access_context(session, current_user)
+    review_order, _skus = review_commercial_order_append(session, payload, access)
+    endpoint = f"/inventory/commercial-orders/{order_id}/dispatches"
+    review_claims = _verify_review(
+        review_proof, actor_id=current_user.id, access=access,
+        tenant_id=review_order.client_id, operation=_OP_ORDER_APPEND,
+        endpoint=endpoint, payload=payload,
+    )
+    try:
+        order, dispatches = append_commercial_order_dispatches(
+            session,
+            payload,
+            user_uuid=current_user.id,
+            access=access,
+            request_id=getattr(request.state, "request_id", None),
+            expected_tenant_id=review_order.client_id,
+        )
+    except Exception:
+        audit_confirmation(
+            current_user.id, _OP_ORDER_APPEND, "failed",
+            confirmation_id=review_claims["jti"],
+        )
+        raise
+    audit_confirmation(
+        current_user.id, _OP_ORDER_APPEND, "confirmed",
+        confirmation_id=review_claims["jti"],
     )
     return _order_mutation_response(order, dispatches)
 
@@ -383,12 +598,80 @@ def create_inbound_order(
 # ── POST /inventory/orders/outbound ──────────────────────────────────────────
 
 
-@router.post("/orders/outbound", response_model=MovementCreatedResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/dispatch-reviews/outbound",
+    response_model=DispatchReviewResponse,
+    responses={200: _NO_STORE_RESPONSE},
+)
+def review_outbound_order(
+    response: Response,
+    payload: StockExitCreate,
+    session: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[UserInDB, Depends(get_operational_user)],
+    idempotency_key: Annotated[
+        UUID,
+        Header(
+            alias="Idempotency-Key",
+            description="Required stable UUID for the standalone dispatch attempt.",
+        ),
+    ],
+) -> DispatchReviewResponse:
+    access = build_access_context(session, current_user)
+    sku = review_standalone_dispatch(session, payload, access)
+    response.headers["Cache-Control"] = "no-store"
+    return _review_response(
+        actor_id=current_user.id, access=access, tenant_id=sku.client_id,
+        operation=_OP_STANDALONE, endpoint=_PATH_STANDALONE,
+        payload=payload, warehouse=payload.warehouse,
+        sku_ids=[payload.sku_id], total_quantity=payload.quantity,
+        dispatch_count=1,
+        command_id=idempotency_key, idempotency_key=idempotency_key,
+    )
+
+
+@router.post(
+    "/orders/outbound",
+    response_model=MovementCreatedResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={428: {
+        **_REVIEW_REQUIRED_RESPONSE,
+        "description": (
+            "For dispatch, the Idempotency-Key is missing or the review proof "
+            "is missing, invalid, expired, or mismatched."
+        ),
+    }},
+    openapi_extra={"parameters": [
+        {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": False,
+            "description": (
+                "Required UUID when exit_type is dispatch; omit for loss. "
+                "Reuse it for retries of the same confirmed attempt."
+            ),
+            "schema": {"type": "string", "format": "uuid"},
+        },
+        {
+            **_REVIEW_PROOF_PARAMETER,
+            "required": False,
+            "description": (
+                "Required when exit_type is dispatch; unused for loss. Must come "
+                "from POST /inventory/dispatch-reviews/outbound."
+            ),
+        },
+    ]},
+)
 def create_outbound_order(
     request: Request,
     payload: StockExitCreate,
     session: Annotated[Session, Depends(get_db)],
     current_user: Annotated[UserInDB, Depends(get_operational_user)],
+    idempotency_key: Annotated[
+        UUID | None, Header(alias="Idempotency-Key", include_in_schema=False)
+    ] = None,
+    review_proof: Annotated[
+        str | None, Header(alias=PROOF_HEADER, include_in_schema=False)
+    ] = None,
 ) -> MovementCreatedResponse:
     """Register an outbound stock movement (stock exit).
 
@@ -399,13 +682,41 @@ def create_outbound_order(
     The ``user_uuid`` is populated from the authenticated user's ID,
     **not** from the client payload.
     """
-    exit_record = create_stock_exit(
-        session=session,
-        data=payload,
-        user_uuid=current_user.id,
-        access=build_access_context(session, current_user),
-        request_id=getattr(request.state, "request_id", None),
-    )
+    access = build_access_context(session, current_user)
+    reviewed_tenant_id = None
+    if payload.exit_type.value == "dispatch":
+        sku = review_standalone_dispatch(session, payload, access)
+        reviewed_tenant_id = sku.client_id
+        if idempotency_key is None:
+            raise _review_error()
+        review_claims = _verify_review(
+            review_proof, actor_id=current_user.id, access=access,
+            tenant_id=sku.client_id, operation=_OP_STANDALONE,
+            endpoint=_PATH_STANDALONE, payload=payload,
+            idempotency_key=idempotency_key,
+        )
+    try:
+        exit_record = create_stock_exit(
+            session=session,
+            data=payload,
+            user_uuid=current_user.id,
+            access=access,
+            request_id=getattr(request.state, "request_id", None),
+            idempotency_key=idempotency_key,
+            expected_tenant_id=reviewed_tenant_id,
+        )
+    except Exception:
+        if payload.exit_type.value == "dispatch":
+            audit_confirmation(
+                current_user.id, _OP_STANDALONE, "failed",
+                confirmation_id=review_claims["jti"],
+            )
+        raise
+    if payload.exit_type.value == "dispatch":
+        audit_confirmation(
+            current_user.id, _OP_STANDALONE, "confirmed",
+            confirmation_id=review_claims["jti"],
+        )
     return MovementCreatedResponse(id=exit_record.id)
 
 
