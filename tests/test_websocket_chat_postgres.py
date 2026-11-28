@@ -269,8 +269,8 @@ def test_ws_qa_units_commit_abort_reconnect_and_revalidate(chat_db, monkeypatch)
 
     make_producer = producer.authentic_support_producer
 
-    def producer_for(identity):
-        actual = make_producer(identity)
+    def producer_for(identity, admission=None):
+        actual = make_producer(identity, admission)
 
         async def run(session_id, question):
             if question == "turno nuevo":
@@ -438,7 +438,7 @@ def test_websocket_knowledge_replays_only_to_current_authorized_owner(chat_db, m
             raise HTTPException(401)
         return identities[credentials.credentials]
 
-    def fake_producer(_identity):
+    def fake_producer(_identity, _admission=None):
         async def produce(_session_id, question):
             if question == "revocation in progress":
                 waiting_to_publish.set()
@@ -1001,7 +1001,7 @@ def test_experimental_original_deltas_persist_before_fanout_and_survive_abort(
         with open_session() as db:
             yield db
 
-    def experimental_producer(actor):
+    def experimental_producer(actor, _admission=None):
         async def authorize(session_id):
             with open_session() as db:
                 access = router.build_access_context(db, actor.user)

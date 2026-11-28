@@ -22,6 +22,20 @@ import type {
   InventoryOrderListItem,
 } from "@/types/inventory";
 
+export interface DispatchReviewResponse {
+  review_proof: string;
+  expires_at: string;
+  summary: {
+    operation: string;
+    tenant_id: string;
+    warehouse: StockExitCreate["warehouse"];
+    sku_ids: number[];
+    total_quantity: number;
+    dispatch_count: number;
+    command_id: string | null;
+  };
+}
+
 const BASE_URL: string = process.env.NEXT_PUBLIC_INVENTORY_API_URL ?? "";
 
 type InventoryValidationOperation = "inbound" | "outbound" | "product_create";
@@ -241,11 +255,32 @@ export async function createStockEntry(
  */
 export async function createStockExit(
   data: StockExitCreate,
+  idempotencyKey?: string,
+  reviewProof?: string,
 ): Promise<MovementCreatedResponse> {
   return requestJson<MovementCreatedResponse>("/inventory/orders/outbound", "/inventory/orders/outbound", {
     method: "POST",
+    headers: {
+      ...(idempotencyKey === undefined ? {} : { "Idempotency-Key": idempotencyKey }),
+      ...(reviewProof === undefined ? {} : { "X-TrackFlow-Dispatch-Review": reviewProof }),
+    },
     body: JSON.stringify(data),
   }, { operation: "outbound" });
+}
+
+export async function reviewStockExit(
+  data: StockExitCreate,
+  idempotencyKey: string,
+): Promise<DispatchReviewResponse> {
+  return requestJson<DispatchReviewResponse>(
+    "/inventory/dispatch-reviews/outbound",
+    "/inventory/dispatch-reviews/outbound",
+    {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify(data),
+    },
+  );
 }
 
 /* ── Orders (history) ───────────────────────────────────────────────────── */

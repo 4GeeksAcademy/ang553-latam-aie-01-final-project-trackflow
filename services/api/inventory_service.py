@@ -16,11 +16,12 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, func, select
 
 from services.api.inventory_schemas import (
@@ -48,6 +49,9 @@ from services.incidents.models import clients
 
 logger = logging.getLogger(__name__)
 
+_COMMERCIAL_ORDER_ID_CONFLICT_DETAIL = "Commercial order command conflicts."
+_COMMERCIAL_ORDER_ID_CONSTRAINT = "uq_commercial_order_order_id"
+
 
 class InventoryDataIntegrityError(RuntimeError):
     """Raised when an inventory movement references a missing SKU."""
@@ -62,6 +66,18 @@ class InventoryDataIntegrityError(RuntimeError):
 
 class InventoryProductNotFound(RuntimeError):
     """A product is absent or outside the caller's authorized tenant scope."""
+
+
+def _is_commercial_order_id_conflict(error: IntegrityError) -> bool:
+    """Recognize only the global commercial-order UUID constraint."""
+    original = error.orig
+    diagnostic = getattr(original, "diag", None)
+    constraint_name = getattr(diagnostic, "constraint_name", None)
+    if constraint_name is None:
+        constraint_name = getattr(original, "constraint_name", None)
+    if constraint_name == _COMMERCIAL_ORDER_ID_CONSTRAINT:
+        return True
+    return str(original) == "UNIQUE constraint failed: commercial_order.order_id"
 
 
 def lookup_authorized_tracking(
@@ -186,6 +202,27 @@ def _lock_skus(
     if not access.global_access:
         statement = statement.where(SKU.client_id.in_(access.allowed_client_ids))
     rows = session.exec(statement.order_by(SKU.id).with_for_update()).all()
+    if set(ordered) - {row.id for row in rows}:
+        raise HTTPException(status_code=404, detail="SKU not found.")
+    return {row.id: row for row in rows}
+
+
+def _read_review_skus(
+    session: Session, sku_ids: set[int], access: AccessContext,
+) -> dict[int, object]:
+    """Authorize review input without taking business-operation locks."""
+    from services.api.inventory_models import SKU
+
+    _require_inventory_writer(access)
+    ordered = sorted(sku_ids)
+    statement = (
+        select(SKU)
+        .join(clients, clients.c.client_id == SKU.client_id)
+        .where(SKU.id.in_(ordered), clients.c.is_active.is_(True))
+    )
+    if not access.global_access:
+        statement = statement.where(SKU.client_id.in_(access.allowed_client_ids))
+    rows = session.exec(statement.order_by(SKU.id)).all()
     if set(ordered) - {row.id for row in rows}:
         raise HTTPException(status_code=404, detail="SKU not found.")
     return {row.id: row for row in rows}
@@ -613,6 +650,8 @@ def create_stock_exit(
     user_uuid: str,
     access: AccessContext,
     request_id: str | None = None,
+    idempotency_key: UUID | None = None,
+    expected_tenant_id: str | None = None,
 ):
     """Register an outbound stock movement (StockExit).
 
@@ -644,8 +683,42 @@ def create_stock_exit(
     """
     from services.api.inventory_models import StockExit
 
-    # 1. Check SKU exists
+    if idempotency_key is not None and data.exit_type.value != "dispatch":
+        raise HTTPException(
+            status_code=422,
+            detail="Idempotency-Key is only supported for dispatch movements.",
+        )
+    if idempotency_key is not None:
+        _lock_idempotency_keys(session, [idempotency_key])
+
+    # 1. Check SKU exists and belongs to the caller's current scope before
+    # inspecting any record associated with an idempotency key.
     sku = _lock_skus(session, {data.sku_id}, access)[data.sku_id]
+    if expected_tenant_id is not None and sku.client_id != expected_tenant_id:
+        raise _conflict("Dispatch review tenant no longer matches.")
+
+    # An exact standalone-dispatch retry returns before stock evaluation or
+    # any new persistence. Commercial-order dispatch IDs never replay here.
+    if idempotency_key is not None:
+        existing = session.exec(
+            select(StockExit)
+            .where(StockExit.dispatch_id == idempotency_key)
+            .with_for_update()
+        ).first()
+        if existing is not None:
+            if not (
+                existing.commercial_order_id is None
+                and existing.user_uuid == user_uuid
+                and existing.sku_id == data.sku_id
+                and existing.quantity == data.quantity
+                and existing.exit_type == data.exit_type.value
+                and existing.tracking_number == data.tracking_number
+                and existing.warehouse == data.warehouse.value
+            ):
+                raise _conflict(
+                    "Idempotency-Key already exists with different content or scope."
+                )
+            return existing
 
     # 2. Check warehouse matches SKU
     movement_warehouse = data.warehouse.value
@@ -709,6 +782,7 @@ def create_stock_exit(
     # never claims that a standalone StockExit is a commercial order.
     occurred_at = datetime.now(timezone.utc)
     exit_record = StockExit(
+        dispatch_id=idempotency_key,
         sku_id=data.sku_id,
         quantity=data.quantity,
         exit_type=data.exit_type,
@@ -757,6 +831,56 @@ def create_stock_exit(
     invalidate_inventory_cache(session)
 
     return exit_record
+
+
+def review_standalone_dispatch(
+    session: Session, data: StockExitCreate, access: AccessContext,
+) -> object:
+    """Authorize and summarize a dispatch without applying stock effects."""
+    if data.exit_type.value != "dispatch":
+        raise HTTPException(status_code=422, detail="Only dispatch requires review.")
+    sku = _read_review_skus(session, {data.sku_id}, access)[data.sku_id]
+    if data.warehouse.value != sku.warehouse:
+        raise HTTPException(status_code=400, detail="Warehouse mismatch.")
+    return sku
+
+
+def review_commercial_order(
+    session: Session, data: CommercialOrderCreate, access: AccessContext,
+) -> dict[int, object]:
+    """Authorize an order command without checking or changing stock."""
+    require_active_inventory_client(session, client_id=data.client_id, access=access)
+    skus = _read_review_skus(session, {item.sku_id for item in data.dispatches}, access)
+    if any(
+        sku.client_id != data.client_id or sku.warehouse != data.warehouse.value
+        for sku in skus.values()
+    ):
+        raise HTTPException(status_code=400, detail="Order client or warehouse mismatch.")
+    return skus
+
+
+def review_commercial_order_append(
+    session: Session, data: CommercialOrderDispatchAppend, access: AccessContext,
+) -> tuple[object, dict[int, object]]:
+    """Authorize an append command without checking or changing stock."""
+    from services.api.inventory_models import CommercialOrder
+
+    _require_inventory_writer(access)
+    statement = select(CommercialOrder).where(CommercialOrder.order_id == data.order_id)
+    if not access.global_access:
+        statement = statement.where(
+            CommercialOrder.client_id.in_(access.allowed_client_ids)
+        )
+    order = session.exec(statement).first()
+    if order is None:
+        raise HTTPException(status_code=404, detail="Commercial order not found.")
+    skus = _read_review_skus(session, {item.sku_id for item in data.dispatches}, access)
+    if any(
+        sku.client_id != order.client_id or sku.warehouse != order.warehouse
+        for sku in skus.values()
+    ):
+        raise HTTPException(status_code=400, detail="Order client or warehouse mismatch.")
+    return order, skus
 
 
 def update_sku_threshold(
@@ -899,6 +1023,24 @@ def _order_dispatches(session: Session, order_pk: int) -> list[object]:
     )
 
 
+def _order_dispatches_through(
+    session: Session, order_pk: int, last_stock_exit_id: int,
+) -> list[object]:
+    """Reconstruct the response visible when a dispatch command committed."""
+    from services.api.inventory_models import StockExit
+
+    return list(
+        session.exec(
+            select(StockExit)
+            .where(
+                StockExit.commercial_order_id == order_pk,
+                StockExit.id <= last_stock_exit_id,
+            )
+            .order_by(StockExit.dispatch_id)
+        ).all()
+    )
+
+
 def _validate_order_skus(
     session: Session,
     *,
@@ -997,7 +1139,7 @@ def create_commercial_order(
     request_id: str | None = None,
 ):
     """Create one order, its initial dispatches, and one outbound event."""
-    from services.api.inventory_models import CommercialOrder, SKU, StockExit
+    from services.api.inventory_models import CommercialOrder, StockExit
 
     require_active_inventory_client(
         session, client_id=data.client_id, access=access
@@ -1018,21 +1160,20 @@ def create_commercial_order(
         persisted = {item.dispatch_id: item for item in _order_dispatches(session, existing.id)}
         if existing.client_id != data.client_id or existing.warehouse != data.warehouse.value:
             raise _conflict("order_id already exists with different content")
-        if set(persisted) == set(dispatch_ids) and all(
-            item.dispatch_id in persisted
-            and _dispatch_matches(persisted[item.dispatch_id], item, existing.id)
+        original_batch = {
+            key: item for key, item in persisted.items()
+            if item.created_at == existing.created_at and item.user_uuid == user_uuid
+        }
+        if set(original_batch) == set(dispatch_ids) and all(
+            item.dispatch_id in original_batch
+            and _dispatch_matches(original_batch[item.dispatch_id], item, existing.id)
             for item in data.dispatches
         ):
-            return existing, list(persisted.values())
+            return existing, list(original_batch.values())
         raise _conflict("order_id already exists with different dispatches")
 
     existing_dispatches = session.exec(
-        select(StockExit)
-        .join(SKU, SKU.id == StockExit.sku_id)
-        .where(
-            StockExit.dispatch_id.in_(dispatch_ids),
-            SKU.client_id == data.client_id,
-        )
+        select(StockExit).where(StockExit.dispatch_id.in_(dispatch_ids))
     ).all()
     if existing_dispatches:
         raise _conflict("dispatch_id already exists")
@@ -1053,7 +1194,12 @@ def create_commercial_order(
     events: list[TelemetryEvent] = []
     try:
         session.add(order)
-        session.flush()
+        try:
+            session.flush()
+        except IntegrityError as exc:
+            if _is_commercial_order_id_conflict(exc):
+                raise _conflict(_COMMERCIAL_ORDER_ID_CONFLICT_DETAIL) from None
+            raise
         if order.id is None:
             raise RuntimeError("commercial order identity was not assigned")
         created, threshold_events = _add_order_dispatches(
@@ -1104,10 +1250,15 @@ def append_commercial_order_dispatches(
     user_uuid: str,
     access: AccessContext,
     request_id: str | None = None,
+    expected_tenant_id: str | None = None,
 ):
     """Append new partials, deduplicating exact dispatch-id retries."""
     from services.api.inventory_models import CommercialOrder, StockExit
 
+    dispatch_ids = [item.dispatch_id for item in data.dispatches]
+    if len(dispatch_ids) != len(set(dispatch_ids)):
+        raise _conflict("dispatch_id values must be unique within a command")
+    _lock_idempotency_keys(session, [data.order_id, *dispatch_ids])
     order_statement = select(CommercialOrder).where(
         CommercialOrder.order_id == data.order_id
     )
@@ -1119,19 +1270,18 @@ def append_commercial_order_dispatches(
     order = session.exec(order_statement.with_for_update()).first()
     if order is None:
         raise HTTPException(status_code=404, detail="Commercial order not found.")
-    dispatch_ids = [item.dispatch_id for item in data.dispatches]
-    if len(dispatch_ids) != len(set(dispatch_ids)):
-        raise _conflict("dispatch_id values must be unique within a command")
-    _lock_idempotency_keys(session, [data.order_id, *dispatch_ids])
-    existing = {
-        item.dispatch_id: item
-        for item in session.exec(
-            select(StockExit).where(
-                StockExit.dispatch_id.in_(dispatch_ids),
-                StockExit.commercial_order_id == order.id,
-            )
+    if expected_tenant_id is not None and order.client_id != expected_tenant_id:
+        raise _conflict("Dispatch review tenant no longer matches.")
+    existing_rows = list(
+        session.exec(
+            select(StockExit).where(StockExit.dispatch_id.in_(dispatch_ids))
         ).all()
-    }
+    )
+    if any(item.commercial_order_id != order.id for item in existing_rows):
+        raise _conflict("dispatch_id already exists outside this commercial order")
+    existing = {item.dispatch_id: item for item in existing_rows}
+    if existing and len(existing) != len(dispatch_ids):
+        raise _conflict("Append cannot mix persisted and new dispatches")
     new_items = []
     for item in data.dispatches:
         record = existing.get(item.dispatch_id)
@@ -1140,7 +1290,22 @@ def append_commercial_order_dispatches(
         elif not _dispatch_matches(record, item, order.id):
             raise _conflict("dispatch_id already exists with different content")
     if not new_items:
-        return order, _order_dispatches(session, order.id)
+        timestamps = {item.created_at for item in existing.values()}
+        if len(timestamps) != 1 or any(
+            item.user_uuid != user_uuid for item in existing.values()
+        ):
+            raise _conflict("Append retry does not match one actor batch")
+        if next(iter(timestamps)) == order.created_at:
+            raise _conflict("Create dispatches cannot be replayed as append")
+        batch = list(session.exec(select(StockExit).where(
+            StockExit.commercial_order_id == order.id,
+            StockExit.created_at == next(iter(timestamps)),
+            StockExit.user_uuid == user_uuid,
+        )).all())
+        if {item.dispatch_id for item in batch} != set(dispatch_ids):
+            raise _conflict("Append retry does not match the original batch")
+        last_id = max(existing[item.dispatch_id].id for item in data.dispatches)
+        return order, _order_dispatches_through(session, order.id, last_id)
     skus = _validate_order_skus(
         session,
         dispatches=new_items,
@@ -1150,7 +1315,14 @@ def append_commercial_order_dispatches(
     )
     try:
         occurred_at = datetime.now(timezone.utc)
-        _created, events = _add_order_dispatches(
+        latest = session.exec(
+            select(func.max(StockExit.created_at)).where(
+                StockExit.commercial_order_id == order.id
+            )
+        ).one()
+        if latest is not None and occurred_at <= latest:
+            occurred_at = latest + timedelta(microseconds=1)
+        created, events = _add_order_dispatches(
             session,
             order=order,
             dispatches=new_items,
@@ -1159,13 +1331,16 @@ def append_commercial_order_dispatches(
             request_id=request_id,
             occurred_at=occurred_at,
         )
+        response_dispatches = _order_dispatches_through(
+            session, order.id, max(item.id for item in created)
+        )
         session.commit()
     except Exception:
         session.rollback()
         raise
     invalidate_inventory_cache(session)
     _capture_after_commit(events)
-    return order, _order_dispatches(session, order.id)
+    return order, response_dispatches
 
 
 # ═════════════════════════════════════════════════════════════════════════════

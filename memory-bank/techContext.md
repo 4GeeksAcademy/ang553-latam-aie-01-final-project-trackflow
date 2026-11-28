@@ -1,5 +1,70 @@
 # Tech Context: TrackFlow
 
+## NIST · OIDC de Support y provisión QA
+
+- El frontend conserva el access token de Support en memoria. Página, chat
+  y memoria esperan el mismo canje y comparten el bloqueo de navegación
+  PKCE. El vencimiento estabiliza la UI hasta un gesto de reautorización.
+  El WebSocket recupera la misma sesión por usuario y tenant sin reenviar
+  el turno anterior. El TTL de Keycloak QA sigue en 300 segundos.
+- La provisión completa para A5 incluye `infra/sql/telemetry_events.sql`
+  además de Inventario/outbox, chat, memoria e incidencias. El evento
+  transaccional de umbral se conserva en outbox y el receptor de telemetría
+  usa su tabla separada.
+
+## NIST · Revisión obligatoria e idempotencia de despachos
+
+- El alta comercial distingue la restricción global del UUID de otros
+  errores de integridad. Una colisión devuelve 409 genérico con rollback
+  y sin cambiar la unicidad, la autorización ni los reintentos exactos.
+
+- A3.2 exige `X-TrackFlow-Dispatch-Review` en los tres POST de despacho.
+  Las revisiones bajo `/inventory/dispatch-reviews` devuelven resumen,
+  prueba firmada y expiración sin escribir en Inventario. La firma vincula
+  actor, tenant, ámbito, comando, endpoint y contenido.
+- `POST /inventory/orders/outbound` exige `Idempotency-Key` UUID para
+  despacho. La revisión usa la misma clave. Se conservan el lock
+  transaccional y la unicidad durable de `StockExit.dispatch_id`.
+- La API revalida acceso al SKU y vincula replay exacto a actor, contenido
+  y tipo de comando. Devuelve el mismo ID con 201 y evita recalcular stock
+  o persistir otro evento. Cambiar el contenido con la misma clave da 409.
+- Backoffice conserva la clave por contenido en la vida del formulario y
+  exige confirmación explícita tras mostrar la revisión. La pérdida conserva
+  su flujo. Los clientes comerciales usan sus UUID de pedido y despachos
+  existentes. Los consumidores deben conservar los identificadores ante
+  resultados inciertos y volver a revisar si la prueba expiró.
+- A4.1 documenta el 428 y la obligatoriedad del comprobante en OpenAPI:
+  en ambas escrituras comerciales y, condicionada a `exit_type=dispatch`,
+  en la salida suelta. Editar o abandonar la revisión cancela el flujo local
+  antes de confirmar. Si hubo una respuesta incierta, consultar el historial
+  antes de recrear el comando tras recargar el formulario.
+
+## NIST · Rate limiting de Support
+
+- `services/api/rate_limit.py` implementa una ventana fija local al proceso.
+  En A2 la lectura monotónica, expiración y actualización quedan bajo el
+  mismo lock. La capacidad de identidades es acotada y falla cerrado.
+- `POST /support/query` limita por `identity.user.id` antes del trabajo de
+  negocio o invocación de modelo. El default técnico es 60 solicitudes por 60
+  segundos, máximo 10.000 identidades; el exceso devuelve HTTP 429 con
+  `Retry-After` entero positivo.
+- Configuración: `TRACKFLOW_SUPPORT_RATE_LIMIT_REQUESTS`,
+  `TRACKFLOW_SUPPORT_RATE_LIMIT_WINDOW_SECONDS` y
+  `TRACKFLOW_SUPPORT_RATE_LIMIT_MAX_IDENTITIES`. Valores inválidos fallan al
+  construir el runtime.
+- El `BoundedSemaphore(4)` existente sigue siendo control independiente de
+  concurrencia. Varias réplicas multiplican el techo efectivo: una garantía
+  global exige limiter compartido en gateway/Redis y prueba multi-worker.
+- WebSocket y HTTP comparten admisión por ID TrackFlow autenticado. WS
+  valida primero la sesión y el ámbito, cobra antes de crear la generación
+  y transmite internamente la admisión al handler. Las unidades QA pasan por
+  la misma cuota. Un reemplazo rechazado conserva la cancelación del turno
+  anterior. El overlay de despliegue configura un worker; reinicios borran
+  los contadores. Cada turno puede originar varias llamadas a proveedor.
+- A5.3 acreditó cuota compartida 3/30 s, identidad independiente y
+  recuperación mediante HTTP/WS reales con consultas deterministas. El QA
+  positivo de proveedor LLM externo sigue pendiente.
+
 ## DEV-53 — persistencia de ejecuciones nocturnas
 
 - `infra/sql/job_runs.sql` es el DDL explícito y no se aplica mediante imports

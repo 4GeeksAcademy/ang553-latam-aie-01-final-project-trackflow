@@ -26,7 +26,10 @@ from services.api.chat.qa_units import (
 from services.api.chat.store import chat_support_context, get_chat_session
 from services.api.database import open_db_session
 from services.api.routes.support import (
+    SupportRateLimitAdmission,
     SupportQueryRequest,
+    _SUPPORT_RATE_LIMIT_ADMISSION_STATE,
+    admit_support_operation,
     get_memory_store,
     get_support_mcp_tools,
     query_support,
@@ -52,12 +55,27 @@ async def validated_complete_response(answer: str) -> AsyncIterator[str]:
     yield answer
 
 
-def authentic_support_producer(identity: SupportIdentity):
+def _admit_or_raise_unavailable(
+    identity: SupportIdentity,
+) -> SupportRateLimitAdmission:
+    try:
+        return admit_support_operation(identity)
+    except HTTPException as exc:
+        if exc.status_code == 429:
+            raise ProducerUnavailable("support generation unavailable") from None
+        raise
+
+
+def authentic_support_producer(
+    identity: SupportIdentity,
+    admission: SupportRateLimitAdmission | None = None,
+):
     """Bind the WebSocket turn to Support with an isolated fixture opt-in."""
 
     async def produce(
         session_id: str, text: str, report: ProgressReporter | None,
     ) -> AsyncIterator[str | AnnotatedChunk | CoverageUpdate]:
+        operation_admission = admission
         abort_event = asyncio.Event()
         try:
             conversation_id = _support_conversation_id(session_id)
@@ -82,6 +100,8 @@ def authentic_support_producer(identity: SupportIdentity):
             except Exception as exc:
                 raise ProducerUnavailable("support precheck unavailable") from exc
             if can_publish_qa:
+                if operation_admission is None:
+                    operation_admission = _admit_or_raise_unavailable(identity)
                 async with aclosing(publish_qa_units(identity, unit_scope, session_id)) as units:
                     async for unit in units:
                         yield unit
@@ -107,6 +127,7 @@ def authentic_support_producer(identity: SupportIdentity):
             return selected_plan is not None
 
         async def execute_support_query():
+            nonlocal operation_admission
             with support_query_budget() as deadline:
                 with open_db_session() as db:
                     apply_statement_timeout(db, deadline)
@@ -123,6 +144,8 @@ def authentic_support_producer(identity: SupportIdentity):
                         raise ProducerUnavailable(
                             "support client scope cannot be guaranteed"
                         )
+                    if operation_admission is None:
+                        operation_admission = _admit_or_raise_unavailable(identity)
                     memory_store = get_memory_store()
                     # New UUID sessions are bound atomically at creation. Legacy
                     # ``chat_<hex>`` sessions predate that binding; create/verify
@@ -138,6 +161,10 @@ def authentic_support_producer(identity: SupportIdentity):
                             support_abort_event=abort_event,
                             support_query_deadline=deadline,
                             support_progress=report,
+                            **{
+                                _SUPPORT_RATE_LIMIT_ADMISSION_STATE:
+                                    operation_admission
+                            },
                             support_knowledge_projection=(
                                 select_projection
                                 if dynamic_scope is not None

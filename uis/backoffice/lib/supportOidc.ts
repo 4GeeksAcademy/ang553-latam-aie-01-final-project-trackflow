@@ -6,6 +6,11 @@ const SUPPORT_SCOPES = "openid incidents:read inventory:read";
 
 let accessToken: string | null = null;
 let accessTokenExpiresAt = 0;
+let callbackInitialization: Promise<boolean> | null = null;
+let tokenAcquisition: Promise<string> | null = null;
+let authorizationRedirect: Promise<never> | null = null;
+let reauthorizationRequired = false;
+let authorizationEpoch = 0;
 
 export class SupportAuthorizationError extends Error {
   constructor(message: string) {
@@ -100,60 +105,98 @@ export function clearSupportAccessToken(expectedToken?: string): void {
   accessTokenExpiresAt = 0;
 }
 
-export async function initializeSupportAuthorization(): Promise<boolean> {
+export function requireSupportReauthorization(expectedToken?: string): void {
+  if (expectedToken !== undefined && accessToken !== expectedToken) return;
+  clearSupportAccessToken();
+  reauthorizationRequired = true;
+  tokenAcquisition = null;
+}
+
+export function resetSupportAuthorization(): void {
+  authorizationEpoch += 1;
+  clearSupportAccessToken();
+  callbackInitialization = null;
+  tokenAcquisition = null;
+  authorizationRedirect = null;
+  reauthorizationRequired = false;
+  clearPkce();
+}
+
+export function getSupportAccessTokenExpiresAt(): number {
+  return accessTokenExpiresAt;
+}
+
+export function initializeSupportAuthorization(): Promise<boolean> {
+  if (callbackInitialization) return callbackInitialization;
   const parameters = new URLSearchParams(window.location.search);
   const code = parameters.get("code");
   const returnedState = parameters.get("state");
   const providerError = parameters.get("error");
-  if (!code && !providerError) return false;
+  if (!code && !providerError) return Promise.resolve(false);
 
   const expectedState = window.sessionStorage.getItem(PKCE_STATE_KEY);
   const verifier = window.sessionStorage.getItem(PKCE_VERIFIER_KEY);
   clearCallbackParameters();
   clearPkce();
-  if (providerError || !code || !returnedState || returnedState !== expectedState || !verifier) {
-    throw new SupportAuthorizationError(
-      "No se pudo validar la respuesta de autenticación de soporte.",
-    );
-  }
-
-  const { tokenEndpoint, clientId } = configuration();
-  const body = new URLSearchParams({
-    grant_type: "authorization_code",
-    client_id: clientId,
-    code,
-    code_verifier: verifier,
-    redirect_uri: callbackUrl(),
+  const epoch = authorizationEpoch;
+  const initialization = (async () => {
+    if (providerError || !code || !returnedState || returnedState !== expectedState || !verifier) {
+      throw new SupportAuthorizationError(
+        "No se pudo validar la respuesta de autenticación de soporte.",
+      );
+    }
+    const { tokenEndpoint, clientId } = configuration();
+    const body = new URLSearchParams({
+      grant_type: "authorization_code",
+      client_id: clientId,
+      code,
+      code_verifier: verifier,
+      redirect_uri: callbackUrl(),
+    });
+    const response = await fetch(tokenEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    });
+    if (!response.ok) {
+      throw new SupportAuthorizationError(
+        "No se pudo completar la autenticación de soporte.",
+      );
+    }
+    const payload = (await response.json()) as Record<string, unknown>;
+    if (
+      typeof payload.access_token !== "string" ||
+      payload.access_token.length === 0 ||
+      String(payload.token_type).toLowerCase() !== "bearer" ||
+      typeof payload.expires_in !== "number" ||
+      !Number.isFinite(payload.expires_in) ||
+      payload.expires_in <= 0
+    ) {
+      throw new SupportAuthorizationError(
+        "El proveedor devolvió una credencial de soporte inválida.",
+      );
+    }
+    if (epoch !== authorizationEpoch) {
+      throw new SupportAuthorizationError(
+        "La identidad local cambió durante la autenticación de soporte.",
+      );
+    }
+    accessToken = payload.access_token;
+    accessTokenExpiresAt = Date.now() + payload.expires_in * 1000;
+    reauthorizationRequired = false;
+    return true;
+  })().catch((error: unknown) => {
+    if (epoch === authorizationEpoch) reauthorizationRequired = true;
+    throw error;
   });
-  const response = await fetch(tokenEndpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  });
-  if (!response.ok) {
-    throw new SupportAuthorizationError(
-      "No se pudo completar la autenticación de soporte.",
-    );
-  }
-  const payload = (await response.json()) as Record<string, unknown>;
-  if (
-    typeof payload.access_token !== "string" ||
-    payload.access_token.length === 0 ||
-    String(payload.token_type).toLowerCase() !== "bearer" ||
-    typeof payload.expires_in !== "number" ||
-    !Number.isFinite(payload.expires_in) ||
-    payload.expires_in <= 0
-  ) {
-    throw new SupportAuthorizationError(
-      "El proveedor devolvió una credencial de soporte inválida.",
-    );
-  }
-  accessToken = payload.access_token;
-  accessTokenExpiresAt = Date.now() + payload.expires_in * 1000;
-  return true;
+  callbackInitialization = initialization;
+  void initialization.finally(() => {
+    if (callbackInitialization === initialization) callbackInitialization = null;
+  }).catch(() => undefined);
+  return callbackInitialization;
 }
 
-async function redirectForAuthorization(): Promise<never> {
+async function redirectForAuthorization(epoch: number): Promise<never> {
   const { authorizationEndpoint, clientId } = configuration();
   const verifier = randomBase64Url(64);
   const state = randomBase64Url(32);
@@ -167,8 +210,26 @@ async function redirectForAuthorization(): Promise<never> {
   url.searchParams.set("state", state);
   url.searchParams.set("code_challenge", await challenge(verifier));
   url.searchParams.set("code_challenge_method", "S256");
+  if (epoch !== authorizationEpoch) {
+    throw new SupportAuthorizationError(
+      "La identidad local cambió antes de autorizar soporte.",
+    );
+  }
   window.location.assign(url.toString());
   throw new SupportAuthorizationRedirect();
+}
+
+function beginAuthorizationRedirect(): Promise<never> {
+  if (authorizationRedirect) return authorizationRedirect;
+  const redirect = redirectForAuthorization(authorizationEpoch);
+  authorizationRedirect = redirect;
+  void redirect.catch((error: unknown) => {
+    if (
+      !(error instanceof SupportAuthorizationRedirect) &&
+      authorizationRedirect === redirect
+    ) authorizationRedirect = null;
+  });
+  return redirect;
 }
 
 export function getCurrentSupportAccessToken(): string | null {
@@ -178,9 +239,31 @@ export function getCurrentSupportAccessToken(): string | null {
 export async function getSupportAccessToken(): Promise<string> {
   const current = getCurrentSupportAccessToken();
   if (current) return current;
-  clearSupportAccessToken();
-  if (await initializeSupportAuthorization()) {
-    if (accessToken) return accessToken;
+  if (accessToken) requireSupportReauthorization(accessToken);
+  if (reauthorizationRequired) {
+    throw new SupportAuthorizationError(
+      "La autorización OIDC de soporte expiró. Vuelve a autorizar el asistente.",
+    );
   }
-  return redirectForAuthorization();
+  if (tokenAcquisition) return tokenAcquisition;
+  clearSupportAccessToken();
+  const acquisition = (async () => {
+    if (await initializeSupportAuthorization()) {
+      if (accessToken) return accessToken;
+    }
+    return beginAuthorizationRedirect();
+  })();
+  tokenAcquisition = acquisition;
+  try {
+    return await acquisition;
+  } finally {
+    if (tokenAcquisition === acquisition) tokenAcquisition = null;
+  }
+}
+
+export function reauthorizeSupport(): Promise<never> {
+  reauthorizationRequired = false;
+  callbackInitialization = null;
+  tokenAcquisition = null;
+  return beginAuthorizationRedirect();
 }

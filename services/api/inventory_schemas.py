@@ -134,6 +134,24 @@ class MovementCreatedResponse(BaseModel):
     id: int
 
 
+class DispatchReviewSummary(BaseModel):
+    """Non-sensitive server projection shown before confirmation."""
+
+    operation: str
+    tenant_id: str
+    warehouse: Warehouse
+    sku_ids: list[int]
+    total_quantity: int = Field(gt=0)
+    dispatch_count: int = Field(gt=0)
+    command_id: UUID | None = None
+
+
+class DispatchReviewResponse(BaseModel):
+    review_proof: str
+    expires_at: datetime
+    summary: DispatchReviewSummary
+
+
 # ── StockExit schemas ────────────────────────────────────────────────────────
 
 

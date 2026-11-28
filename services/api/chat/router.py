@@ -52,6 +52,7 @@ from services.api.chat.store import (
 )
 from services.api.database import get_db, open_db_session
 from services.api.agent_memory.service import MemoryError, MemoryStore
+from services.api.routes.support import admit_support_operation
 from services.api.support_oidc import (
     SupportIdentity,
     authenticate_support_identity,
@@ -403,13 +404,27 @@ async def chat_websocket(websocket: WebSocket) -> None:
                             websocket, auth.data.session_id, "support_authorization_required"
                         )
                         continue
+                    if not _is_single_client_manager(refreshed_access):
+                        await _send_error(
+                            websocket, auth.data.session_id, "generation_unavailable"
+                        )
+                        continue
+                    try:
+                        admission = admit_support_operation(support_identity)
+                    except HTTPException as exc:
+                        if exc.status_code != 429:
+                            raise
+                        await _send_error(
+                            websocket, auth.data.session_id, "generation_unavailable"
+                        )
+                        continue
                     coordinator = await _coordinator(
                         refreshed_access, auth.data.session_id
                     )
                     started = await coordinator.start(
                         auth.data.session_id,
                         event.data.text,
-                        authentic_support_producer(support_identity),
+                        authentic_support_producer(support_identity, admission),
                     )
                     if not started:
                         await _send_error(websocket, auth.data.session_id, "generation_active")
@@ -424,6 +439,42 @@ async def chat_websocket(websocket: WebSocket) -> None:
                             redirect_authorized = True
                         except Exception:
                             redirect_authorized = False
+                    redirect_admission = None
+                    if redirect is not None and redirect_authorized:
+                        if not _is_single_client_manager(refreshed_access):
+                            # Preserve interruption semantics without persisting
+                            # or starting the unauthorized replacement turn.
+                            coordinator = await _coordinator(
+                                refreshed_access, auth.data.session_id
+                            )
+                            await coordinator.interrupt(
+                                auth.data.session_id, None, unavailable_producer
+                            )
+                            await _send_error(
+                                websocket, auth.data.session_id,
+                                "generation_unavailable",
+                            )
+                            continue
+                        try:
+                            redirect_admission = admit_support_operation(
+                                support_identity
+                            )
+                        except HTTPException as exc:
+                            if exc.status_code != 429:
+                                raise
+                            # A rejected replacement still cancels the active
+                            # generation, but cannot create a new persisted turn.
+                            coordinator = await _coordinator(
+                                refreshed_access, auth.data.session_id
+                            )
+                            await coordinator.interrupt(
+                                auth.data.session_id, None, unavailable_producer
+                            )
+                            await _send_error(
+                                websocket, auth.data.session_id,
+                                "generation_unavailable",
+                            )
+                            continue
                     coordinator = await _coordinator(
                         refreshed_access, auth.data.session_id
                     )
@@ -436,7 +487,9 @@ async def chat_websocket(websocket: WebSocket) -> None:
                         )
                     else:
                         redirect_producer = (
-                            authentic_support_producer(support_identity)
+                            authentic_support_producer(
+                                support_identity, redirect_admission
+                            )
                             if redirect is not None and redirect_authorized
                             else unavailable_producer
                         )

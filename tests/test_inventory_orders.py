@@ -569,14 +569,12 @@ class TestRouterRegistration:
             "/inventory/products/{id}",
             "/inventory/commercial-orders",
             "/inventory/commercial-orders/{order_id}/dispatches",
+            "/inventory/dispatch-reviews/outbound",
+            "/inventory/dispatch-reviews/commercial-orders",
+            "/inventory/dispatch-reviews/commercial-orders/{order_id}/dispatches",
             "/inventory/tracking/{tracking_number}",
         ]
-        for p in expected:
-            assert p in paths, f"Missing route: {p}"
-
-        # The inventory router has 10 unique paths (11 route entries because
-        # /inventory/products has both GET and POST).
-        assert len(set(paths)) == 10, f"Expected 10 unique paths, got {len(set(paths))}"
+        assert set(paths) == set(expected)
 
     def test_inventory_prefix_is_single(self) -> None:
         """ROUTER-02: no route contains ``/inventory/inventory``."""

@@ -1,5 +1,116 @@
 # Progress: TrackFlow
 
+## NIST · A6 · 2026-11-28
+
+- Usuario y ChatGPT completaron aceptación QA de Inventario, Support,
+  rechazo visible de prompt injection y aislamiento PureStep/SoundWave.
+  El usuario revalidó tras A5.4 la consulta 91001, expiración estable,
+  reconexión con un clic e historial sin duplicados ni nuevo parpadeo.
+- A5.3 verificó cuota por automatización real HTTP/WS. Generación positiva
+  con proveedor externo en A5, caso exacto B2C y alcance de irreversibles
+  ausentes conservan sus limitaciones. El criterio 6 sigue PARCIAL.
+- A6 convierte la colisión global del UUID comercial en 409 genérico y
+  conserva el alcance de tenant, unicidad y replay. El expediente externo
+  reúne evidencia, migración de consumidores y preparación de commit/PR.
+  La publicación y el cierre del entorno pertenecen al usuario.
+
+## NIST · A5.4 · 2026-11-27
+
+- Usuario y ChatGPT reportaron aceptación de Inventario, consulta legítima
+  de Support, rechazo visible del caso de prompt injection y aislamiento
+  entre tenants. El expediente externo conserva la evidencia A5.1/A5.2.
+- Support comparte el canje OIDC y la navegación PKCE entre página, chat y
+  memoria. La expiración exige reautorización explícita y recupera la
+  conversación por WebSocket. La nueva verificación manual queda reservada.
+- A5.3 automatizado en el QA existente: 3 turnos de A admitidos entre HTTP
+  y WS, 429 con Retry-After, B independiente, recuperación de A y sin
+  generaciones ni consultas MCP por los rechazos.
+- QA recibió la migración versionada de Telemetría. Se conservaron las
+  huellas de Inventario, evaluación de umbral y outbox. Ingesta y reporte
+  HTTP verificados; la fila de prueba se identifica por su tipo sintético.
+
+## NIST · A4.1 · 2026-11-27
+
+- OpenAPI describe 428 en las tres escrituras de despacho y las cabeceras
+  requeridas por operación. El flujo de pérdidas conserva su contrato.
+- La evidencia genérica de Support acredita el criterio 3. El tracking
+  integrado acredita autorización y aislamiento mediante routing determinista.
+  El caso exacto de dirección B2C queda BLOCKED por ausencia de la superficie.
+- El criterio 6 sigue PARCIAL por adjudicación del BRIEFING. La guía de A5
+  documenta cómo cancelar la revisión y conciliar un despacho incierto.
+  La aceptación funcional y la migración externa siguen pendientes.
+
+## NIST · A3.2 · 2026-11-27
+
+- Confirmación obligatoria en las tres escrituras de despacho. Backoffice
+  separa revisión y confirmación del despacho suelto, y conserva el flujo de
+  pérdida. Los consumidores API deben usar el comprobante y conservar sus UUID.
+- PostgreSQL 16 desechable verificó revisión sin efectos, concurrencia con
+  201 idéntico, rechazo de comprobantes inválidos, stock cambiado y rollback
+  comercial con reintento. Playwright verificó el formulario original con
+  respuestas HTTP controladas, incluida la renovación tras 428. Regresión
+  independiente de Inventario, serialización y Support: 220 PASS.
+- El criterio 6 permanece PARCIAL por adjudicación de capacidades ausentes
+  del BRIEFING y aceptación funcional. El escenario exacto de dirección B2C
+  permanece BLOCKED.
+
+## NIST · A3.1 · 2026-11-27
+
+- Usuario y ChatGPT ratificaron la matriz por sistema exclusivamente para
+  el ejercicio. El criterio de inventario pasa a VERIFICADO académico.
+- La política académica exige confirmación para todo despacho. La imposición
+  del comprobante requiere migrar los tres POST de escritura que hoy admiten
+  ejecución en un paso. Esa decisión de contrato queda abierta y el criterio
+  global de confirmación permanece PARCIAL.
+- La regresión defensiva de Support acredita el guardrail previo al proveedor
+  y la generación legítima con doble controlado (4 PASS). El tracking
+  integrado se conserva como evidencia distinta. Dirección B2C sigue
+  BLOCKED por ausencia de la superficie. Aceptación manual pendiente.
+- Idempotencia de despacho suelto incorporada mediante clave UUID opcional.
+  PostgreSQL 16 aislado reprodujo dos salidas sin clave y confirmó una sola
+  salida y un solo evento con la misma clave en dos sesiones concurrentes.
+
+## NIST · Contraste A1 y remediación A2 · 2026-11-27
+
+- A1 reabrió el cierre técnico integral. A2 mantiene como PARCIAL el inventario
+  con responsables y la confirmación humana. El informe propone roles técnicos,
+  funcionales y de seguridad por sistema, pendientes de ratificación.
+- PostgreSQL 16 desechable, WebSocket y MCP en proceso acreditaron la consulta
+  de tracking propia y denegación de otro despacho del mismo cliente y de
+  otro cliente. El perfil QA de destinatario no proyecta dirección ni invoca
+  al LLM en esa ruta. El supuesto exacto de dirección B2C queda BLOCKED
+  por ausencia de la superficie de dirección.
+- El despacho de Inventario es un registro durable con efecto en existencias
+  y telemetría. Falta decidir si satisface el significado de confirmación
+  operativa y establecer la política de alto valor. Consentimiento de memoria
+  y HITL RFP conservan sus controles.
+- QA independiente: 122 PASS y un skip por DSN, repetido con PostgreSQL
+  aislado y resultado 1 PASS. Otras 89 pruebas de trazas, ACL y herramientas
+  pasaron en QA local. Aceptación manual pendiente.
+- El reloj se lee bajo el lock de cuota. HTTP y WS comparten admisión por ID
+  de usuario; el router WS admite antes de crear un turno, incluidas las
+  modalidades QA. Si se rechaza un reemplazo, se conserva la cancelación.
+  La regresión independiente dio 115 PASS y un skip de catálogo, cubierto
+  en la selección de seis PASS con PostgreSQL efímero y proveedor simulado.
+
+## NIST Security Practices · Entrega inicial histórica · 2026-11-27
+
+- Se completó el inventario trazable de sistemas de IA/decisión y el informe
+  académico `docs/security/NIST_SECURITY_PRACTICES.md`, cubriendo Govern,
+  Identify, Protect, Detect, Respond y Recover, RGPD/AEPD y CCPA/CPRA.
+- `POST /support/query` aplica un fixed-window rate limit process-local antes
+  del trabajo de negocio/modelo: 60 solicitudes/60 s por `identity.user.id`,
+  máximo 10.000 identidades, HTTP 429 y `Retry-After`. Es configurable por
+  entorno; el semáforo de cuatro consultas concurrentes permanece separado.
+- QA inicial: 22 PASS en Support, 70 PASS en Support/WS/contratos, 111 PASS
+  en Support/guardrails/contexto y 47 PASS en trazas/HITL. Las primeras
+  selecciones se solapan. `py_compile` y `git diff --check` pasaron.
+- Las conclusiones iniciales sobre responsables y operaciones irreversibles
+  se sustituyen por el contraste A1 y la remediación A2 arriba.
+- Pendientes principales: limiter compartido multi-worker, RACI aprobado,
+  alertas distribuidas, playbook corporativo de incidentes, RTO/RPO y restore
+  integral. La aceptación manual no se declara completada.
+
 ## OWASP 2021 · Bloque 2A · 2026-11-26
 
 - La lectura del reporte operativo de telemetría exige una cuenta activa con

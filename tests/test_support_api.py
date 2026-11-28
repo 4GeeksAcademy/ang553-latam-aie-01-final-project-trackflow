@@ -1,8 +1,9 @@
 """Focused contract tests for POST /support/query."""
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from threading import BoundedSemaphore
+from threading import BoundedSemaphore, Event, Lock
 
 import pytest
 from fastapi import HTTPException, Response
@@ -21,6 +22,7 @@ from services.api.routes.support import (
     query_support,
     require_support_reader,
 )
+from services.api.rate_limit import FixedWindowRateLimiter
 import services.api.routes.support as support_route
 from services.api.support_oidc import SupportIdentity
 from pydantic import SecretStr
@@ -44,6 +46,15 @@ def identity(role: Role) -> SupportIdentity:
     return SupportIdentity(
         user(role),
         f"keycloak-{role.value}",
+        frozenset({"incidents:read", "inventory:read"}),
+        SecretStr("test-token"),
+    )
+
+
+def identity_with_id(user_id: str) -> SupportIdentity:
+    return SupportIdentity(
+        user(Role.admin).model_copy(update={"id": user_id}),
+        f"keycloak-{user_id}",
         frozenset({"incidents:read", "inventory:read"}),
         SecretStr("test-token"),
     )
@@ -142,6 +153,150 @@ def test_support_handler_sets_run_header_and_starts_shared_80_second_deadline():
     assert response.headers["X-TrackFlow-Run-ID"] == captured["run_id"]
     assert 0 < captured["deadline"].remaining() <= 80
     assert captured["request_id"] == "550e8400-e29b-41d4-a716-446655440097"
+
+
+def test_support_rate_limit_rejects_before_database_or_model_and_recovers(monkeypatch):
+    now = [100.0]
+    limiter = FixedWindowRateLimiter(
+        requests=2,
+        window_seconds=10,
+        max_identities=10,
+        clock=lambda: now[0],
+    )
+    monkeypatch.setattr(support_route, "_SUPPORT_RATE_LIMITER", limiter)
+    database_work = []
+    model_work = []
+
+    class Session(FakeSession):
+        def get_bind(self):
+            database_work.append("get_bind")
+            return super().get_bind()
+
+    class Agent:
+        async def execute(self, _question, **kwargs):
+            model_work.append(kwargs["run_id"])
+            return ExternalSupportExecution(kwargs["run_id"], ticket_result())
+
+    def invoke():
+        return run(query_support(
+            SupportQueryRequest(question="Check ticket 482"),
+            request(), Response(), identity(Role.admin), Session(),
+            Agent(), MCPTools(), FakeMemoryStore(),
+        ))
+
+    assert invoke().ticket.incident_id == "TRF-000482"
+    assert invoke().ticket.incident_id == "TRF-000482"
+    before_rejection = (len(database_work), len(model_work))
+    with pytest.raises(HTTPException) as error:
+        invoke()
+    assert error.value.status_code == 429
+    assert error.value.detail == "support rate limit exceeded"
+    assert error.value.headers == {"Retry-After": "10"}
+    assert (len(database_work), len(model_work)) == before_rejection
+
+    now[0] = 110.0
+    assert invoke().ticket.incident_id == "TRF-000482"
+    assert len(model_work) == before_rejection[1] + 1
+
+
+def test_support_rate_limit_isolates_authenticated_identities(monkeypatch):
+    limiter = FixedWindowRateLimiter(
+        requests=1,
+        window_seconds=30,
+        max_identities=10,
+        clock=lambda: 50.0,
+    )
+    monkeypatch.setattr(support_route, "_SUPPORT_RATE_LIMITER", limiter)
+
+    class Agent:
+        async def execute(self, _question, **kwargs):
+            return ExternalSupportExecution(kwargs["run_id"], ticket_result())
+
+    def invoke(as_identity):
+        return run(query_support(
+            SupportQueryRequest(question="Check ticket 482"),
+            request(), Response(), as_identity, FakeSession(),
+            Agent(), MCPTools(), FakeMemoryStore(),
+        ))
+
+    first_identity = identity_with_id("first-admin-id")
+    second_identity = identity_with_id("second-admin-id")
+    assert invoke(first_identity).ticket.incident_id == "TRF-000482"
+    with pytest.raises(HTTPException) as error:
+        invoke(first_identity)
+    assert error.value.status_code == 429
+    assert int(error.value.headers["Retry-After"]) > 0
+    assert invoke(second_identity).ticket.incident_id == "TRF-000482"
+
+
+def test_rate_limiter_is_thread_safe_bounded_and_releases_expired_capacity():
+    now = [20.0]
+    limiter = FixedWindowRateLimiter(
+        requests=3,
+        window_seconds=10,
+        max_identities=1,
+        clock=lambda: now[0],
+    )
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        decisions = list(executor.map(limiter.admit, ["first"] * 10))
+
+    assert sum(decision.allowed for decision in decisions) == 3
+    capacity_rejection = limiter.admit("second")
+    assert capacity_rejection.allowed is False
+    assert capacity_rejection.retry_after_seconds == 10
+
+    now[0] = 30.0
+    assert limiter.admit("second").allowed is True
+
+
+def test_rate_limiter_serializes_clock_read_with_window_transition():
+    """A delayed earlier caller cannot invalidate a later caller's window."""
+
+    timestamps = iter((100.0, 101.0))
+    limiter = FixedWindowRateLimiter(
+        requests=1,
+        window_seconds=10,
+        max_identities=10,
+        clock=lambda: next(timestamps),
+    )
+    first_waiting = Event()
+    release_first = Event()
+
+    class OrderedLock:
+        def __init__(self):
+            self._lock = Lock()
+            self._gate = Lock()
+            self._first = True
+
+        def __enter__(self):
+            with self._gate:
+                is_first = self._first
+                self._first = False
+            if is_first:
+                first_waiting.set()
+                assert release_first.wait(timeout=2)
+            self._lock.acquire()
+            return self
+
+        def __exit__(self, *_args):
+            self._lock.release()
+
+    limiter._lock = OrderedLock()
+    decisions = []
+
+    def admit():
+        decisions.append(limiter.admit("shared-user"))
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(admit)
+        assert first_waiting.wait(timeout=2)
+        second = executor.submit(admit)
+        second.result(timeout=2)
+        release_first.set()
+        first.result(timeout=2)
+
+    assert sum(decision.allowed for decision in decisions) == 1
+    assert sum(not decision.allowed for decision in decisions) == 1
 
 
 @pytest.mark.parametrize(

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 import hashlib
 import json
@@ -79,6 +79,7 @@ from services.api.agent_memory.service import (
     canonical_key_for,
 )
 from services.api.database import get_db
+from services.api.rate_limit import FixedWindowRateLimiter
 from services.api.support_oidc import SupportIdentity, require_support_reader
 from services.incidents.models import clients
 from services.rag.contracts import KnowledgeCoverage, RAGProviderError
@@ -90,8 +91,36 @@ router = APIRouter(prefix="/support", tags=["Customer Support"])
 SUPPORT_QUERY_BUDGET_SECONDS = 80.0
 # Leave PostgreSQL pool capacity for other endpoints in the same worker.
 _SUPPORT_QUERY_SLOTS = BoundedSemaphore(4)
+_SUPPORT_RATE_LIMITER = FixedWindowRateLimiter.from_env()
+_SUPPORT_RATE_LIMIT_ADMISSION_STATE = "support_rate_limit_admission"
 _CONSENT_LOGGER = logging.getLogger("agent.customer_support.consent")
 _SUPPORT_LOGGER = logging.getLogger("agent.customer_support.runtime")
+
+
+@dataclass(frozen=True)
+class SupportRateLimitAdmission:
+    """Server-only proof that a support operation consumed its quota."""
+
+    identity_id: str
+
+
+def admit_support_operation(identity: SupportIdentity) -> SupportRateLimitAdmission:
+    rate_decision = _SUPPORT_RATE_LIMITER.admit(identity.user.id)
+    if not rate_decision.allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="support rate limit exceeded",
+            headers={"Retry-After": str(rate_decision.retry_after_seconds)},
+        )
+    return SupportRateLimitAdmission(identity.user.id)
+
+
+def _has_support_admission(request: Request, identity: SupportIdentity) -> bool:
+    admission = getattr(request.state, _SUPPORT_RATE_LIMIT_ADMISSION_STATE, None)
+    return (
+        isinstance(admission, SupportRateLimitAdmission)
+        and admission.identity_id == identity.user.id
+    )
 
 
 @contextmanager
@@ -641,6 +670,7 @@ def _consent_failure_diagnostic(exc: Exception) -> str:
     responses={
         401: {"description": "Missing or invalid Bearer token."},
         403: {"description": "The authenticated role is not authorized."},
+        429: {"description": "The authenticated identity exceeded the request limit."},
         503: {"description": "All selected support sources are unavailable."},
     },
 )
@@ -654,6 +684,8 @@ async def query_support(
     mcp_tools: Annotated[SupportMCPTools, Depends(get_support_mcp_tools)],
     memory_store: Annotated[MemoryStore, Depends(get_memory_store)],
 ) -> SupportQueryResponse:
+    if not _has_support_admission(request, identity):
+        admit_support_operation(identity)
     # The authentic WS producer forwards its budget through server-only state.
     inherited = getattr(request.state, "support_query_deadline", None)
     with (nullcontext(inherited) if inherited is not None else support_query_budget()) as deadline:

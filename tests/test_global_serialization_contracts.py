@@ -81,6 +81,9 @@ EXPECTED_ROUTES = {
         ("POST", "/inventory/physical-counts"),
         ("POST", "/inventory/commercial-orders"),
         ("POST", "/inventory/commercial-orders/{order_id}/dispatches"),
+        ("POST", "/inventory/dispatch-reviews/outbound"),
+        ("POST", "/inventory/dispatch-reviews/commercial-orders"),
+        ("POST", "/inventory/dispatch-reviews/commercial-orders/{order_id}/dispatches"),
         ("POST", "/knowledge/query"),
         ("POST", "/rfps"),
         ("GET", "/rfps"),
@@ -616,8 +619,26 @@ def test_http_inventory_contracts_use_isolated_sqlite(isolated_auth_db, monkeypa
                 }
             ],
         }
+        missing_order_proof = _request(
+            "POST", "/inventory/commercial-orders",
+            headers=headers, json=order_payload,
+        )
+        assert missing_order_proof.status_code == 428
+        assert missing_order_proof.json() == {
+            "detail": "A valid dispatch review proof is required."
+        }
+        order_review = _request(
+            "POST", "/inventory/dispatch-reviews/commercial-orders",
+            headers=headers, json=order_payload,
+        )
+        assert order_review.status_code == 200, order_review.text
+        assert order_review.headers["Cache-Control"] == "no-store"
+        order_headers = {
+            **headers,
+            "X-TrackFlow-Dispatch-Review": order_review.json()["review_proof"],
+        }
         order = _request(
-            "POST", "/inventory/commercial-orders", headers=headers, json=order_payload
+            "POST", "/inventory/commercial-orders", headers=order_headers, json=order_payload
         )
         assert order.status_code == 201, order.text
         assert order.json()["dispatch_ids"] == [dispatch_id]
@@ -636,7 +657,7 @@ def test_http_inventory_contracts_use_isolated_sqlite(isolated_auth_db, monkeypa
         )
         assert duplicate_dispatches.status_code == 422
         order_retry = _request(
-            "POST", "/inventory/commercial-orders", headers=headers, json=order_payload
+            "POST", "/inventory/commercial-orders", headers=order_headers, json=order_payload
         )
         assert order_retry.status_code == 201, order_retry.text
         assert order_retry.json() == order.json()
@@ -645,7 +666,6 @@ def test_http_inventory_contracts_use_isolated_sqlite(isolated_auth_db, monkeypa
         append_payload = {
             "order_id": order_id,
             "dispatches": [
-                order_payload["dispatches"][0],
                 {
                     "dispatch_id": second_dispatch_id,
                     "sku_id": sku_id,
@@ -654,10 +674,32 @@ def test_http_inventory_contracts_use_isolated_sqlite(isolated_auth_db, monkeypa
                 },
             ],
         }
-        appended = _request(
+        missing_append_proof = _request(
             "POST",
             f"/inventory/commercial-orders/{order_id}/dispatches",
             headers=headers,
+            json=append_payload,
+        )
+        assert missing_append_proof.status_code == 428
+        assert missing_append_proof.json() == {
+            "detail": "A valid dispatch review proof is required."
+        }
+        append_review = _request(
+            "POST",
+            f"/inventory/dispatch-reviews/commercial-orders/{order_id}/dispatches",
+            headers=headers,
+            json=append_payload,
+        )
+        assert append_review.status_code == 200, append_review.text
+        assert append_review.headers["Cache-Control"] == "no-store"
+        append_headers = {
+            **headers,
+            "X-TrackFlow-Dispatch-Review": append_review.json()["review_proof"],
+        }
+        appended = _request(
+            "POST",
+            f"/inventory/commercial-orders/{order_id}/dispatches",
+            headers=append_headers,
             json=append_payload,
         )
         assert appended.status_code == 201, appended.text
@@ -668,7 +710,7 @@ def test_http_inventory_contracts_use_isolated_sqlite(isolated_auth_db, monkeypa
         append_retry = _request(
             "POST",
             f"/inventory/commercial-orders/{order_id}/dispatches",
-            headers=headers,
+            headers=append_headers,
             json=append_payload,
         )
         assert append_retry.status_code == 201, append_retry.text
@@ -721,6 +763,84 @@ def test_inventory_business_openapi_contracts_are_explicit() -> None:
     assert "post" in paths["/inventory/physical-counts"]
     assert "post" in paths["/inventory/commercial-orders"]
     assert "post" in paths["/inventory/commercial-orders/{order_id}/dispatches"]
+    assert "post" in paths["/inventory/dispatch-reviews/outbound"]
+    assert "post" in paths["/inventory/dispatch-reviews/commercial-orders"]
+    assert "post" in paths[
+        "/inventory/dispatch-reviews/commercial-orders/{order_id}/dispatches"
+    ]
+
+    proof_header = "X-TrackFlow-Dispatch-Review"
+    commercial_operations = (
+        paths["/inventory/commercial-orders"]["post"],
+        paths["/inventory/commercial-orders/{order_id}/dispatches"]["post"],
+    )
+    for operation in commercial_operations:
+        proof_parameters = [
+            item for item in operation["parameters"]
+            if item["in"] == "header" and item["name"] == proof_header
+        ]
+        assert len(proof_parameters) == 1
+        assert proof_parameters[0]["required"] is True
+        assert operation["responses"]["428"]["content"]["application/json"] == {
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["detail"],
+                "properties": {"detail": {
+                    "type": "string",
+                    "enum": ["A valid dispatch review proof is required."],
+                }},
+            },
+            "example": {"detail": "A valid dispatch review proof is required."},
+        }
+
+    create_conflict = commercial_operations[0]["responses"]["409"]
+    assert "does not disclose another tenant's data" in create_conflict["description"]
+    assert create_conflict["content"]["application/json"] == {
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["detail"],
+            "properties": {"detail": {"type": "string"}},
+        },
+        "example": {"detail": "Commercial order command conflicts."},
+    }
+
+    outbound = paths["/inventory/orders/outbound"]["post"]
+    outbound_headers = {
+        item["name"]: item for item in outbound["parameters"]
+        if item["in"] == "header"
+    }
+    assert outbound_headers["Idempotency-Key"]["required"] is False
+    assert "Required UUID when exit_type is dispatch; omit for loss" in (
+        outbound_headers["Idempotency-Key"]["description"]
+    )
+    assert outbound_headers[proof_header]["required"] is False
+    assert "Required when exit_type is dispatch; unused for loss" in (
+        outbound_headers[proof_header]["description"]
+    )
+    assert "Idempotency-Key is missing" in outbound["responses"]["428"]["description"]
+    assert outbound["responses"]["428"]["content"]["application/json"] == (
+        commercial_operations[0]["responses"]["428"]["content"]["application/json"]
+    )
+
+    review_paths = (
+        "/inventory/dispatch-reviews/outbound",
+        "/inventory/dispatch-reviews/commercial-orders",
+        "/inventory/dispatch-reviews/commercial-orders/{order_id}/dispatches",
+    )
+    for path in review_paths:
+        cache_header = paths[path]["post"]["responses"]["200"]["headers"][
+            "Cache-Control"
+        ]
+        assert cache_header["schema"]["enum"] == ["no-store"]
+    outbound_review_parameters = paths[review_paths[0]]["post"]["parameters"]
+    idempotency = next(
+        item for item in outbound_review_parameters
+        if item["in"] == "header" and item["name"] == "Idempotency-Key"
+    )
+    assert idempotency["required"] is True
+    assert idempotency["schema"]["format"] == "uuid"
 
     models = schema["components"]["schemas"]
     assert set(models["SKUThresholdUpdate"]["required"]) == {
